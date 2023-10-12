@@ -86,7 +86,8 @@ Drgn-tools welcomes contributions. However, when it comes to helpers, we believe
 in an upstream-first policy. Helper functions ought to be contributed to
 [drgn][drgn] wherever possible. In the case that code can't be contributed to
 Drgn because it is specific to UEK configurations or architectures, we will
-gladly accept it. Please see [CONTRIBUTING.md][] for details on contributing.
+gladly accept it. Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for details on
+contributing.
 
 ## Security
 
