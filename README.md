@@ -1,44 +1,66 @@
-*This repository acts as a template for all of Oracle’s GitHub repositories. It contains information about the guidelines for those repositories. All files and sections contained in this template are mandatory, and a GitHub app ensures alignment with these guidelines. To get started with a new repository, replace the italic paragraphs with the respective text for your project.*
+drgn-tools
+==========
 
-# Project name
+drgn-tools is a library of helpers for use with [drgn][drgn]. It contains
+helpers with a slightly reduced scope than what drgn itself can contain.
 
-*Describe your project's features, functionality and target audience*
+The main target for these helpers is the Oracle UEK kernel. Helpers may contain
+code that assumes a UEK configuration and UEK architectures. This makes a lower
+bar for acceptance than Drgn, where helpers should be as configuration and
+architecture agnostic as possible.
 
-## Installation
+In addition to the helper functions, drgn-tools contains some helper utilities
+that we find useful:
 
-*Provide detailed step-by-step installation instructions. You can name this section **How to Run** or **Getting Started** instead of **Installation** if that's more acceptable for your project*
+1. The `DRGN` script which can automatically download, extract, and load
+   debuginfo for UEK kernels.
+2. The `corelens` tool, which contains a library of modules that can extract
+   information from a live kernel or vmcore, and write it to a sosreport-style
+   directory for later analysis.
 
-## Documentation
+Please note, each drgn-tools version is only supported with a corresponding
+version of Drgn.
 
-*Developer-oriented documentation can be published on GitHub, but all product documentation must be published on <https://docs.oracle.com>*
+See the [documentation][doc] for more information on how to use these tools and
+how to contribute to them.
 
-## Examples
+Getting Started
+---------------
 
-*Describe any included examples or provide a link to a demo/tutorial*
+Requires Python 3.6 or later, and an Linux system (preferably Oracle Linux 8 or
+later). For this guide, we'll assume you have a core dump (vmcore).
 
-## Help
+1. Install Drgn, if you haven't already: `pip install drgn`. Alternatively, `yum
+   install drgn`, or use your system's package manager, if appropriate.
+2. Clone the repository: `git clone
+   https://github.com/oracle-samples/drgn-tools`
 
-*Inform users on where to get help or how to receive official support from Oracle (if applicable)*
+That's it! See below for ways to use drgn-tools.
 
-## Contributing
+Usage Examples
+--------------
 
-*If your project has specific contribution requirements, update the CONTRIBUTING.md file to ensure those requirements are clearly explained*
+Use the drgn-tools CLI (which uses its own debuginfo fetching logic) with:
 
-This project welcomes contributions from the community. Before submitting a pull request, please [review our contribution guide](./CONTRIBUTING.md)
+``` sh
+python -m drgn_tools.cli VMCORE
+```
 
-## Security
+Use the drgn-tools Corelens system (which outputs a range of information from
+several diagnostic systems):
 
-Please consult the [security guide](./SECURITY.md) for our responsible security vulnerability disclosure process
+``` sh
+python -m drgn_tools.corelens VMCORE
+```
 
-## License
+How to Contribute
+-----------------
 
-*The correct copyright notice format for both documentation and software is*
-    "Copyright (c) [year,] year Oracle and/or its affiliates."
-*You must include the year the content was first released (on any platform) and the most recent year in which it was revised*
+Drgn-tools welcomes contributions. However, when it comes to helpers, we believe
+in an upstream-first policy. Helper functions ought to be contributed to
+[drgn][drgn] wherever possible. In the case that code can't be contributed to
+Drgn because it is specific to UEK configurations or architectures, we will
+gladly accept it. Please see [CONTRIBUTING.md][] for details on contributing.
 
-Copyright (c) 2023 Oracle and/or its affiliates.
-
-*Replace this statement if your project is not licensed under the UPL*
-
-Released under the Universal Permissive License v1.0 as shown at
-<https://oss.oracle.com/licenses/upl/>.
+[drgn]: https://drgn.readthedocs.io
+[doc]: https://oracle-samples.github.io/drgn-tools/

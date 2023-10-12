@@ -1,0 +1,42 @@
+From adeaab63e32ae085f298f8dfb04a654f1ee742a6 Mon Sep 17 00:00:00 2001
+From: Stephen Brennan <stephen.s.brennan@oracle.com>
+Date: Thu, 3 Aug 2023 09:49:52 -0700
+Subject: [PATCH] 9p: adapt to out-of-tree build
+
+The UEK5 kernel configuration does not include CONFIG_9P_FS. Update the
+Makefile so that this directory can build out-of-tree. Simply boot a
+UEK5 kernel, with kernel-uek-devel installed, and run "make" in this
+directory to create an out-of-tree 9p.ko.
+
+Signed-off-by: Stephen Brennan <stephen.s.brennan@oracle.com>
+---
+ fs/9p/Makefile | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/fs/9p/Makefile b/fs/9p/Makefile
+index e7800a5c7395..73881b20dd0a 100644
+--- a/fs/9p/Makefile
++++ b/fs/9p/Makefile
+@@ -1,5 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+-obj-$(CONFIG_9P_FS) := 9p.o
++TARGET ?= $(shell uname -r)
++
++obj-m := 9p.o
+ 
+ 9p-objs := \
+ 	vfs_super.o \
+@@ -13,5 +15,8 @@ obj-$(CONFIG_9P_FS) := 9p.o
+ 	fid.o  \
+ 	xattr.o
+ 
+-9p-$(CONFIG_9P_FSCACHE) += cache.o
+-9p-$(CONFIG_9P_FS_POSIX_ACL) += acl.o
++all:
++	make -C /lib/modules/$(TARGET)/build M=$(PWD) modules
++
++clean:
++	make -C /lib/modules/$(TARGET)/build M=$(PWD) clean
+-- 
+2.39.2
+

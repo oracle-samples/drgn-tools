@@ -1,0 +1,14 @@
+*.pyc
+__pycache__
+*.egg-info
+build
+dist
+.tox
+.coverage
+config.mk
+venv
+drgn_tools/_version.py
+deploy_dev.sh
+drgntools-fio.dat
+testdata
+test.log

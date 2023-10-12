@@ -1,0 +1,644 @@
+# Copyright (c) 2023, Oracle and/or its affiliates.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+"""
+The ``drgn_tools.debuginfo`` module provides the APIs for finding debuginfo.
+
+Please note: this file is quite special. Currently, it is not just the
+``drgn_tools.debuginfo`` module: it is also a file which is copied and pasted
+into the /share/linuxtools/bin directory in order to allow people & bash scripts
+to easily find and extract debuginfo, while ensuring that they also make the
+appropriate updates to the access.db file.
+
+In the future, the CRASH scripts will be updated to call drgn-tools directly to
+do this. But in the meantime, this quick solution is easier for testing, and
+allows me to avoid having to deal with OL8 drgn-tools deployment yet. The
+consequence here is that we can only use the standard library: no imports from
+drgn or drgn-tools or third-party modules.
+"""
+import abc
+import argparse
+import itertools
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+from typing import Dict
+from typing import Iterable
+from typing import List
+from typing import Mapping
+from typing import NamedTuple
+from typing import Optional
+from typing import TYPE_CHECKING
+from typing import Union
+from urllib.error import HTTPError
+
+from drgn_tools.config import get_config
+from drgn_tools.logging import get_logger
+from drgn_tools.util import download_file
+
+if TYPE_CHECKING:
+    from drgn import Program
+
+__all__ = (
+    "fetch_debuginfo",
+    "find_debuginfo",
+    "KernelVersion",
+)
+
+REPO_DIR = os.getenv("LINUXRPM", "/share/linuxrpm")
+log = get_logger("drgn_tools.debuginfo")
+
+
+class DebuginfoFetcher(abc.ABC):
+    """
+    An interface for different strategies of fetching debuginfo
+    """
+
+    def fetch_modules(
+        self, uname: str, modules: List[str], quiet: bool = True
+    ) -> Dict[str, Path]:
+        raise NotImplementedError("implement me!")
+
+    def output_directories(self) -> List[Path]:
+        raise NotImplementedError("implement me!")
+
+
+class VmlinuxRepoFetcher(DebuginfoFetcher):
+    """
+    A fetcher designed for Oracle internal analysis machines
+
+    The idea of this finder is that each debuginfo RPM lives on a network
+    filesystem, and a separate network filesystem contains a directory per
+    kernel release, which will house the individual debuginfo files: vmlinux,
+    module.ko.debug, etc. Debuginfo files may need to be extracted on demand,
+    since they are quite large and may have been cleaned up to conserve disk
+    space. In practice, we usually have:
+
+    - ``/share/linuxrpm/debuginfo-rpms/build-output-$OLVER-debuginfo/kernel-uek-debuginfo-$release.rpm``
+    - ``/share/linuxrpm/vmlinux_repo/$bits/$release/vmlinux``
+
+    This finder only works when the expensive mode is turned on. It will extract
+    the debuginfo RPM and place the vmlinux and module files into the
+    corresponding directory.
+    """
+
+    def __init__(self, root_path: Optional[str] = REPO_DIR):
+        if root_path:
+            self.root_path = Path(root_path)
+        else:
+            self.root_path = Path(REPO_DIR)
+
+    def fetch_modules(
+        self, uname: str, modules: List[str], quiet: bool = True
+    ) -> Dict[str, Path]:
+        version = KernelVersion.parse(uname)
+
+        if version.arch in ("x86_64", "aarch64"):
+            bits = "64"
+        else:
+            bits = "32"
+
+        source_rpm = (
+            self.root_path
+            / "debuginfo-rpms"
+            / f"build-output-{version.ol_version}-debuginfo"
+            / version.oraclelinux_debuginfo_rpm()
+        )
+        dest_dir = self.root_path / f"vmlinux_repo/{bits}/{uname}"
+
+        if not source_rpm.is_file():
+            log.warning(
+                "%s: debuginfo RPM is not present in %s:\n%s",
+                self.__class__.__name__,
+                self.root_path,
+                source_rpm,
+            )
+            return {}
+        return extract_rpm(source_rpm, dest_dir, modules, permissions=0o777)
+
+    def output_directories(self) -> List[Path]:
+        return [
+            self.root_path / "vmlinux_repo/64",
+            self.root_path / "vmlinux_repo/32",
+        ]
+
+
+class OracleLinuxYumFetcher(DebuginfoFetcher):
+    """
+    A fetcher which downloads from oss.oracle.com Yum server
+    """
+
+    url_fmt: str = "https://oss.oracle.com/ol{olver}/debuginfo/{rpm}"
+    out_dir: Path = Path.home() / "vmlinux_repo"
+
+    def __init__(self, url_fmt: Optional[str] = None) -> None:
+        if url_fmt:
+            self.url_fmt = url_fmt
+
+    def fetch_modules(
+        self, uname: str, modules: List[str], quiet: bool = False
+    ) -> Dict[str, Path]:
+        version = KernelVersion.parse(uname)
+        url = self.url_fmt.format(
+            olver=version.ol_version,
+            rpm=version.oraclelinux_debuginfo_rpm(),
+        )
+        out_dir = self.out_dir / uname
+        with tempfile.NamedTemporaryFile(suffix=".rpm", mode="wb") as f:
+            # Apparently a temporary file is not a "BytesIO", so type
+            # checking fails. Ignore that error.
+            try:
+                download_file(url, f, quiet, desc="Downloading RPM")  # type: ignore
+            except HTTPError as e:
+                log.warning(
+                    "%s: download failed for debuginfo RPM: %d %s",
+                    self.__class__.__name__,
+                    e.code,
+                    e.reason,
+                )
+                return {}
+            f.flush()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            return extract_rpm(Path(f.name), out_dir, modules)
+
+    def output_directories(self) -> List[Path]:
+        return [self.out_dir]
+
+
+@lru_cache(maxsize=1)
+def _get_configured_fetchers() -> List[DebuginfoFetcher]:
+    """
+    Return debuginfo fetchers as configured by the user
+
+    If the drgn-tools configuration file has debuginfo related configuration,
+    this creates the required fetchers and returns them. If no configuration is
+    present, then we check if the REPO_DIR exists, and if so, we return the
+    VmlinuxRepoFetcher. Otherwise, we return an empty list.
+    """
+    config = get_config()
+    fetchers = []
+
+    name_to_fetcher = {
+        cls.__name__: cls for cls in DebuginfoFetcher.__subclasses__()
+    }
+    fetcher_config = config.get("debuginfo", "fetchers", fallback=None)
+    if fetcher_config is not None:
+        for name in fetcher_config.split():
+            if name in name_to_fetcher:
+                params: Mapping[str, Any] = {}
+                if name in config:
+                    params = config[name]
+                fetchers.append(name_to_fetcher[name](**params))
+            else:
+                log.warning('Unknown debuginfo fetcher "%s"', name)
+    elif os.path.isdir(REPO_DIR):
+        fetchers.append(VmlinuxRepoFetcher(root_path=REPO_DIR))
+    return fetchers
+
+
+def fetch_debuginfo(uname: str, modules: List[str]) -> Dict[str, Path]:
+    """
+    Fetch debuginfo in a potentially expensive way
+
+    Assuming that :func:`find_debuginfo()` has failed, we can assume that
+    debuginfo is not easily available locally. However, we may be able to
+    "fetch" it and extract it from a remote source. This is usually costly: it
+    will take some time to download and process the debuginfo. This function
+    may use different strategies depending on the user's configuration.
+
+    The result may be incomplete: out-of-tree modules likely can't be found,
+    and it's of course possible that nothing can be found.
+
+    :param uname: Kernel release to search debuginfo for
+    :param modules: List of standardized module names
+    :returns: Mapping of names to paths
+    """
+    for fetcher in _get_configured_fetchers():
+        result = fetcher.fetch_modules(uname, modules)
+        if result:
+            return result
+    return {}
+
+
+def _get_debuginfo_paths(
+    prog_or_release: Union["Program", str],
+    dinfo_path: Optional[Iterable[str]] = None,
+) -> List[Path]:
+    """
+    Return list of paths to search for DWARF debuginfo
+
+    We cache this after the first run, to make it more efficient. We search in
+    the following order:
+
+        dinfo_path  (user argument)
+        $PWD/$RELEASE
+          -> or $PWD if the above does not exist
+        $DEBUGINFO_BASE/$RELEASE   (for each colon-separated path)
+        /usr/lib/debug/lib/modules/$RELEASE
+        $PWD/usr/lib/debug/lib/modules/$RELEASE
+
+    :param prog: Program we're debugging, or else the kernel release string.
+      When a Program is provided, we cache the path on the object and use the
+      Program to determine the release string.
+    :dinfo_path: List of pathnames to search first
+    :returns: Concrete list of paths to search, cached
+    """
+    prog: Optional["Program"] = None
+    if isinstance(prog_or_release, str):
+        release = prog_or_release
+    else:
+        # Assume to be a program, without explicitly using the name
+        prog = prog_or_release
+        cached_paths = prog.cache.setdefault("drgn_tools", {}).get(
+            "debuginfo_paths"
+        )
+        if cached_paths:
+            return cached_paths.copy()
+        release = prog["UTS_RELEASE"].string_().decode()
+
+    paths: List[Path] = []
+
+    if dinfo_path:
+        for path_str in dinfo_path:
+            # User provided "dinfo_path" should not have the kernel release
+            # appended, just use the exact path provided.
+            path = Path(path_str).absolute()
+            if path.is_dir():
+                paths.append(path)
+
+    # If we find a directory by the same name as this kernel's release in the
+    # working directory, use that. Otherwise, use the working directory since
+    # there may be some modules in there.
+    cwd = Path.cwd().absolute()
+    cwd_release = cwd / release
+    if cwd_release.is_dir():
+        paths.append(cwd_release)
+    else:
+        paths.append(cwd)
+
+    # Finally, these paths expect that there must be a release appended.
+    candidate_paths: List[str] = []
+
+    env_dinfo_path = os.environ.get("DEBUGINFO_BASE")
+    if env_dinfo_path is not None:
+        path = Path(env_dinfo_path).absolute()
+        if (path / release).is_dir():
+            candidate_paths.append(str(path / release))
+
+    candidate_paths.extend(
+        [
+            "/usr/lib/debug/lib/modules",
+            "./usr/lib/debug/lib/modules",
+        ]
+    )
+    # Include paths where the configured fetcher would store debuginfo
+    for fetcher in _get_configured_fetchers():
+        candidate_paths.extend(map(str, fetcher.output_directories()))
+
+    for path_str in candidate_paths:
+        path = Path(path_str).absolute() / release
+        if path.is_dir():
+            paths.append(path)
+    if prog is not None:
+        prog.cache["drgn_tools"]["debuginfo_paths"] = paths.copy()
+    return paths
+
+
+def _find_debuginfo(paths: List[Path], mod: str) -> Optional[Path]:
+    for search_dir in paths:
+        if "lib/modules" in str(search_dir) and mod != "vmlinux":
+            # If the path contains "lib/modules", it's likely the result of
+            # extracting an RPM. That means that we'll have a nested directory
+            # structure to search for modules. Be lenient on hyphens and
+            # underscores too.
+            mod_pat = mod.replace("-", "[_-]")
+            for candidate in search_dir.glob(f"**/{mod_pat}.ko.debug*"):
+                return candidate
+        else:
+            name_no_hyphen = None
+            if "-" in mod:
+                name_no_hyphen = mod.replace("-", "_")
+            exts = (
+                ("",) if mod == "vmlinux" else (".ko.debug", ".ko", ".ko.xz")
+            )
+            # Otherwise, it's likely to be a flat directory containing the
+            # files without any additional structure. Just test the common
+            # extensions. Using path lookup will be faster than the glob which
+            # requires a readdir operation. This can matter for network
+            # filesystems or very large directories.
+            for ext in exts:
+                candidate = search_dir / f"{mod}{ext}"
+                if candidate.exists():
+                    return candidate
+                # try the standardized underscore
+                if name_no_hyphen:
+                    candidate = search_dir / f"{name_no_hyphen}{ext}"
+                    print(candidate)
+                    if candidate.exists():
+                        return candidate
+    return None
+
+
+def find_debuginfo(
+    prog_or_release: Union["Program", str],
+    mod: str,
+    dinfo_path: Optional[str] = None,
+) -> Optional[Path]:
+    """
+    Search for debuginfo (either module or regular debuginfo)
+
+    This function searches for a given module's debuginfo in a list of paths.
+    It returns the path of a match, if found. The debuginfo paths are determined
+    as follows:
+
+    1. Files within ``$PWD/$RELEASE`` are considered, if it exists. Otherwise,
+       files within ``$PWD`` are considered.
+
+    2. Files in the directory ``$DEBUGINFO_BASE/$RELEASE`` are considered, for
+       each colon-separated path in ``$DEBUGINFO_BASE``, if it exists.
+
+    3. Files in ``/usr/lib/debug/lib/modules/$RELEASE`` and
+       ``./usr/lib/debug/lib/modules/$RELASE``, if either exist.
+
+    4. Files in ``/share/linuxrpm/vmlinux_repo/{64,32}/$RELEASE`` are searched.
+
+    The directories may be searched in one of two ways. For directories whose
+    full paths contain the string ``lib/modules``, we assume that the directory
+    was created by installing the RPM, or by extracting the RPM directly. This
+    means that the module debuginfo may be in a subdirectory, and so we use a
+    recursive search through subdirectories. For directories which do not
+    contain the string ``lib/modules``, our search is not recursive. This is
+    mainly to improve performance: listing directories is slow on network
+    filesystems, and there's a chance that directories like ``$PWD`` will
+    contain a lot of subdirectories.
+
+    Finally, it is important to note that this function is lenient on module
+    names. It should be called with the original module name, but it will match
+    a module file whose name has had hyphens replaced by underscore. This
+    ensures it can match files extracted by :func:`fetch_debuginfo()`.
+
+    :param mod: The original module name (not standardized with underscores)
+    :param dinfo_path: An optional additional path to search
+    :returns: The path to a debuginfo file, if found
+    """
+    user_paths = []
+    if dinfo_path:
+        user_paths.append(dinfo_path)
+    paths = _get_debuginfo_paths(prog_or_release, dinfo_path=user_paths)
+    return _find_debuginfo(paths, mod)
+
+
+class KernelVersion(NamedTuple):
+    version: str
+    """
+    The upstream kernel version (e.g. 5.15.0).
+
+    Note that depending on the package versioning scheme, the patchlevel number
+    here may be useless, misleading, or otherwise unhelpful.
+    """
+    release: str
+    """The packaging release version (the stuff after the hyphen)."""
+    ol_version: int
+    """The Oracle Linux distribution version"""
+    ol_update: Optional[int]
+    """
+    The Oracle Linux distribution update.
+
+    Note that this is not provided by UEK kernel versions. It is, however,
+    provided by the regular kernel package.
+    """
+    arch: str
+    """The package architecture."""
+    original: str
+    """The original version string"""
+
+    extraversion1: str
+    """The extra version text prior to the OL version."""
+    extraversion2: str
+    """The extra version text prior to the OL version."""
+
+    is_uek: bool
+    """Whether the kernel is a UEK kernel."""
+
+    @classmethod
+    def parse(cls, original: str) -> "KernelVersion":
+        """
+        Parse the given kernel release string and return a ``KernelVersion``:
+
+            >>> KernelVersion.parse(prog["UTS_RELEASE"].string_().decode("ascii"))
+            KernelVersion(version='4.14.35', release='2047.516.2.4', ol_version=7, ol_update=None, arch='x86_64', original='4.14.35-2047.516.2.4.el7uek.x86_64', is_uek=True)
+
+        :param original: The kernel's release string
+        :returns: A ``KernelVersion`` with fields parsed
+        """
+        version_re = re.compile(
+            r"(?P<version>\d+\.\d+\.\d+)-(?P<release>[0-9.-]+)"
+            r"(?P<extraversion1>\.[0-9a-zA-Z._]+?)?"
+            r"\.el(?P<ol_version>\d+)(?P<extra>uek|_(?P<update>\d+)|)"
+            r"(?P<extraversion2>\.[0-9a-zA-Z._]+?)?"
+            r"\.(?P<arch>.+)"
+        )
+        match = version_re.fullmatch(original)
+        if not match:
+            raise ValueError(
+                "Could not understand kernel version string: " + original
+            )
+        update = None
+        if match["update"]:
+            update = int(match["update"])
+        return cls(
+            match["version"],
+            match["release"],
+            int(match.group("ol_version")),
+            update,
+            match["arch"],
+            original,
+            match["extraversion1"] or "",
+            match["extraversion2"] or "",
+            match["extra"].startswith("uek"),
+        )
+
+    def oraclelinux_debuginfo_rpm(self) -> str:
+        if self.is_uek:
+            package_name = "kernel-uek"
+        else:
+            package_name = "kernel"
+        return f"{package_name}-debuginfo-{self.original}.rpm"
+
+
+def extract_rpm(
+    source_rpm: Path,
+    dest_dir: Path,
+    modules: List[str],
+    permissions: Optional[int] = None,
+) -> Dict[str, Path]:
+    if not dest_dir.exists():
+        # Rather than use .mkdir(exist_ok=True), we do the test explicitly here,
+        # because when creating the directory, we need to set 777 permissions in
+        # order to allow other users to extract debuginfo on shared
+        # repositories.
+        dest_dir.mkdir()
+        if permissions is not None:
+            dest_dir.chmod(permissions)
+    elif not os.access(dest_dir, os.R_OK | os.W_OK | os.X_OK):
+        # If the directory was created by another user who did not set 777
+        # permissions on the directory, we will not be able to update it with
+        # new files. Extracting the RPM is expensive, and the resulting error
+        # message from this case will be cryptic. So, detect it and raise the
+        # error early. We can also suggest a workaround for it.
+        raise Exception(
+            f"The directory {dest_dir} exists, but you do not have permission "
+            "to update it. This commonly occurs when users create a directory "
+            "but fail to set 0777 permissions. A common workaround is to "
+            "rename the directory (e.g. add a -DONTUSE suffix) and then run "
+            "the extraction again. The extraction code here will properly set "
+            "the 0777 permissions when it creates the directory."
+        )
+
+    with tempfile.NamedTemporaryFile(
+        "wt"
+    ) as tf, tempfile.TemporaryDirectory() as tdname:
+        td = Path(tdname)
+        for module in modules:
+            if module == "vmlinux":
+                tf.write("*/vmlinux\n")
+            else:
+                # Per the documentation, callers should provide module names
+                # using the standardized underscore naming. However, we need to
+                # recognize hyphen naming too.
+                tf.write(f"*/{module}.ko.debug\n")
+                if "_" in module:
+                    tf.write(f"*/{module.replace('_', '-')}.ko.debug\n")
+        tf.flush()
+        proc = subprocess.run(
+            f"rpm2cpio {source_rpm} | cpio -ivd --quiet -E {tf.name}",
+            shell=True,
+            check=True,
+            cwd=tdname,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="ascii",
+        )
+        extracted = []
+        for line in proc.stderr.split("\n"):  # filenames on stderr
+            line = line.strip()
+            if not line:
+                continue
+            file_path = td / line[2:]
+            if not file_path.is_file():
+                continue
+            # standardize the names to use underscore
+            name = file_path.name.replace("-", "_")
+            # pathlib rename does not work since this is likely to be across
+            # filesystems. Use shutil, and use a str() because shutil.move()
+            # only got support for handling Path objects in 3.9.
+            shutil.move(
+                str(file_path),
+                str(dest_dir / name),
+            )
+            if file_path.name == "vmlinux":
+                extracted.append(name)
+            elif file_path.name.endswith(".ko.debug"):
+                extracted.append(name[: -len(".ko.debug")])
+
+    result = {
+        module: dest_dir
+        / (module if module == "vmlinux" else f"{module}.ko.debug")
+        for module in extracted
+    }
+    return result
+
+
+_epilog = """
+This tool can find the requested vmlinux and module debuginfo for a UEK kernel.
+If necessary, it will extract the necessary files from the debuginfo RPM. As
+output, it will print to stdout the full path to the vmlinux as its first line,
+followed by the path to any requested module debuginfo, each on a separate line.
+An error in the search or extraction process will result in a non-zero error
+code.  However, modules which are not found will not be considered an error:
+this is common for the case of out-of-tree or proprietary modules. Instead, the
+list of modules which were not found will be printed to stderr as a warning.
+This can be silenced with the --quiet option.
+"""
+
+
+def _main():
+    parser = argparse.ArgumentParser(
+        description="tool for locating and extracting UEK debuginfo",
+        epilog=_epilog.strip(),
+    )
+    parser.add_argument(
+        "release",
+        type=str,
+        help="UEK release string",
+    )
+    parser.add_argument(
+        "--modules",
+        "--module",
+        "-m",
+        action="append",
+        default=[],
+        help=(
+            "Comma-separated list of modules to attempt to load (may be "
+            "specified multiple times)"
+        ),
+    )
+    parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Do not print any extraneous output to stderr",
+    )
+    args = parser.parse_args()
+    modules = list(
+        itertools.chain.from_iterable(
+            s.replace(
+                "-",
+                "_",
+            ).split(",")
+            for s in args.modules
+        )
+    )
+    modules.insert(0, "vmlinux")
+
+    exists = {}
+    to_load = set()
+    for module in modules:
+        path = find_debuginfo(args.release, module)
+        if path:
+            exists[module] = path
+        else:
+            to_load.add(module)
+
+    if to_load:
+        if not args.quiet:
+            print("Fetching debuginfo...", file=sys.stderr)
+        extracted = fetch_debuginfo(args.release, list(to_load))
+        for extracted_mod, path in extracted.items():
+            exists[extracted_mod] = path
+            to_load.remove(extracted_mod)
+
+    if to_load and not args.quiet:
+        print(
+            "warning: could not find debuginfo for modules: {}".format(
+                ", ".join(to_load)
+            ),
+            file=sys.stderr,
+        )
+
+    # Unclear how this could happen, but handle it explicitly:
+    vmlinux_path = exists.pop("vmlinux")
+    if not vmlinux_path:
+        sys.exit("error: could not find vmlinux file")
+    print(vmlinux_path)
+    for module_path in exists.values():
+        print(module_path)
+
+
+if __name__ == "__main__":
+    _main()

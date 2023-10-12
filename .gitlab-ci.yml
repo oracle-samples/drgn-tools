@@ -1,0 +1,9 @@
+vmtest:
+  script:
+    - rm -rf .tox
+    - git archive HEAD -o archive.tar.gz
+    - python3.8 -m venv venv
+    - venv/bin/pip install -r testing/requirements.txt
+    - venv/bin/python -m testing.vmcore test --core-directory /var/drgn-tools/vmcores
+    - mkdir -p tmp/overlays tmp/info
+    - PATH=/usr/local/bin:$PATH venv/bin/python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz

@@ -1,0 +1,6 @@
+9P for UEK4 and UEK5
+====================
+
+9P filesystem is not enabled or built for UEK4 and UEK5. Thankfully, it can be
+built out-of-tree very simply for UEK5. This directory contains the necessary
+modification and compiled 9p.ko for UEK5.
