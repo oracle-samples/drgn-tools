@@ -6,6 +6,7 @@ UEK VM Logic - launches a qemu VM with unmodified UEK kernel
 import argparse
 import contextlib
 import fnmatch
+import os
 import shlex
 import shutil
 import subprocess
@@ -308,9 +309,14 @@ def run_vm(kernel: TestKernel, extract_dir: Path, commands: List[List[str]]):
     initrd = create_initrd(release, extract_dir, command=script)
     vmlinuz = find_vmlinuz(release, extract_dir)
     with create_block_image() as block_img_path, tempfile.NamedTemporaryFile() as tf:
+        qemu = f"qemu-system-{kernel.arch}"
+        if os.access("/dev/kvm", os.R_OK | os.W_OK):
+            args = [qemu, "-cpu", "host", "--enable-kvm"]
+        else:
+            args = [qemu]
         subprocess.run(
-            [
-                f"qemu-system-{kernel.arch}",
+            args
+            + [
                 "-kernel",
                 str(vmlinuz),
                 "-initrd",
@@ -318,9 +324,6 @@ def run_vm(kernel: TestKernel, extract_dir: Path, commands: List[List[str]]):
                 "-nographic",
                 "-m",
                 "2G",
-                "--enable-kvm",
-                "-cpu",
-                "host",
                 "-drive",
                 f"file={block_img_path},if=virtio,driver=raw",
                 "-virtfs",
