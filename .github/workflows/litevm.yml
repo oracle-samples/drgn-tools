@@ -1,0 +1,79 @@
+name: litevm test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        # OL7 and OL8 use 3.6. OL9 uses 3.9. Also test on the latest.
+        python-version: ["3.6", "3.9", "3.12"]
+      fail-fast: false
+    env:
+      TOX_OVERRIDE: "tox.envlist=python${{ matrix.python-version }};tox.skip_missing_interpreters=false"
+    steps:
+      - uses: actions/checkout@v4
+      # If we rely on using the same Python version for tox as we do for the
+      # testing version of Python, we end up getting different versions of tox
+      # with different behavior. Let's setup a well-defined python version for
+      # tox and use that. We need to place this one before the regular python
+      # setup so that the regular python takes precedence.
+      - name: Set up Python for Tox
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install qemu-kvm zstd gzip bzip2 cpio busybox-static fio
+          sudo wget -O /usr/bin/rpm2cpio https://github.com/rpm-software-management/rpm/raw/rpm-4.19.0-release/scripts/rpm2cpio.sh
+          echo '0403da24a797ccfa0cfd37bd4a6d6049370b9773e558da6173ae6ad25f97a428 /usr/bin/rpm2cpio' | sha256sum -c -
+          sudo chmod 755 /usr/bin/rpm2cpio
+      - name: Setup test environment
+        run: |
+          python3.12 -m pip install --user --break-system-packages tox
+          tox list
+          tox --notest
+          tox -e runner --notest
+
+      # Use Github Actions to cache RPMs by date. This can save a couple minutes
+      # in the run, which is nice. The cache contains the Yum sqlite database,
+      # and the downloaded RPMs.
+      #
+      # A cache miss results in getting the most recent cached data (e.g. from
+      # yesterday). The runner will check the repo metadata and get the updated
+      # data, and delete any stale data, so after the run completes, the
+      # testdata can be cached for future runs.
+      #
+      # On a cache hit, the test runner will still check the yum repo metadata,
+      # and if it differs from the cached data, it will clear and download it.
+      # So a cache hit isn't guaranteed to speed things up, but kernel packages
+      # aren't usually updated _that_ frequently.
+      - name: Get Date
+        id: get-date
+        run: |
+          echo "date=$(/bin/date -u "+%Y%m%d")" >> $GITHUB_OUTPUT
+        shell: bash
+      - name: Cache RPMs
+        uses: actions/cache@v3
+        with:
+          path: testdata/yumcache
+          key: ${{ runner.os }}-rpms-${{ steps.get-date.outputs.date }}
+          restore-keys: |
+            ${{ runner.os }}-rpms-
+      - name: Fetch RPMs
+        run: |
+          tox -e runner -- python -m testing.litevm.rpm
+
+      - name: Run tests
+        run: |
+          tox -e runner -- python -m testing.litevm.vm --python-version ${{ matrix.python-version }}

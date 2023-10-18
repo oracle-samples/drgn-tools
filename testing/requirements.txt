@@ -1,4 +1,4 @@
-dataclasses  # backport for <3.8
+#dataclasses  # backport for <3.8
 oci>=2.23.2  # upload manager thread safety
 oci-cli
 paramiko
