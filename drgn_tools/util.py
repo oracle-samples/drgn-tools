@@ -262,6 +262,9 @@ def download_file(
 ) -> None:
     response = urlopen(url)
 
+    if response.status >= 400:
+        raise Exception(f"HTTP {response.status} while fetching {url}")
+
     buf = bytearray(4096 * 4)
     total_bytes = int(response.headers.get("Content-Length", "0"))
     progress = SimpleProgress(desc, total_bytes, quiet=quiet)

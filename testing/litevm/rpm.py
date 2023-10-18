@@ -145,8 +145,9 @@ class TestKernel:
         xml = io.BytesIO()
         download_file(index_url, xml, desc="Fetching index", quiet=False)
         tree = ET.fromstring(xml.getvalue().decode("utf-8"))
+        ns = "http://linux.duke.edu/metadata/repo"
         primary_db_node = tree.findall(
-            ".//{*}data[@type='primary_db']/{*}location"
+            f".//{{{ns}}}data[@type='primary_db']/{{{ns}}}location"
         )[0]
 
         # Now fetch the database and decompress it if necessary
