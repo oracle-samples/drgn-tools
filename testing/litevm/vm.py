@@ -337,6 +337,7 @@ def run_vm(kernel: TestKernel, extract_dir: Path, commands: List[List[str]]):
                 "-mon",
                 "chardev=char0",
             ],
+            check=True,
         )
         output = tf.read()
     if b"DRGN_TOOLS: FAILURE" in output:
