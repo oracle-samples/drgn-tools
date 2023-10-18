@@ -171,7 +171,7 @@ class TestKernel:
         # kernel-uek since even if the package is split, that's the
         # meta-package.
         pkg = "kernel-uek"
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(str(db_path))
         rows = conn.execute(
             """
             SELECT version, release, location_href FROM packages
