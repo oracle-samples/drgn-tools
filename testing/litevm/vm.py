@@ -340,20 +340,23 @@ def run_vm(kernel: TestKernel, extract_dir: Path, commands: List[List[str]]):
         sys.exit(1)
 
 
-def run_tests_commands() -> List[List[str]]:
+def run_tests_commands(pyver: Optional[str]) -> List[List[str]]:
     tox = Path(__file__).parent.parent.parent / ".tox"
     commands = []
     for venv in tox.iterdir():
         if not venv.is_dir():
             continue
-        if not venv.name.startswith("py3"):
+        if not venv.name.startswith("py"):
             continue
         pytest = venv / "bin/pytest"
         if not pytest.exists():
             continue
-        commands.append(
-            [str(pytest), "tests", "--cov=drgn_tools", "--cov=tests", "-rP"]
-        )
+        cmd = [str(pytest), "tests", "--cov=drgn_tools", "--cov=tests", "-rP"]
+        if pyver and venv.name.endswith(pyver):
+            return [cmd]
+        commands.append(cmd)
+    if pyver:
+        raise Exception(f"Could not find python version {pyver}")
     return commands
 
 
@@ -376,15 +379,21 @@ def main():
         help="Match against the given kernel (eg *uek6*)",
     )
     parser.add_argument(
+        "--python-version",
+        help="Only run against one python version in tox env",
+    )
+    parser.add_argument(
         "command",
         nargs="*",
         help="Command to run on each vm (leave empty for default: test)",
     )
     args = parser.parse_args()
     if args.command:
+        if args.python_version:
+            sys.exit("Cannot specify --python-version and custom command")
         commands = [args.command]
     else:
-        commands = run_tests_commands()
+        commands = run_tests_commands(args.python_version)
     for k in TEST_KERNELS:
         k.cache_dir = args.yum_cache_dir
         if args.kernel and not fnmatch.fnmatch(k.slug(), args.kernel):
