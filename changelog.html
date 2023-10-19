@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Changelog &#8212; drgn-tools v0.5.1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=4f649999" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=039e1c02" />
+    <script src="_static/documentation_options.js?v=421b0634"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="icon" href="_static/drgn-tools.png"/>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="API Reference" href="api.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="changelog">
+<h1>Changelog<a class="headerlink" href="#changelog" title="Link to this heading">¶</a></h1>
+<section id="unreleased">
+<h2>Unreleased<a class="headerlink" href="#unreleased" title="Link to this heading">¶</a></h2>
+<p>Changes which are committed to git, but not yet released, may appear here.</p>
+</section>
+<section id="tue-sept-12-2023">
+<h2>0.5.1 - Tue, Sept 12, 2023<a class="headerlink" href="#tue-sept-12-2023" title="Link to this heading">¶</a></h2>
+<p>In this release we have several new helpers, as well as a lot of changes in
+preparation for open-sourcing.</p>
+<section id="added">
+<h3>Added<a class="headerlink" href="#added" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>0.5.1 patch adds an entry point for the “corelens” script.</p></li>
+<li><p>Debuginfo fetching API is added. An implementation which downloads from the
+public Yum debuginfo repositories is added. The debuginfo fetching is
+configurable via <code class="docutils literal notranslate"><span class="pre">~/.config/drgn_tools.ini</span></code>.</p></li>
+<li><p>New testing framework, “litevm”, enables testing drgn-tools without creating
+large VM images. This is suitable for use in environments like Github actions.</p></li>
+<li><p>New helpers</p>
+<ul>
+<li><p>RDS</p></li>
+<li><p>Dentry cache</p></li>
+<li><p>File cache</p></li>
+<li><p>Sysctl</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="changed">
+<h3>Changed<a class="headerlink" href="#changed" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The required drgn version is 0.0.24.</p></li>
+<li><p>Existing VM testing framework has been renamed to “heavyvm”.</p></li>
+</ul>
+</section>
+</section>
+<section id="thur-jun-29-2023">
+<h2>0.4.0 - Thur, Jun 29, 2023<a class="headerlink" href="#thur-jun-29-2023" title="Link to this heading">¶</a></h2>
+<section id="id1">
+<h3>Added<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>New md/raid helpers and corresponding corelens module.</p></li>
+<li><p>New RDS helper and corresponding corelens module.</p></li>
+</ul>
+</section>
+<section id="id2">
+<h3>Changed<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Test VMs are now updated to OL8.8 and OL9.2.</p></li>
+<li><p>The minimum requirement for drgn is not 0.0.23, the latest release.</p></li>
+</ul>
+</section>
+<section id="fixes">
+<h3>Fixes<a class="headerlink" href="#fixes" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Fix for the SMP CSD helpers.</p></li>
+<li><p>An optimization has been added to the symbol loader for modules which don’t
+have debuginfoa available.</p></li>
+</ul>
+</section>
+</section>
+<section id="tue-may-23-2023">
+<h2>0.3.0 - Tue, May 23, 2023<a class="headerlink" href="#tue-may-23-2023" title="Link to this heading">¶</a></h2>
+<section id="id3">
+<h3>Added<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The <code class="docutils literal notranslate"><span class="pre">drgn_tools.corelens</span></code> script has finally become more useful and less
+preliminary. This is intended to be an automatic mechanism for running
+analysis code and printing its results to either stdout, or to a
+sosreport-like directory.</p>
+<ul>
+<li><p>The command line interface is changed &amp; much improved from the preliminary
+version released in 0.2.0, thanks to feedback in the Drgn Biweekly meeting.</p></li>
+<li><p>Helpers may implement Corelens “modules”, which can then be executed on the
+command line with arguments, or executed automatically in bulk using their
+default arguments.</p></li>
+<li><p>The Corelens system handles ensuring that debuginfo is loaded for the
+correct kernel modules. It defaults to using DWARF debuginfo, but it
+supports the new provisional CTF API provided by the internal Drgn builds.</p></li>
+<li><p>Many pre-existing helpers now have corelens modules, as well as the newly
+added helper modules.</p></li>
+<li><p>During interactive debugging, you may use the special function <code class="docutils literal notranslate"><span class="pre">cl()</span></code>
+function to execute a corelens command.</p></li>
+</ul>
+</li>
+<li><p>Added the Ext4 Directory Lock scan, which can find tasks blocked on a
+particular directory inode and identify the current owner of the lock. This
+scan depends on DWARF debuginfo for finding variables from the stack trace.
+There is a Corelens module too. Thanks to Junxiao for these.</p></li>
+<li><p>Added helpers for the SMP IPI subsystem. These can show pending SMP function
+calls and help see which CPU is waiting on which others. There is a Corelens
+module as well. Thanks Imran for these!</p></li>
+</ul>
+</section>
+<section id="fixed">
+<h3>Fixed<a class="headerlink" href="#fixed" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The <code class="docutils literal notranslate"><span class="pre">drgn_tools.debuginfo</span></code> script now correctly outputs the filename <code class="docutils literal notranslate"><span class="pre">vmlinux</span></code>
+rather than <code class="docutils literal notranslate"><span class="pre">vmlinux.ko.debug</span></code>, as it did before.</p></li>
+</ul>
+</section>
+</section>
+<section id="tue-april-25-2023">
+<h2>0.2.0 - Tue, April 25, 2023<a class="headerlink" href="#tue-april-25-2023" title="Link to this heading">¶</a></h2>
+<section id="id4">
+<h3>Added<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Added <code class="docutils literal notranslate"><span class="pre">drgn_tools.debuginfo</span></code> CLI script. This can be called with a UEK release
+string to find vmlinux, extracting it if necessary. In the process, it will
+also update the access time in the <code class="docutils literal notranslate"><span class="pre">access.db</span></code> file.</p></li>
+<li><p>Added the <code class="docutils literal notranslate"><span class="pre">drgn_tools.taint</span></code> module that has an enumeration of the module /
+kernel taint values. These aren’t included in debuginfo due since they are
+preprocessor definitions.</p></li>
+<li><p>Added a preliminary system called <code class="docutils literal notranslate"><span class="pre">corelens</span></code> which will be able to run scripts
+against vmcores and live systems. For now, there’s no major change introduced,
+and the system is just a sketch.</p></li>
+</ul>
+</section>
+<section id="id5">
+<h3>Changed<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.bt.bt()</span></code> now has a <code class="docutils literal notranslate"><span class="pre">show_absent</span></code> flag – and it is <strong>false by
+default</strong>. This is a breaking change, but I think a welcome one. There are
+more absent variables than non-absent in your average stack trace, and they
+take up a lot of space to show you absolutely nothing. So now, they are hidden
+by default to free up some real estate on your screen.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.bt</span></code> has now been refactored into several helper functions. Please
+see the module documentation for more information. TL;DR: if you wanted to get
+expanded stack trace frames, without printing them, you’re now in luck!</p></li>
+</ul>
+</section>
+<section id="id6">
+<h3>Fixed<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>A relatively uncommon <code class="docutils literal notranslate"><span class="pre">FaultError</span></code> in <code class="docutils literal notranslate"><span class="pre">bt()</span></code> was fixed</p></li>
+<li><p>Fixed some address computation bugs for exported module symbols</p></li>
+<li><p>Lots of documentation and testing improvements!</p></li>
+</ul>
+</section>
+</section>
+<section id="tue-mar-14-2023">
+<h2>0.1.0 - Tue, Mar 14, 2023<a class="headerlink" href="#tue-mar-14-2023" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Improvements to the CLI:</p>
+<ul>
+<li><p>Debuginfo extraction support is now here! When the <code class="docutils literal notranslate"><span class="pre">/share/linuxrpm</span></code>
+directory exists, the <code class="docutils literal notranslate"><span class="pre">DRGN</span></code> CLI will automatically extract the vmlinux in
+the case where it is not found.</p></li>
+<li><p>Module debuginfo extraction support! You can ask drgn-tools to load an
+individual module’s debuginfo, and optionally extract it when necessary:
+<code class="docutils literal notranslate"><span class="pre">KernelModule.load_debuginfo(extract=True)</span></code>. You can also ask to load a list
+of module debuginfo, or all debuginfo, with
+<code class="docutils literal notranslate"><span class="pre">drgn_tools.module.load_module_debuginfo()</span></code>. Finally, you can have the
+<code class="docutils literal notranslate"><span class="pre">DRGN</span></code> CLI automatically load all module debuginfo with <code class="docutils literal notranslate"><span class="pre">DRGN</span> <span class="pre">-x</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dmesg(prog)</span></code> will open the kernel log in a pager for easy reading.</p></li>
+<li><p>The CLI contains a few more commonly used helpers from drgn_tools</p></li>
+</ul>
+</li>
+<li><p>The <code class="docutils literal notranslate"><span class="pre">drgn.helpers.linux.idr</span></code> module has been patched to include support for
+UEK4. This patch (by Imran) is already integrated in <code class="docutils literal notranslate"><span class="pre">drgn</span></code> main branch, but
+has not been released and won’t see release there for a while. So it’s
+included in <code class="docutils literal notranslate"><span class="pre">drgn_tools</span></code>. In order for the “patch” to apply, you need to
+import <code class="docutils literal notranslate"><span class="pre">drgn_tools</span></code> – even if you’re not using it.</p></li>
+<li><p>Symbol loading for modules without DWARF debuginfo was further improved: now,
+module symbols can be found using the exported symbol and GPL symbol list on
+the <code class="docutils literal notranslate"><span class="pre">struct</span> <span class="pre">module</span> <span class="pre">*</span></code>. This information is combined with module kallsyms to
+provide a decent baseline level of support even for modules without debuginfo.
+The only area where this would be less helpful is for purposely obfuscated
+modules, e.g. antivirus. It’s quite helpful for giving you better backtrace
+information.</p></li>
+<li><p>Added NVMe helpers by Ritika.</p></li>
+<li><p>Added In-Flight I/O helpers by Junxiao.</p></li>
+<li><p>Added Workqueue helpers by Imran.</p></li>
+<li><p>Improvements to the CI testing:</p>
+<ul>
+<li><p>Each OL and UEK version now shows up under its own collapsible sub-header in
+the CI testing output. This makes it easier to scan the output and find what
+you’re interested in.</p></li>
+<li><p>Fixed a flaky block test by retrying it, so test results should be more
+reliable now.</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="tue-feb-14-2023">
+<h2>0.0.7 - Tue, Feb 14, 2023<a class="headerlink" href="#tue-feb-14-2023" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Really fixed the version string</p></li>
+</ul>
+</section>
+<section id="id7">
+<h2>0.0.6 - Tue, Feb 14, 2023<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Fixed the version string</p></li>
+<li><p>Fixed missing newline in cli header</p></li>
+</ul>
+</section>
+<section id="id8">
+<h2>0.0.5 - Tue, Feb 14, 2023<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Minor improvements to module symbol table lookup and backtrace printing.</p></li>
+<li><p>Minor improvements to CLI code to support unreleased drgn changes.</p></li>
+<li><p>Add <code class="docutils literal notranslate"><span class="pre">redirect_stdout()</span></code></p></li>
+</ul>
+</section>
+<section id="fri-jan-13-2023">
+<h2>0.0.4 - Fri, Jan 13, 2023<a class="headerlink" href="#fri-jan-13-2023" title="Link to this heading">¶</a></h2>
+<p>Some major improvements to the backtrace helper:</p>
+<ul class="simple">
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">bt(prog,</span> <span class="pre">cpu=5)</span></code> as a shortcut for backtracing the active task.</p></li>
+<li><p>Get rid of the return value unless requested.</p></li>
+<li><p>Lookup symbols in the module symbol table even without debuginfo.</p></li>
+</ul>
+<p>Updated the kernel module helper and added the ability to lookup symbols.</p>
+<p>Added a CLI wrapper which can automatically locate the vmlinux: DRGN.</p>
+</section>
+<section id="mon-jan-9-2023">
+<h2>0.0.3 - Mon, Jan 9, 2023<a class="headerlink" href="#mon-jan-9-2023" title="Link to this heading">¶</a></h2>
+<p>Adds the backtrace helper.</p>
+</section>
+<section id="id9">
+<h2>0.0.2 - Mon, Jan 9, 2023<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h2>
+<p>This the first release for internal distribution, with more helpers.</p>
+<p>Contains additional helpers:</p>
+<ul class="simple">
+<li><p>virtio</p></li>
+<li><p>kernel module helpers</p></li>
+<li><p>logging</p></li>
+</ul>
+</section>
+<section id="mon-jul-25-2022">
+<h2>0.0.1 - Mon, Jul 25, 2022<a class="headerlink" href="#mon-jul-25-2022" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Initial release, containing one helper and some documentation.</p></li>
+</ul>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="index.html">
+              <img class="logo" src="_static/drgn-tools.png" alt="Logo"/>
+            </a></p>
+<h1 class="logo"><a href="index.html">drgn-tools</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="installing.html">Installing drgn-tools</a></li>
+<li class="toctree-l1"><a class="reference internal" href="code-quality.html">Contributing: Code Quality Guidelines</a></li>
+<li class="toctree-l1"><a class="reference internal" href="testing.html">Contributing: Testing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+</ul>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Changelog</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="api.html" title="previous chapter">API Reference</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Oracle and/or its affiliates.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.2.6</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="_sources/changelog.md.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

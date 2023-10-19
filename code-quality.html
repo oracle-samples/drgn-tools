@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Contributing: Code Quality Guidelines &#8212; drgn-tools v0.5.1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=4f649999" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=039e1c02" />
+    <script src="_static/documentation_options.js?v=421b0634"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="icon" href="_static/drgn-tools.png"/>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Contributing: Testing" href="testing.html" />
+    <link rel="prev" title="Installing drgn-tools" href="installing.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="contributing-code-quality-guidelines">
+<h1>Contributing: Code Quality Guidelines<a class="headerlink" href="#contributing-code-quality-guidelines" title="Link to this heading">¶</a></h1>
+<p>Now that you can make changes to drgn-tools and test them out on vmcores, this
+guide will help you get those changes merged.</p>
+<section id="development-process">
+<h2>Development Process<a class="headerlink" href="#development-process" title="Link to this heading">¶</a></h2>
+<p>Rather than using an email and patch-based workflow, we use Github and pull
+requests to help maintain drgn-tools. This gives several advantages: Github
+allows us to do Continuous Integration to test your changes. The Github code
+review system can allow for more focused discussion, and it tracks code review
+issues, requiring you to resolve each discussion before moving forward.</p>
+<p>The basic workflow is simple:</p>
+<ol class="arabic simple">
+<li><p>Fork the Github repository and clone your fork.</p></li>
+<li><p>On your development machine, create a branch based on the latest <code class="docutils literal notranslate"><span class="pre">main</span></code>
+branch. Make whatever changes you need, and commit your changes. Please try
+to separate your changes into commits with meaningful messages, and use <code class="docutils literal notranslate"><span class="pre">git</span>
+<span class="pre">commit</span> <span class="pre">-s</span></code> to sign-off on your commits.</p></li>
+<li><p>Push your branch back to your fork.</p></li>
+<li><p>Create a pull request in the Github UI.</p></li>
+<li><p>Respond to review comments! In order to submit a new revision of your branch,
+you can simply push new commits. You can also rebase your branch and push it
+with <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">push</span> <span class="pre">origin</span> <span class="pre">HEAD</span> <span class="pre">--force-with-lease</span></code>. Ideally, you should try
+amend and rebase changes as necessary, rather than adding lots of follow-up
+commits fixing small issues.</p></li>
+<li><p>Once your changes are merged, they will be included in the next drgn-tools
+release, which may be in a few weeks. If you have any timing requirements, we
+can create releases sooner, just ask.</p></li>
+</ol>
+</section>
+<section id="code-quality-static-checks">
+<h2>Code Quality: Static Checks<a class="headerlink" href="#code-quality-static-checks" title="Link to this heading">¶</a></h2>
+<p>When you make a commit, some “pre-commit hooks” will run, doing various checks
+(and possibly changes) on your code. The commit will not succeed until you have
+made sure all the static checks and formatters are successful. This describes
+all the checks and how to deal with them.</p>
+<section id="format">
+<h3>Format<a class="headerlink" href="#format" title="Link to this heading">¶</a></h3>
+<p>For the most part, you shouldn’t need to think too hard about code format, since
+the pre-commit hook will use the “Black” source code formatter to automatically
+format your code. But here are a few high level, common Python style guidelines:</p>
+<ul class="simple">
+<li><p>Use 4 spaces for indentation</p></li>
+<li><p>Use 2 newlines to separate functions, 1 newline to separate class methods</p></li>
+<li><p>Name functions using <code class="docutils literal notranslate"><span class="pre">snake_case</span></code> and classes using <code class="docutils literal notranslate"><span class="pre">CamelCase</span></code></p></li>
+<li><p>Try to keep it to 80 characters for a line</p></li>
+</ul>
+<p>Some other guidelines are enforced by our pre-commit hooks:</p>
+<ul class="simple">
+<li><p>No trailing whitespace in files</p></li>
+<li><p>Python imports should be ordered as follows: (<a class="reference external" href="https://github.com/asottile/reorder_python_imports#what-does-it-do">see docs for details</a>)</p>
+<ul>
+<li><p>Split into three groups: standard library, third-party modules (i.e. drgn),
+and then internal imports (e.g. drgn_tools).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">import</span></code> imports before <code class="docutils literal notranslate"><span class="pre">from</span></code> imports</p></li>
+<li><p>One import per line, no duplicates</p></li>
+<li><p>Ordered alphabetically</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="static-checking">
+<h3>Static Checking<a class="headerlink" href="#static-checking" title="Link to this heading">¶</a></h3>
+<p>To avoid some simple errors, the Flake8 static checker runs as a pre-commit hook
+as well. This will raise errors and warnings about common code smells—for
+example, unused variables. This checker will not automatically fix these issues,
+but they should be self-explanatory. If you run into issues, share the error
+message and code contents on via Github issues.</p>
+</section>
+<section id="type-annotations-mypy-hook">
+<h3>Type Annotations (mypy hook)<a class="headerlink" href="#type-annotations-mypy-hook" title="Link to this heading">¶</a></h3>
+<p>Recent Python 3 versions allow you to “annotate” the expected argument and
+return types of functions. It is done like so:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">happy_birthday_message</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">age</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">ones</span> <span class="o">=</span> <span class="n">age</span> <span class="o">%</span> <span class="mi">10</span>
+    <span class="n">tens</span> <span class="o">=</span> <span class="n">age</span> <span class="o">%</span> <span class="mi">100</span> <span class="o">-</span> <span class="n">ones</span>
+    <span class="k">if</span> <span class="n">ones</span> <span class="o">==</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">tens</span> <span class="o">!=</span> <span class="mi">10</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;happy </span><span class="si">{</span><span class="n">age</span><span class="si">}</span><span class="s2">st birthday, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span>
+    <span class="k">elif</span> <span class="n">ones</span> <span class="o">==</span> <span class="mi">2</span> <span class="ow">and</span> <span class="n">tens</span> <span class="o">!=</span> <span class="mi">10</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;happy </span><span class="si">{</span><span class="n">age</span><span class="si">}</span><span class="s2">nd birthday, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span>
+    <span class="k">elif</span> <span class="n">ones</span> <span class="o">==</span> <span class="mi">3</span> <span class="ow">and</span> <span class="n">tens</span> <span class="o">!=</span> <span class="mi">10</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;happy </span><span class="si">{</span><span class="n">age</span><span class="si">}</span><span class="s2">rd birthday, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;happy </span><span class="si">{</span><span class="n">age</span><span class="si">}</span><span class="s2">th birthday, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span>
+</pre></div>
+</div>
+<p>For function arguments, the type is separated from the name by a colon, and for
+return types, the type comes after the signature separated by an arrow (<code class="docutils literal notranslate"><span class="pre">-&gt;</span></code>).
+Functions with no return value should specify a return type of <code class="docutils literal notranslate"><span class="pre">None</span></code>.</p>
+<p>All functions should have these annotations, and the <code class="docutils literal notranslate"><span class="pre">mypy</span></code> hook is used to
+enforce this requirement. The result of having these annotations is that the
+<code class="docutils literal notranslate"><span class="pre">mypy</span></code> hook can also perform static checks and warnings, such as telling you
+when you do something that would cause a <code class="docutils literal notranslate"><span class="pre">TypeError</span></code>, or when you access a
+field that an object doesn’t have.</p>
+<p>These can be trickier to resolve, if you encounter mypy errors, feel free to
+immediately reach out via Github issues.</p>
+</section>
+</section>
+<section id="other-requirements-and-expectations">
+<h2>Other Requirements and Expectations<a class="headerlink" href="#other-requirements-and-expectations" title="Link to this heading">¶</a></h2>
+<section id="documentation">
+<h3>Documentation<a class="headerlink" href="#documentation" title="Link to this heading">¶</a></h3>
+<p>Every general purpose helper requires a Python docstring, which documents its
+purpose, parameters, and return value. No exceptions! Every function’s
+documentation will get included in this help site, allowing users to quickly
+find useful helpers.</p>
+<p>Use <code class="docutils literal notranslate"><span class="pre">make</span> <span class="pre">docs</span></code> to generate the documentation, and open it up to see whether
+your newly added functions are included in the documentation. You may need to
+modify <code class="docutils literal notranslate"><span class="pre">doc/api.rst</span></code> to get it to show up. Feel free to reach out in via
+Github issues if this is causing problems.</p>
+</section>
+<section id="kernel-compatibility">
+<h3>Kernel Compatibility<a class="headerlink" href="#kernel-compatibility" title="Link to this heading">¶</a></h3>
+<p>General purpose helpers should be compatible with all supported UEK versions. If
+they are not, this MUST be documented in the docstring. The CI system runs tests
+on each supported UEK version. You should include tests (described in the next
+article) that will exercise your helper’s code so that we can easily verify the
+compatibility on all UEKs.</p>
+</section>
+<section id="python-compatibility">
+<h3>Python Compatibility<a class="headerlink" href="#python-compatibility" title="Link to this heading">¶</a></h3>
+<p>We expect that we will be shipping drgn-tools via RPM to customers in the
+future. As a result, we need to maintain compatibility with the minimum
+available Python version, Python 3.6.</p>
+<p>Further, this means that we will not accept any Python code that depends on a
+Python library other than <code class="docutils literal notranslate"><span class="pre">drgn</span></code>. Adding third-party dependencies makes things
+much more difficult.</p>
+<p>To assist in this, there is a pre-commit hook called “vermin” (like version
+minimum) which checks all code to verify it uses features compatible all the way
+back to Python 3.6.</p>
+</section>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="index.html">
+              <img class="logo" src="_static/drgn-tools.png" alt="Logo"/>
+            </a></p>
+<h1 class="logo"><a href="index.html">drgn-tools</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="installing.html">Installing drgn-tools</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Contributing: Code Quality Guidelines</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#development-process">Development Process</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#code-quality-static-checks">Code Quality: Static Checks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#other-requirements-and-expectations">Other Requirements and Expectations</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="testing.html">Contributing: Testing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="changelog.html">Changelog</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="installing.html" title="previous chapter">Installing drgn-tools</a></li>
+      <li>Next: <a href="testing.html" title="next chapter">Contributing: Testing</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Oracle and/or its affiliates.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.2.6</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="_sources/code-quality.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

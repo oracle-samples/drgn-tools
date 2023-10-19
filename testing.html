@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Contributing: Testing &#8212; drgn-tools v0.5.1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=4f649999" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=039e1c02" />
+    <script src="_static/documentation_options.js?v=421b0634"></script>
+    <script src="_static/doctools.js?v=888ff710"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="icon" href="_static/drgn-tools.png"/>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="API Reference" href="api.html" />
+    <link rel="prev" title="Contributing: Code Quality Guidelines" href="code-quality.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="contributing-testing">
+<h1>Contributing: Testing<a class="headerlink" href="#contributing-testing" title="Link to this heading">¶</a></h1>
+<p>One of the most difficult things about making reliable kernel helpers is testing
+them. It is important that our helpers work reliably on different kernel
+versions: in particular, all supported versions of Oracle UEK.  Manually testing
+these things, and watching for regressions, would be nearly impossible. So, we
+have automated tests, located in the <code class="docutils literal notranslate"><span class="pre">tests</span></code> directory.  Each helper should
+have a few tests associated with it, that should exercise all the major
+functionality.</p>
+<section id="test-targets">
+<h2>Test Targets<a class="headerlink" href="#test-targets" title="Link to this heading">¶</a></h2>
+<p>The tests need a kernel to run on: either a live kernel, or a vmcore. Sometimes,
+there are specific hardware requirements for a helper, since it deals with a
+particular device driver or subsystem. Our current testing framework has three
+targets, which fill different niches.</p>
+<ol class="arabic simple">
+<li><p>Lite Virtual Machine (litevm) tests. These can run on your local machine, or
+on Github Actions. The tests run against a live UEK kernel, which has mounted
+the host’s filesystem via 9P.</p></li>
+<li><p>Heavy Virtual Machine (heavyvm) tests. These can also run on a local machine,
+but they require extensive setup and disk space. The heavyvm tests also run
+on Oracle internal CI.</p></li>
+<li><p>Vmcore tests. These run directly on your machine, and they load a vmcore and
+its associated debuginfo in order to run tests against them. Vmcores are
+stored in a specific filesystem hierarchy within the <code class="docutils literal notranslate"><span class="pre">testdata/vmcores</span></code>
+directory.</p></li>
+</ol>
+<p>To learn more about each kind of test, and how to run them, you can read the
+detailed documentation in the <code class="docutils literal notranslate"><span class="pre">testing</span></code> directory’s Readme file. For most
+helpers that are not hardware specific, you can write tests and run them with
+the “litevm” runner. For more hardware specific tests, you can run them with the
+“vmcore” runner.</p>
+</section>
+<section id="running-litevm-tests-locally">
+<h2>Running Litevm Tests Locally<a class="headerlink" href="#running-litevm-tests-locally" title="Link to this heading">¶</a></h2>
+<p>It is quite easy to run litevm tests locally. Use <code class="docutils literal notranslate"><span class="pre">make</span> <span class="pre">litevm-test</span></code> and the
+necessary tools and RPMs will get setup and run. The tests will run across UEK
+versions 5, 6, 7. You’ll need to have the following tools available on your
+system:</p>
+<ul class="simple">
+<li><p>Qemu</p></li>
+<li><p>Busybox</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">rpm2cpio</span></code> and the <code class="docutils literal notranslate"><span class="pre">cpio</span></code> command</p></li>
+<li><p>The package <code class="docutils literal notranslate"><span class="pre">kmod</span></code> (contains <code class="docutils literal notranslate"><span class="pre">depmod</span></code> command)</p></li>
+<li><p>Compression packages: <code class="docutils literal notranslate"><span class="pre">bzip2</span></code> and <code class="docutils literal notranslate"><span class="pre">gzip</span></code></p></li>
+<li><p>Ext4 utils: <code class="docutils literal notranslate"><span class="pre">mkfs.ext4</span></code></p></li>
+</ul>
+<p>This will run against all supported Python versions which are found on your
+system. The first run will take a while, as necessary RPMs are downloaded and
+extracted within the <code class="docutils literal notranslate"><span class="pre">testdata</span></code> directories. Future runs will be quicker.</p>
+</section>
+<section id="running-vmcore-tests-locally">
+<h2>Running Vmcore Tests Locally<a class="headerlink" href="#running-vmcore-tests-locally" title="Link to this heading">¶</a></h2>
+<p>Vmcore tests require you to maintain a directory (normally <code class="docutils literal notranslate"><span class="pre">testdata/vmcores</span></code>)
+which contains core dumps and their associated debuginfo files. Each vmcore must
+be stored in a subdirectory with a descriptive name. Within the subdirectory,
+the files must be named as so:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">vmcore</span></code> - the ELF or makedumpfile formatted core dump</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">vmlinux</span></code> - the debuginfo ELF file for the matching kernel version</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">*.ko.debug</span></code> - any debuginfo for modules, which will be loaded here.  If
+your core dump contains any “virtio” modules loaded, be sure to include the
+virtio module debuginfo in order to run the tests.</p></li>
+</ul>
+<p>If you have data stored on in your local <code class="docutils literal notranslate"><span class="pre">testdata/vmcores</span></code> directory, then
+running <code class="docutils literal notranslate"><span class="pre">make</span> <span class="pre">vmcore-test</span></code> will automatically run tests against them.</p>
+<p>Please see the <code class="docutils literal notranslate"><span class="pre">testing/README.md</span></code> file for more detailed documentation on the
+vmcore test runner. In particular, there is support for uploading and
+downloading the vmcores stored in your directory to a shared OCI Object Storage
+bucket. This can enable teams to share vmcores for more thorough testing.</p>
+<p>When sharing vmcores, please be aware that they can contain very sensitive data,
+such as encryption keys, sensitive file contents, network buffers, addresses,
+hostnames, etc. When creating a vmcore for testing &amp; sharing, it’s best to
+create it outside of any internal environment, and access it without using any
+shared passwords. Do not store credentials, API tokens, or cryptographic keys on
+the machine. Due to the sensitive nature of vmcores, there is not yet a public
+repository of shared vmcores for testing – though we hope to create one soon.</p>
+</section>
+<section id="python-test-guidance">
+<h2>Python Test Guidance<a class="headerlink" href="#python-test-guidance" title="Link to this heading">¶</a></h2>
+<section id="writing-tests-basics">
+<h3>Writing Tests: Basics<a class="headerlink" href="#writing-tests-basics" title="Link to this heading">¶</a></h3>
+<p>You can see some example tests in <code class="docutils literal notranslate"><span class="pre">tests/test_mm.py</span></code>.  Generally, each file in
+<code class="docutils literal notranslate"><span class="pre">drgn_tools</span></code> should have a corresponding test file in <code class="docutils literal notranslate"><span class="pre">tests</span></code>, but prefixed
+with <code class="docutils literal notranslate"><span class="pre">test_</span></code>.</p>
+<p>Test code is written using the <a class="reference external" href="https://docs.pytest.org/en/7.0.x/">pytest</a>
+framework. Each test is a simple function whose name begins with <code class="docutils literal notranslate"><span class="pre">test_</span></code>.
+Within the test function, normally you call the “unit under test”, and then make
+various assertions about the result of the function call. For instance, to test
+the above <code class="docutils literal notranslate"><span class="pre">happy_birthday_message()</span></code> function, you might write something like
+this:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">test_happy_birthday</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="n">happy_birthday_message</span><span class="p">(</span><span class="s2">&quot;Stephen&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;happy 1st birthday, Stephen!&quot;</span>
+    <span class="k">assert</span> <span class="n">happy_birthday_message</span><span class="p">(</span><span class="s2">&quot;Joe&quot;</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;happy 2nd birthday, Joe!&quot;</span>
+    <span class="k">assert</span> <span class="n">happy_birthday_message</span><span class="p">(</span><span class="s2">&quot;Sally&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;happy 3rd birthday, Sally!&quot;</span>
+    <span class="k">assert</span> <span class="n">happy_birthday_message</span><span class="p">(</span><span class="s2">&quot;Ben&quot;</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;happy 4th birthday, Sally!&quot;</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">assert</span></code> keyword is used to make these test assertion: you can use any
+expression that results in a boolean.</p>
+<p>Generally, you’ll need some resources to run a test: for example, to test drgn
+helpers, you need a <a class="reference external" href="https://drgn.readthedocs.io/en/latest/api_reference.html#drgn.Program" title="(in drgn v0.0.24+47.gff2a395)"><code class="xref py py-class docutils literal notranslate"><span class="pre">drgn.Program</span></code></a> which has a linux kernel and debug
+symbols loaded (either live, or vmcore). Rather than writing test code for this
+yourself, you can simply use a pytest <a class="reference external" href="https://docs.pytest.org/en/7.0.x/how-to/fixtures.html#how-to-fixtures">“fixture”</a>. To do
+this, you add an argument to your test function, named <code class="docutils literal notranslate"><span class="pre">prog</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">test_some_drgn_thing</span><span class="p">(</span><span class="n">prog</span><span class="p">:</span> <span class="n">drgn</span><span class="o">.</span><span class="n">Program</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="o">...</span>
+</pre></div>
+</div>
+<p>When your test is run, the pytest framework will look in <code class="docutils literal notranslate"><span class="pre">tests/conftest.py</span></code>
+to find a fixture named <code class="docutils literal notranslate"><span class="pre">prog</span></code>, and it will use that code to create a Program
+object. This way, your test can focus on testing functionality.</p>
+</section>
+<section id="writing-tests-high-level-goals">
+<h3>Writing Tests: High Level Goals<a class="headerlink" href="#writing-tests-high-level-goals" title="Link to this heading">¶</a></h3>
+<p>Each helper function you create should have a test, though it may not need to be
+the most strict. Testing goals are as follows:</p>
+<ol class="arabic simple">
+<li><p>Ensure that helpers work correctly</p></li>
+<li><p>Ensure that helpers work on all UEK versions (i.e. they don’t refer to struct
+fields that do not exist on older/newer versions)</p></li>
+<li><p>Ensure that helpers don’t break as the kernel (and drgn) updates</p></li>
+</ol>
+<p>The first goal is the most difficult. You’ll find that, for things like listing
+internal data structures, it’s difficult to get a “ground truth” to compare your
+results against. The first strategy to deal with this is to attempt to read the
+corresponding information out of userspace. For instance, when testing the
+<code class="docutils literal notranslate"><span class="pre">totalram_pages</span></code> function, I did this:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span> <span class="nf">test_totalram_pages</span><span class="p">(</span><span class="n">prog</span><span class="p">:</span> <span class="n">drgn</span><span class="o">.</span><span class="n">Program</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">reported_pages</span> <span class="o">=</span> <span class="n">mm</span><span class="o">.</span><span class="n">totalram_pages</span><span class="p">(</span><span class="n">prog</span><span class="p">)</span><span class="o">.</span><span class="n">value_</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">prog</span><span class="o">.</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">drgn</span><span class="o">.</span><span class="n">ProgramFlags</span><span class="o">.</span><span class="n">IS_LIVE</span><span class="p">:</span>
+        <span class="c1"># We&#39;re running live! Let&#39;s test it against</span>
+        <span class="c1"># the value reported in /proc/meminfo.</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;/proc/meminfo&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">f</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;MemTotal:&quot;</span><span class="p">):</span>
+                    <span class="n">mem_kb</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">line</span><span class="o">.</span><span class="n">split</span><span class="p">()[</span><span class="mi">1</span><span class="p">])</span>
+                    <span class="k">break</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;No memory size found&quot;</span>
+        <span class="n">mem_bytes</span> <span class="o">=</span> <span class="n">mem_kb</span> <span class="o">*</span> <span class="mi">1024</span>
+        <span class="n">mem_pages</span> <span class="o">=</span> <span class="n">mem_bytes</span> <span class="o">/</span> <span class="n">getpagesize</span><span class="p">()</span>
+
+        <span class="k">assert</span> <span class="n">mem_pages</span> <span class="o">==</span> <span class="n">reported_pages</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c1"># We cannot directly confirm the memory value.</span>
+        <span class="c1"># We&#39;ve already verified that we can lookup the</span>
+        <span class="c1"># value without error, now apply a few &quot;smoke</span>
+        <span class="c1"># tests&quot; to verify it&#39;s not completely wonky.</span>
+
+        <span class="c1"># At least 512 MiB of memory:</span>
+        <span class="k">assert</span> <span class="n">reported_pages</span> <span class="o">&gt;</span> <span class="p">(</span><span class="mi">512</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">)</span> <span class="o">/</span> <span class="n">getpagesize</span><span class="p">()</span>
+        <span class="c1"># Less than 4 TiB of memory:</span>
+        <span class="k">assert</span> <span class="n">reported_pages</span> <span class="o">&lt;</span> <span class="p">(</span><span class="mi">4</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">)</span> <span class="o">/</span> <span class="n">getpagesize</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>When running against a live kernel, the test can read <code class="docutils literal notranslate"><span class="pre">/proc/meminfo</span></code> and
+verify the value directly. When running against a core dump, we fall back to a
+less accurate behavior: simply verifying that the memory value falls within an
+acceptable range.</p>
+<p>While this approach isn’t perfect, it does serve a purpose. It allows us to have
+a test which still verifies goals #2 and #3. If the helper doesn’t work on an
+older UEK due to missing symbols or structure fields, we will find it, and same
+with new and updated kernels or drgn versions.</p>
+<p>For drgn-tools testing, we’re trying not to make “perfect” the enemy of “good
+enough”. So long as we have a helper which is manually tested, and its automated
+tests can at least satisfy #2 and #3, then we’re likely to accept that and move
+on.</p>
+</section>
+<section id="writing-tests-specifying-your-target">
+<h3>Writing Tests: Specifying your Target<a class="headerlink" href="#writing-tests-specifying-your-target" title="Link to this heading">¶</a></h3>
+<p>By default, all tests within the <code class="docutils literal notranslate"><span class="pre">tests/</span></code> directory are run against all
+targets: live systems as well as vmcores. And for the most part, tests shouldn’t
+care too much about which target they run against. But unfortunately, you may
+encounter issues where it matters. One example is the above memory test, where
+you can use data from the system to make a more accurate test. However, another
+example might be <code class="docutils literal notranslate"><span class="pre">tests/test_block.py</span></code>, which runs fio in order to get block
+device activity, so that the in-flight I/O system can print output.</p>
+<p>In these cases, if you need to change your test behavior, you can check
+<a class="reference external" href="https://drgn.readthedocs.io/en/latest/api_reference.html#drgn.Program.flags" title="(in drgn v0.0.24+47.gff2a395)"><code class="xref py py-attr docutils literal notranslate"><span class="pre">drgn.Program.flags</span></code></a> to customize the behavior. But if you need to fully
+skip certain environments, you can annotate your test as follows:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">pytest</span>
+
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">skip_live</span>
+<span class="k">def</span> <span class="nf">test_foobar</span><span class="p">(</span><span class="n">prog</span><span class="p">:</span> <span class="n">drgn</span><span class="o">.</span><span class="n">Program</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+   <span class="k">pass</span>
+</pre></div>
+</div>
+<p>This annotation is called a pytest “Mark”. We have three marks for testing. The
+first one, as shown here, is called <code class="docutils literal notranslate"><span class="pre">skip_live</span></code> and it ensures that the test
+will not be run on live systems: that is, when <code class="docutils literal notranslate"><span class="pre">/proc/kcore</span></code> is being debugged
+on the Gitlab CI. The other two marks allow you to select or skip vmcores that a
+test runs on:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">vmcore(&quot;PATTERN&quot;)</span></code> tells the test runner that the test should only run on
+vmcores which match PATTERN. The pattern is matched by <a class="reference external" href="https://docs.python.org/3/library/fnmatch.html#fnmatch.fnmatch" title="(in Python v3.12)"><code class="xref py py-func docutils literal notranslate"><span class="pre">fnmatch</span></code></a>, which is essentially the syntax you use on the shell to
+match filenames. For example, <code class="docutils literal notranslate"><span class="pre">vmcore(&quot;scsi-*&quot;)</span></code> would make the test only
+run on vmcores whose name begins with <code class="docutils literal notranslate"><span class="pre">scsi-</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">skip_vmcore(&quot;PATTERN&quot;)</span></code> tells the test runner that the test should be
+skipped on vmcores which match PATTERN.</p></li>
+</ul>
+<p>So essentially these two marks are inverses: one lets you choose which vmcores
+the test runs on, and the other lets you choose which the test should <em>not</em> run
+on.</p>
+<p>It’s important to note that the <code class="docutils literal notranslate"><span class="pre">vmcore()</span></code> and <code class="docutils literal notranslate"><span class="pre">skip_vmcore()</span></code> marks don’t
+affect whether the test runs on live systems, the default is still yes, unless
+you also use the mark <code class="docutils literal notranslate"><span class="pre">skip_live</span></code>. So, if you only wanted to run a test on
+exactly one vmcore named “special-vmcore” then you could do this:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">skip_live</span>
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">vmcore</span><span class="p">(</span><span class="s2">&quot;special-vmcore&quot;</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">special_test_for_special_vmcore</span><span class="p">(</span><span class="n">prog</span><span class="p">:</span> <span class="n">drgn</span><span class="o">.</span><span class="n">Program</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">pass</span>
+</pre></div>
+</div>
+<p>Please try to avoid using these annotations where possible. If you can make a
+test support a target, even partially, then it’s better. However, in some cases
+it’s out of your hands.</p>
+</section>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="index.html">
+              <img class="logo" src="_static/drgn-tools.png" alt="Logo"/>
+            </a></p>
+<h1 class="logo"><a href="index.html">drgn-tools</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="installing.html">Installing drgn-tools</a></li>
+<li class="toctree-l1"><a class="reference internal" href="code-quality.html">Contributing: Code Quality Guidelines</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Contributing: Testing</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#test-targets">Test Targets</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#running-litevm-tests-locally">Running Litevm Tests Locally</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#running-vmcore-tests-locally">Running Vmcore Tests Locally</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#python-test-guidance">Python Test Guidance</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="changelog.html">Changelog</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="code-quality.html" title="previous chapter">Contributing: Code Quality Guidelines</a></li>
+      <li>Next: <a href="api.html" title="next chapter">API Reference</a></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2023, Oracle and/or its affiliates.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.2.6</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      
+      |
+      <a href="_sources/testing.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
