@@ -10,6 +10,7 @@ from typing import Iterable
 from typing import Tuple
 
 import drgn
+from drgn import cast
 from drgn import Object
 from drgn import TypeKind
 from drgn.helpers.common.format import decode_enum_type_flags
@@ -20,6 +21,29 @@ from drgn_tools.bitops import for_each_bit_set
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.util import has_member
 from drgn_tools.util import type_exists
+
+
+BB_LEN_MASK = 0x00000000000001FF
+BB_OFFSET_MASK = 0x7FFFFFFFFFFFFE00
+BB_ACK_MASK = 0x8000000000000000
+
+
+def for_each_badblocks(bb: Object) -> Iterable[Object]:
+    """
+    List all bad blocks
+
+    :param bb: ``struct badblocks``
+    :returns: an iterator of (sector_offset, length, ack)
+    """
+    if bb.value_() == 0 or bb.page.value_() == 0:
+        return
+    bb_list = cast("u64 *", bb.page)
+    for i in range(bb.count):
+        item = bb_list[i].value_()
+        offset = (item & BB_OFFSET_MASK) >> 9
+        length = (item & BB_LEN_MASK) + 1
+        ack = (item & BB_ACK_MASK) != 0
+        yield (offset, length, ack)
 
 
 def blkdev_ro(bdev: Object) -> bool:
