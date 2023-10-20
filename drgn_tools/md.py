@@ -11,6 +11,7 @@ from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.block import blkdev_ro
+from drgn_tools.block import for_each_badblocks
 from drgn_tools.block import get_inflight_io_nr
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.module import ensure_debuginfo
@@ -96,6 +97,26 @@ def md_pv_pending_io(rdev: Object) -> str:
         return "-"
 
 
+def md_pv_badblocks(prog: Program, mddev: Object) -> int:
+    num = 0
+    for rdev in for_each_md_pv(prog, mddev):
+        num += rdev.badblocks.count.value_()
+    return num
+
+
+def show_md_pv_badblocks(prog: Program, mddev: Object) -> None:
+    print("%10s: %-8s %-20s" % ("Badblocks", "PV", "[(off,len,ack)]"))
+    for rdev in for_each_md_pv(prog, mddev):
+        if rdev.badblocks.count.value_() == 0:
+            continue
+        print(
+            "%10s: %-8s " % (" ", md_pv_name(rdev)),
+            end="",
+        )
+        bb_list = [(o, l, a) for o, l, a in for_each_badblocks(rdev.badblocks)]
+        print(bb_list)
+
+
 def show_md_pv(prog: Program, mddev: Object) -> None:
     """
     Dump the physical disk specific info
@@ -112,13 +133,15 @@ def show_md_pv(prog: Program, mddev: Object) -> None:
             get_inflight_io_nr(prog, rdev.bdev.bd_disk),
         )
         print(
-            "%10s: %-8s %-4d %-20s %-8s"
+            "%10s: %-8s %-4d %-20s %-8s %-10s %-8s"
             % (
                 prefix,
                 md_pv_name(rdev),
                 1 if blkdev_ro(rdev.bdev) else 0,
                 pending,
                 enum_flags_str(prog, "enum flag_bits", rdev.flags),
+                rdev.data_offset.value_(),
+                rdev.badblocks.count.value_(),
             )
         )
         index = index + 1
@@ -296,10 +319,20 @@ def show_md(prog: Program) -> None:
         )
         print("%-10s: %d processes" % ("IO-issuing", mddev.active_io.counter))
         print(
-            "%10s: %-8s %-4s %-20s %-8s"
-            % ("PV ", "Name", "RO", "Pending-IO(md-block)", "Flags")
+            "%10s: %-8s %-4s %-20s %-8s %-10s %-8s"
+            % (
+                "PV ",
+                "Name",
+                "RO",
+                "Pending-IO(md-block)",
+                "Flags",
+                "sector_off",
+                "badblocks",
+            )
         )
         show_md_pv(prog, mddev)
+        if md_pv_badblocks(prog, mddev):
+            show_md_pv_badblocks(prog, mddev)
         # raid0 didn't maintain pending writes
         if mddev.level != 0:
             print("%-10s: %d" % ("pending-wr", md_pending_writes(prog, mddev)))
