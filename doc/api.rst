@@ -105,3 +105,10 @@ drgn_tools.rds
 
 .. automodule:: drgn_tools.rds
    :members:
+
+
+drgn_tools.cpuinfo
+-----------------------
+
+.. automodule:: drgn_tools.cpuinfo
+   :members:

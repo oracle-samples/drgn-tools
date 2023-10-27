@@ -184,6 +184,7 @@ def all_corelens_modules() -> Dict[str, CorelensModule]:
         "drgn_tools.block",
         "drgn_tools.md",
         "drgn_tools.rds",
+        "drgn_tools.cpuinfo",
     ]
     for python_module in python_mods:
         importlib.import_module(python_module)
