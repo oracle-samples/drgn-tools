@@ -7,6 +7,7 @@ import argparse
 from typing import Any
 from typing import Dict
 
+from drgn import Architecture
 from drgn import Object
 from drgn import Program
 from drgn import sizeof
@@ -39,6 +40,14 @@ SPEC_CTRL_IBRS_FIRMWARE = 1 << 3
 SPEC_CTRL_IBPB_INUSE = 1 << 0
 
 TAINT_NO_RETPOLINE = 16
+
+AARCH64_MIDR_REVISION_MASK = 0xF
+AARCH64_MIDR_PARTNUM_SHIFT = 4
+AARCH64_MIDR_PARTNUM_MASK = 0xFFF << AARCH64_MIDR_PARTNUM_SHIFT
+AARCH64_MIDR_VARIANT_SHIFT = 20
+AARCH64_MIDR_VARIANT_MASK = 0xF << AARCH64_MIDR_VARIANT_SHIFT
+AARCH64_MIDR_IMPLEMENTOR_SHIFT = 24
+AARCH64_MIDR_IMPLEMENTOR_MASK = 0xFF << AARCH64_MIDR_IMPLEMENTOR_SHIFT
 
 
 def x86_get_cpu_info(prog: Program) -> Dict[str, Any]:
@@ -90,6 +99,48 @@ def x86_get_cpu_info(prog: Program) -> Dict[str, Any]:
         "CSTATES": cstates,
         "CPU FLAGS": " ".join(cpu_flags_list),
         "BUG FLAGS": " ".join(bug_flags_list),
+    }
+
+
+def aarch64_get_cpu_info(prog: Program) -> Dict[str, Any]:
+    """
+    Helper to get cpuinfo data for aarch64
+
+    :returns: a dictionary of the cpuinfo data
+    """
+    cpus = int(prog["nr_cpu_ids"])
+    midr = prog["boot_cpu_data"].reg_midr
+    cpu_caps_list = []
+
+    hwcap_str = prog["hwcap_str"].read_()
+    elf_hwcap = prog["elf_hwcap"].read_()
+    num_caps = len(hwcap_str)
+
+    for i in range(num_caps):
+        if elf_hwcap & (1 << i):
+            cpu_caps_list.append(hwcap_str[i].string_().decode("utf-8"))
+
+    midr_implementor = hex(
+        (midr & AARCH64_MIDR_IMPLEMENTOR_MASK)
+        >> AARCH64_MIDR_IMPLEMENTOR_SHIFT
+    )
+    midr_architecture = 8
+    midr_variant = hex(
+        (midr & AARCH64_MIDR_VARIANT_MASK) >> AARCH64_MIDR_VARIANT_SHIFT
+    )
+    midr_partnum = hex(
+        (midr & AARCH64_MIDR_PARTNUM_MASK) >> AARCH64_MIDR_PARTNUM_SHIFT
+    )
+    midr_revision = int(midr & AARCH64_MIDR_REVISION_MASK)
+
+    return {
+        "CPUs": cpus,
+        "Features": " ".join(cpu_caps_list),
+        "CPU Implementer": midr_implementor,
+        "CPU Architecture": midr_architecture,
+        "CPU Variant": midr_variant,
+        "CPU Part": midr_partnum,
+        "CPU Revision": midr_revision,
     }
 
 
@@ -558,13 +609,7 @@ def print_cpu_info(prog: Program) -> None:
     """
     Prints the cpuinfo data
     """
-    # TODO: Add aarch64 support.
-    # `struct cpuinfo_arm64` being fetched using 'boot_cpu_data' only has
-    # register values, while the struct fetched using 'cpu_data' has all values
-    # zero/null
-
-    arch = prog["init_uts_ns"].name.machine.string_().decode("utf-8")
-    if arch == "x86_64":
+    if prog.platform.arch == Architecture.X86_64:
         cpuinfo_data = x86_get_cpu_info(prog)
         print_dictionary(cpuinfo_data)
 
@@ -572,8 +617,12 @@ def print_cpu_info(prog: Program) -> None:
         print("\nVULNERABILITIES:")
         print_dictionary(mitigation_data)
 
+    elif prog.platform.arch == Architecture.AARCH64:
+        cpuinfo_data = aarch64_get_cpu_info(prog)
+        print_dictionary(cpuinfo_data)
+
     else:
-        print(f"Not supported for {arch}")
+        print(f"Not supported for {prog.platform.arch.name}")
 
 
 class Cpu(CorelensModule):
