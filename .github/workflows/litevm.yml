@@ -24,10 +24,14 @@ jobs:
     strategy:
       matrix:
         # OL7 and OL8 use 3.6. OL9 uses 3.9. Also test on the latest.
-        python-version: ["3.6", "3.9", "3.12"]
+        python-minor: ["6", "9", "12"]
       fail-fast: false
     env:
-      TOX_OVERRIDE: "tox.envlist=python${{ matrix.python-version }};tox.skip_missing_interpreters=false"
+      # Manually set the tox environment list to the Python version.
+      # As a result, we should set "skip missing interpreters" to false,
+      # so that we fail if the test doesn't run.
+      TOX_OVERRIDE: "tox.envlist=py3${{ matrix.python-minor }}"
+      TOX_SKIP_MISSING_INTERPRETERS: "false"
     steps:
       - uses: actions/checkout@v4
       # If we rely on using the same Python version for tox as we do for the
@@ -42,7 +46,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: 3.${{ matrix.python-minor }}
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -51,8 +55,10 @@ jobs:
           echo '0403da24a797ccfa0cfd37bd4a6d6049370b9773e558da6173ae6ad25f97a428 /usr/bin/rpm2cpio' | sha256sum -c -
           sudo chmod 755 /usr/bin/rpm2cpio
       - name: Setup test environment
+        # Pinned virtualenv and tox are for the last versions which support
+        # detecting Python 3.6 and running tests on it.
         run: |
-          python3.12 -m pip install --user --break-system-packages tox
+          python3.12 -m pip install --user --break-system-packages 'virtualenv<20.22.0' 'tox<4.5.0'
           tox list
           tox --notest
           tox -e runner --notest
@@ -88,4 +94,4 @@ jobs:
 
       - name: Run tests
         run: |
-          tox -e runner -- python -m testing.litevm.vm --python-version ${{ matrix.python-version }}
+          tox -e runner -- python -m testing.litevm.vm --python-version 3${{ matrix.python-minor }}
