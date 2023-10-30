@@ -17,8 +17,8 @@ from testing.heavyvm.qemu import create_overlay_disk
 from testing.heavyvm.qemu import QemuRunner
 from testing.heavyvm.qemu import UnixSocketRepl
 from testing.util import BASE_DIR
-from testing.util import gitlab_section_end
-from testing.util import gitlab_section_start
+from testing.util import ci_section_end
+from testing.util import ci_section_start
 
 
 @dataclasses.dataclass
@@ -93,10 +93,10 @@ class TestRunner:
     def _section_start(
         self, name: str, text: str, collapsed: bool = False
     ) -> None:
-        gitlab_section_start(name, text, collapsed=collapsed)
+        ci_section_start(name, text, collapsed=collapsed)
 
     def _section_end(self, name: str) -> None:
-        gitlab_section_end(name)
+        ci_section_end(name)
 
     def _launch_vms(self) -> None:
         self._section_start("launch_vms", "Launching VMs", collapsed=True)

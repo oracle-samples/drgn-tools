@@ -29,7 +29,7 @@ from rich.progress import TextColumn
 from rich.progress import TimeRemainingColumn
 from rich.progress import TransferSpeedColumn
 
-from testing.util import gitlab_section
+from testing.util import ci_section
 
 CORE_DIR = Path.cwd() / "testdata/vmcores"
 
@@ -240,7 +240,7 @@ def upload_all(client: ObjectStorageClient, core: str) -> None:
 def test() -> None:
     for path in CORE_DIR.iterdir():
         core_name = path.name
-        with gitlab_section(
+        with ci_section(
             f"vmcore-{core_name}",
             f"Running tests on vmcore {core_name}",
             collapsed=True,

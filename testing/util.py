@@ -1,5 +1,6 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import os
 import sys
 import time
 from contextlib import contextmanager
@@ -33,18 +34,39 @@ def gitlab_section_end(name: str) -> None:
     sys.stdout.flush()
 
 
+def github_section_start(
+    name: str, text: str, collapsed: bool = False
+) -> None:
+    print(f"::group::{text}")
+
+
+def github_section_end(name: str) -> None:
+    print("::endgroup::")
+
+
+if os.environ.get("GITHUB_ACTIONS"):
+    ci_section_start = github_section_start
+    ci_section_end = github_section_end
+elif os.environ.get("GITLAB_CI"):
+    ci_section_start = gitlab_section_start
+    ci_section_end = gitlab_section_end
+else:
+
+    def ci_section_start(
+        name: str, text: str, collapsed: bool = False
+    ) -> None:
+        pass
+
+    def ci_section_end(name: str) -> None:
+        pass
+
+
 @contextmanager
-def gitlab_section(
-    name: str,
-    text: str,
-    collapsed: bool = False,
+def ci_section(
+    name: str, text: str, collapsed: bool = False
 ) -> Generator[None, None, None]:
-    """
-    Return a context manager that starts a section on entry, and ends it on
-    exit.
-    """
-    gitlab_section_start(name, text, collapsed=collapsed)
+    ci_section_start(name, text, collapsed=collapsed)
     try:
         yield
     finally:
-        gitlab_section_end(name)
+        ci_section_end(name)
