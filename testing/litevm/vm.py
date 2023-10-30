@@ -24,6 +24,7 @@ from testing.litevm.rpm import extract_rpms
 from testing.litevm.rpm import TEST_KERNELS
 from testing.litevm.rpm import TestKernel
 from testing.util import BASE_DIR
+from testing.util import ci_section
 
 
 INITRD_DIRS = [
@@ -402,7 +403,10 @@ def main():
         k.cache_dir = args.yum_cache_dir
         if args.kernel and not fnmatch.fnmatch(k.slug(), args.kernel):
             continue
-        run_vm(k, args.extract_dir, commands)
+        section_name = f"uek{k.uek_ver}"
+        section_text = f"Run tests on UEK{k.uek_ver}"
+        with ci_section(section_name, section_text):
+            run_vm(k, args.extract_dir, commands)
 
 
 if __name__ == "__main__":
