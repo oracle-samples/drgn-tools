@@ -26,6 +26,7 @@ launch a QEMU with all the right parameters to create a newly installed image.
 import argparse
 import dataclasses
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -82,21 +83,29 @@ def extract_boot_info(ctx: Context) -> List[str]:
     """
     iso_path_str = str(ctx.iso_dir / ctx.image_info.iso_name)
 
-    def extract(name: str, path: Path):
-        with path.open("wb") as f:
-            subprocess.run(
-                ["isoinfo", "-i", iso_path_str, "-x", f"/ISOLINUX/{name}"],
-                stdout=f.fileno(),
-                check=True,
-            )
+    with tempfile.TemporaryDirectory() as td:
+        subprocess.run(
+            [
+                "7z",
+                "x",
+                iso_path_str,
+                "isolinux/vmlinuz",
+                "isolinux/initrd.img",
+                "isolinux/isolinux.cfg",
+            ],
+            cwd=td,
+            stdout=ctx.cmdlog(),
+            check=True,
+        )
+        tdpath = Path(td)
+        os.rename(tdpath / "isolinux/vmlinuz", ctx.tmp_dir / "vmlinuz")
+        os.rename(tdpath / "isolinux/initrd.img", ctx.tmp_dir / "initrd.img")
+        isolinux_cfg = tdpath / "isolinux/isolinux.cfg"
+        with isolinux_cfg.open() as f:
+            cfg = f.read()
 
-    extract("VMLINUZ.;1", ctx.tmp_dir / "vmlinuz")
-    extract("INITRD.IMG;1", ctx.tmp_dir / "initrd.img")
-    ctx.log.info("Extracted vmlinuz and initrd.img from ISO")
+    ctx.log.info("Extracted vmlinuz, initrd.img, and isolinux.cfg from ISO")
 
-    with tempfile.NamedTemporaryFile() as tf:
-        extract("ISOLINUX.CFG;1", Path(tf.name))
-        cfg = tf.read().decode("utf-8")
     for line in cfg.split("\n"):
         if "initrd=initrd.img" in line:
             args = line.strip().split()
