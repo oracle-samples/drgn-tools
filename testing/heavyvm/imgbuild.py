@@ -31,12 +31,16 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import wait
 from pathlib import Path
+from typing import Dict
 from typing import List
+from typing import Optional
 from typing import TextIO
 
+from drgn_tools.util import download_file
 from testing.heavyvm.images import CONFIGURATIONS
 from testing.heavyvm.images import ImageInfo
 from testing.heavyvm.images import NAME_TO_CONFIGURATION
@@ -45,6 +49,8 @@ from testing.util import BASE_DIR
 
 
 KS_DIR = Path(__file__).parent / "ks"
+DOWNLOAD_LOCK = threading.Lock()
+DOWNLOADS: Dict[Path, threading.Event] = {}
 
 
 @dataclasses.dataclass
@@ -63,18 +69,47 @@ class Context:
 
 
 def download_image(ctx: Context) -> None:
+    # This is complicated by the fact that several threads could be racing to
+    # download the same ISO. While we could atomically open the file with
+    # O_CREAT|O_EXCL (or catch the EEXIST), the threads which lose the race
+    # would not know when the download is completed. So, we need to have some
+    # signalling. For each download, we have an event, and we protect the
+    # mapping of file to event with a lock. Threads that win the race create the
+    # event, do the download, and trigger the event. Threads that lose the race
+    # wait on the event.
     output_file = ctx.iso_dir / ctx.image_info.iso_name
+    output_file = output_file.absolute()
+    partial = ctx.iso_dir / f"{ctx.image_info.iso_name}.part"
+
     if output_file.exists():
         ctx.log.info("ISO already downloaded")
         return
-    ctx.log.info("Downloading ISO...")
-    ctx.iso_dir.mkdir(exist_ok=True)
-    subprocess.run(
-        ["wget", "-q", ctx.image_info.iso_url, "-O", str(output_file)],
-        check=True,
-        stdout=ctx.cmdlog(),
-        stderr=subprocess.STDOUT,
-    )
+
+    event: Optional[threading.Event] = None
+    wait_event: Optional[threading.Event] = None
+    with DOWNLOAD_LOCK:
+        wait_event = DOWNLOADS.get(output_file)
+        if not wait_event:
+            event = threading.Event()
+            DOWNLOADS[output_file] = event
+
+    if wait_event:
+        # Somebody beat us to it, we now wait and then return
+        ctx.log.info("Waiting for download of ISO ...")
+        wait_event.wait()
+        ctx.log.info("Finished waiting for ISO download!")
+    else:
+        # We are responsible for downloading and then signaling
+        assert event is not None
+        ctx.log.info("Downloading ISO...")
+        ctx.iso_dir.mkdir(exist_ok=True)
+        with partial.open("wb") as f:
+            download_file(ctx.image_info.iso_url, f)
+        ctx.log.info("Finished downloading!")
+        os.rename(partial, output_file)
+        with DOWNLOAD_LOCK:
+            del DOWNLOADS[output_file]
+        event.set()
 
 
 def extract_boot_info(ctx: Context) -> List[str]:
