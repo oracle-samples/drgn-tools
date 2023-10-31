@@ -25,9 +25,11 @@ launch a QEMU with all the right parameters to create a newly installed image.
 """
 import argparse
 import dataclasses
+import http.server
 import logging
 import os
 import re
+import socketserver
 import subprocess
 import sys
 import tempfile
@@ -59,6 +61,7 @@ class Context:
     iso_dir: Path
     image_dir: Path
     ks_dir: Path
+    ks_url: str
     tmp_dir: Path
     overwrite: bool
     interactive: bool
@@ -172,29 +175,28 @@ def make_empty_image(ctx: Context) -> None:
     )
 
 
-def make_kickstart_disk(ctx: Context) -> None:
-    ks_script_path = ctx.ks_dir / ctx.image_info.ks_name
-    ks_disk_path = ctx.tmp_dir / "kickstart.img"
-    ctx.log.info("Creating kickstart disk...")
-    subprocess.run(
-        ["dd", "if=/dev/zero", f"of={ks_disk_path}", "bs=1M", "count=40"],
-        check=True,
-        stdout=ctx.cmdlog(),
-        stderr=subprocess.STDOUT,
-    )
-    subprocess.run(
-        ["mformat", "-F", "-i", str(ks_disk_path)],
-        check=True,
-        stdout=ctx.cmdlog(),
-        stderr=subprocess.STDOUT,
-    )
-    subprocess.run(
-        ["mcopy", "-i", str(ks_disk_path), str(ks_script_path), "::ks.cfg"],
-        check=True,
-        stdout=ctx.cmdlog(),
-        stderr=subprocess.STDOUT,
-    )
-    ctx.log.info("Created kickstart disk.")
+class KickstartServer:
+    def __init__(self, port=8325) -> None:
+        self.port = port
+        self.server = socketserver.TCPServer(
+            ("", port), http.server.SimpleHTTPRequestHandler
+        )
+        self.thread = threading.Thread(target=self.run)
+
+    def url_for(self, host: str, path: Path) -> str:
+        rel = str(path.relative_to(Path.cwd()))
+        return f"http://{host}:{self.port}/{rel}"
+
+    def run(self) -> None:
+        with self.server:
+            self.server.serve_forever()
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.server.shutdown()
+        self.thread.join()
 
 
 def get_qemu(ctx: Context) -> QemuRunner:
@@ -216,16 +218,11 @@ def run_installer(ctx: Context, cmdline: List[str]) -> None:
     Run the installer.
     """
     cmdline += [
-        "inst.ks=hd:sdb:ks.cfg",
+        f"inst.ks={ctx.ks_url}",
         "console=ttyS0",
     ]
     qemu = get_qemu(ctx)
     qemu.cdrom(str(ctx.iso_dir / ctx.image_info.iso_name))
-    qemu.drive(
-        driver="raw",
-        node_name="hdb",
-        file=str(ctx.tmp_dir / "kickstart.img"),
-    )
     if ctx.interactive:
         qemu.mon_serial()
         qemu.vnc()
@@ -316,7 +313,6 @@ def run_post_install(ctx: Context) -> None:
 def do_imgbuild(ctx: Context) -> None:
     download_image(ctx)
     cmdline = extract_boot_info(ctx)
-    make_kickstart_disk(ctx)
     make_empty_image(ctx)
     run_installer(ctx, cmdline)
     run_post_install(ctx)
@@ -385,6 +381,8 @@ def main() -> None:
         print("over serial port. Limited to one task at a time.")
         args.num_workers = 1
 
+    srv = KickstartServer()
+    srv.start()
     logging.basicConfig(level=logging.INFO)
     ret = 0
     with tempfile.TemporaryDirectory() as td:
@@ -396,11 +394,13 @@ def main() -> None:
             tmp_sub_dir = tmp_dir / image_info.name
             tmp_sub_dir.mkdir()
             log.info("Launching with tmpdir: %s", tmp_sub_dir)
+            ks_url = srv.url_for("10.0.2.2", args.ks_dir / image_info.ks_name)
             ctx = Context(
                 image_info,
                 args.iso_dir,
                 args.image_dir,
                 args.ks_dir,
+                ks_url,
                 tmp_sub_dir,
                 args.overwrite,
                 args.interactive,
@@ -418,6 +418,7 @@ def main() -> None:
             if not args.no_wait:
                 print(f"Tmpdir: {td}")
                 input("Hit enter when done examining tmpdir")
+    srv.stop()
     sys.exit(ret)
 
 
