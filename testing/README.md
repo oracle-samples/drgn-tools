@@ -121,7 +121,6 @@ Requirements:
 - Qemu, and the qemu disk utils (see oddities for Oracle Linux info)
 - `wget`
 - `7z` from the `p7zip-plugins` package
-- `mtools` package (FAT filesystem in userspace)
 - Quite a bit of time to build the VMs, and disk space to store them
 
 Test data:
