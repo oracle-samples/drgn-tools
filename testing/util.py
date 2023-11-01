@@ -1,7 +1,6 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import os
-import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -22,26 +21,27 @@ def gitlab_section_start(
     """
     if collapsed:
         name += "[collapsed=true]"
-    print(f"\x1b[0Ksection_start:{int(time.time())}:{name}\r\x1b[0K{text}")
-    sys.stdout.flush()
+    print(
+        f"\x1b[0Ksection_start:{int(time.time())}:{name}\r\x1b[0K{text}",
+        flush=True,
+    )
 
 
 def gitlab_section_end(name: str) -> None:
     """
     Close the section for gitlab CI output.
     """
-    print(f"\x1b[0Ksection_end:{int(time.time())}:{name}\r\x1b[0K")
-    sys.stdout.flush()
+    print(f"\x1b[0Ksection_end:{int(time.time())}:{name}\r\x1b[0K", flush=True)
 
 
 def github_section_start(
     name: str, text: str, collapsed: bool = False
 ) -> None:
-    print(f"::group::{text}")
+    print(f"::group::{text}", flush=True)
 
 
 def github_section_end(name: str) -> None:
-    print("::endgroup::")
+    print("::endgroup::", flush=True)
 
 
 if os.environ.get("GITHUB_ACTIONS"):
