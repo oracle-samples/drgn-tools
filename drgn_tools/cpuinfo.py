@@ -67,8 +67,8 @@ def x86_get_cpu_info(prog: Program) -> Dict[str, Any]:
             "Failed to load CPU info: no cpuinfo struct found (tried 'cpu_data' and 'boot_cpu_data')"
         )
 
-    cpu_vendor = cpuinfo_struct.x86_vendor_id.string_().decode("utf-8")
-    model_name = cpuinfo_struct.x86_model_id.string_().decode("utf-8")
+    cpu_vendor = cpuinfo_struct.x86_vendor_id.string_().decode("utf-8").strip()
+    model_name = cpuinfo_struct.x86_model_id.string_().decode("utf-8").strip()
     cpu_family = int(cpuinfo_struct.x86)
     cpus_numa0 = "0-" + str(cpus - 1)
     microcode = hex(cpuinfo_struct.microcode)
