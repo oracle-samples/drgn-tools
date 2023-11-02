@@ -175,6 +175,7 @@ def all_corelens_modules() -> Dict[str, CorelensModule]:
     # with simply maintaining a list of Python modules which contain
     # CorelensModule subclasses.
     python_mods = [
+        "drgn_tools.mounts",
         "drgn_tools.printk",
         "drgn_tools.nvme",
         "drgn_tools.virtio",

@@ -112,3 +112,10 @@ drgn_tools.cpuinfo
 
 .. automodule:: drgn_tools.cpuinfo
    :members:
+
+
+drgn_tools.mounts
+-----------------------
+
+.. automodule:: drgn_tools.mounts
+   :members:
