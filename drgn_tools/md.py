@@ -290,6 +290,16 @@ def show_md(prog: Program) -> None:
             "%-10s: %s"
             % ("flags", enum_flags_str(prog, "enum mddev_flags", mddev.flags))
         )
+        if has_member(mddev, "sb_flags"):
+            print(
+                "%-10s: %s"
+                % (
+                    "sb_flags",
+                    enum_flags_str(
+                        prog, "enum mddev_sb_flags", mddev.sb_flags
+                    ),
+                )
+            )
         # linear and raid0 doesn't support recovery
         if mddev.level != 0 and mddev.level != -1:
             print(
