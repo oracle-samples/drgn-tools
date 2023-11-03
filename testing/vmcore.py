@@ -4,6 +4,7 @@
 Manager for test vmcores - downloaded from OCI block storage
 """
 import argparse
+import fnmatch
 import os
 import signal
 import subprocess
@@ -237,9 +238,19 @@ def upload_all(client: ObjectStorageClient, core: str) -> None:
             future.result()
 
 
-def test() -> None:
+def test(vmcore_list: List[str]) -> None:
+    def should_run_vmcore(name: str) -> bool:
+        if not vmcore_list:
+            return True
+        for pat in vmcore_list:
+            if fnmatch.fnmatch(name, pat):
+                return True
+        return False
+
     for path in CORE_DIR.iterdir():
         core_name = path.name
+        if not should_run_vmcore(core_name):
+            continue
         with ci_section(
             f"vmcore-{core_name}",
             f"Running tests on vmcore {core_name}",
@@ -292,6 +303,14 @@ def main():
         action="store_true",
         help="delete any files which are not listed on block storage",
     )
+    parser.add_argument(
+        "--vmcore",
+        action="append",
+        default=[],
+        help="only run tests on the given vmcore(s). you can use this "
+        "multiple times to specify multiple vmcore names. You can also "
+        "use fnmmatch patterns to specify several cores at once.",
+    )
     args = parser.parse_args()
     if args.core_directory:
         CORE_DIR = args.core_directory.absolute()
@@ -305,7 +324,7 @@ def main():
             sys.exit("error: --upload-core is required for upload operation")
         upload_all(get_client(), args.upload_core)
     elif args.action == "test":
-        test()
+        test(args.vmcore)
 
 
 if __name__ == "__main__":
