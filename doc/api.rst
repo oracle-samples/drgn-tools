@@ -105,3 +105,9 @@ drgn_tools.rds
 
 .. automodule:: drgn_tools.rds
    :members:
+
+drgn_tools.cmdline
+-----------------------
+
+.. automodule:: drgn_tools.cmdline
+   :members:
