@@ -445,10 +445,9 @@ def totalram_pages(prog: drgn.Program) -> drgn.Object:
     return prog["totalram_pages"]
 
 
-def check_freelists_at_crashing_cpu(prog: drgn.Program) -> None:
-    crashing_cpu = prog["crashing_cpu"].value_()
+def check_freelists_at_cpu(prog: drgn.Program, cpu: int) -> None:
     for slab_cache in for_each_slab_cache(prog):
-        cpu_slab = per_cpu_ptr(slab_cache.cpu_slab.read_(), crashing_cpu)
+        cpu_slab = per_cpu_ptr(slab_cache.cpu_slab.read_(), cpu)
         if cpu_slab.freelist.value_():
             try:
                 _ = prog.read(cpu_slab.freelist.value_(), 1)
@@ -457,7 +456,7 @@ def check_freelists_at_crashing_cpu(prog: drgn.Program) -> None:
                     slab_cache.name.string_(), escape_backslash=True
                 )
                 print(
-                    f"found freelist corruption in lockless freelist of slab-cache: {slab_cache_name} at crash cpu: {crashing_cpu}"
+                    f"found freelist corruption in lockless freelist of slab-cache: {slab_cache_name} at cpu: {cpu}"
                 )
                 return
 
