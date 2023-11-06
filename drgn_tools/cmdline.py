@@ -19,6 +19,9 @@ def get_cmdline(prog: Program) -> str:
 
 
 def show_cmdline(prog: Program) -> None:
+    """
+    Prints the kernel command line
+    """
     str_cmdline = get_cmdline(prog)
     print(str_cmdline)
 
