@@ -4,6 +4,7 @@
 Helpers for examining the memory management subsystem.
 """
 import enum
+import math
 from typing import List
 from typing import Tuple
 
@@ -11,6 +12,7 @@ import drgn
 from drgn import FaultError
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.boot import pgtable_l5_enabled
+from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu_ptr
 from drgn.helpers.linux.slab import for_each_slab_cache
 
@@ -127,11 +129,9 @@ class AddrKind(enum.Enum):
     """
 
     @classmethod
-    def _ranges(cls, prog: drgn.Program) -> List[Tuple["AddrKind", int, int]]:
-        ranges = prog.cache.get("drgn_tools_AddrKind_ranges")
-        if ranges:
-            return ranges
-
+    def _ranges_x86_64(
+        cls, prog: drgn.Program
+    ) -> List[Tuple["AddrKind", int, int]]:
         # See include/asm-generic/vmlinux-lds.h
         # and also Documentation/x86/x86_64/mm.{rst,txt}
         # Convenient link:
@@ -234,6 +234,172 @@ class AddrKind(enum.Enum):
                 0xFFFFFFFFFEFFFFFF,
             ),
         ]
+        return ranges
+
+    @classmethod
+    def _ranges_aarch64(
+        cls, prog: drgn.Program
+    ) -> List[Tuple["AddrKind", int, int]]:
+        # For canonical information on this, see documentation:
+        # https://www.kernel.org/doc/html/latest/arch/arm64/memory.html
+        # And more importantly, code:
+        # arch/arm64/include/asm/memory.h
+        # The docs neglect to describe how KASLR impacts things.
+
+        MB = 1024 * 1024
+        GB = 1024 * MB
+
+        vmcoreinfo = dict(
+            line.split("=", 1)
+            for line in prog["VMCOREINFO"]
+            .string_()
+            .decode("utf-8")
+            .strip()
+            .split("\n")
+        )
+        va_bits = int(vmcoreinfo["NUMBER(VA_BITS)"])
+        if va_bits != 48:
+            raise NotImplementedError(
+                "Drgn-tools does not (yet) support arm64 with {va_bit} bit VAs"
+            )
+
+        page_offset = (1 << 64) - (1 << va_bits)
+        modules_vaddr = (1 << 64) - (1 << (va_bits - 1))
+        try:
+            # 3e35d303ab7d ("arm64: module: rework module VA range selection")
+            # changes the module virtual region to 2GiB. It also introduces the
+            # variable "module_direct_base", which we can use to detect it
+            prog.symbol("module_direct_base")
+            modules_vsize = 2 * GB
+        except LookupError:
+            modules_vsize = 128 * MB
+        modules_end = modules_vaddr + modules_vsize
+
+        # vmemmap is at the end of the address space, except for a guard hole
+        # (whose size depends on the kernel version). Thankfully, Drgn already
+        # knows how to find it, so all we need to do is calculate the length.
+        # The length doesn't seem to vary based on kernel version.
+        # The computation is seen in arch/arm64/include/asm/memory.h,
+        # essentially we take the max length of the direct map, convert to
+        # pages, and multiply by the aligned #bytes per struct page. Direct map
+        # spans page_offset to modules_vaddr
+        vmemmap_start = prog["vmemmap"].value_()
+        page_order = int(math.log2(prog.type("struct page").size - 1)) + 1
+        vmemmap_size = (modules_vaddr - page_offset) >> (
+            prog["PAGE_SHIFT"].value_() - page_order
+        )
+
+        # For arm64, the kernel image mapping is actually within VMALLOC_START
+        # .. VMALLOC_END. In fact, VMALLOC_START = MODULES_END. So we need to be
+        # careful to split up the vmalloc region into a section before, and a
+        # section after the kernel image.
+        #
+        # What's worse, in 9ad7c6d5e75b ("arm64: mm: tidy up top of kernel VA
+        # space"), the top of the vmalloc space became VMEMMAP_START - 256MiB.
+        # Prior to that, it was defined as: (- PUD_SIZE - VMEMMAP_SIZE - 64
+        # KiB)... Unfortunately, the commit that does this, makes no change in
+        # terms of symbols or variables!
+        #
+        # We can use two tricks to help resolve this problem.
+        # 1. The /proc/kcore implementation contains a handy list of memory
+        #    ranges and their types. We can find the range which begins with
+        #    VMALLOC_START, and read the size out of it to get the end.
+        #    This is a nice, easy way to handle it, but it depends on having
+        #    CONFIG_PROC_KCORE enabled, and the kernel must have finished
+        #    initialization. Debugging partially initialized kernels should be
+        #    possible, so we'd like a backup, even a less-than-perfect one.
+        # 2. If that doesn't work, we can fall back on using the vmemmap_start
+        #    as the top of vmalloc. This is not strictly correct: there's a
+        #    "fixmap" region in between as well as an IO range. However... it's
+        #    the best we can do for this case.
+        vmalloc_end = vmemmap_start
+        try:
+            KCORE_VMALLOC = prog.constant("KCORE_VMALLOC")
+            for kcl in list_for_each_entry(
+                "struct kcore_list", prog["kclist_head"].address_of_(), "list"
+            ):
+                # In the code, VMALLOC_START is defined to MODULES_END
+                if kcl.type == KCORE_VMALLOC and kcl.addr == modules_end:
+                    vmalloc_end = (kcl.addr + kcl.size).value_()
+        except LookupError:
+            pass
+
+        return [
+            (cls.USER, 0, (1 << va_bits) - 1),
+            (cls.DIRECT_MAP, page_offset, modules_vaddr),
+            (cls.MODULE, modules_vaddr, modules_end),
+            # In between the modules_end and _text, there's the KASLR
+            # offset. This is more vmalloc!
+            (cls.VMALLOC, modules_end, prog.symbol("_text").address),
+            (
+                cls.TEXT,
+                prog.symbol("_text").address,
+                prog.symbol("_etext").address,
+            ),
+            (
+                cls.RODATA,
+                prog.symbol("__start_rodata").address,
+                prog.symbol("__end_rodata").address,
+            ),
+            (
+                cls.INITTEXT,
+                prog.symbol("__inittext_begin").address,
+                prog.symbol("__inittext_end").address,
+            ),
+            (
+                # TODO: should we have INITDATA too?
+                # NOTE: initdata begin .. end includes percpu, as well as some
+                # hypervisor percpu things, and relocation information. We're
+                # splitting initdata here to ensure we get it right.
+                cls.DATA,
+                prog.symbol("__initdata_begin").address,
+                prog.symbol("__per_cpu_start").address,
+            ),
+            (
+                cls.PERCPU,
+                prog.symbol("__per_cpu_start").address,
+                prog.symbol("__per_cpu_end").address,
+            ),
+            (
+                cls.DATA,
+                prog.symbol("__per_cpu_end").address,
+                prog.symbol("__initdata_end").address,
+            ),
+            (
+                cls.DATA,
+                prog.symbol("_sdata").address,
+                prog.symbol("_edata").address,
+            ),
+            (
+                cls.BSS,
+                prog.symbol("__bss_start").address,
+                prog.symbol("__bss_stop").address,
+            ),
+            (
+                cls.VMALLOC,
+                prog.symbol("_end").address,
+                vmalloc_end,
+            ),
+            # There's some arch-specific junk between _text and _end which isn't
+            # fully covered by the ranges above for the kernel image. For the
+            # most part this shouldn't matter.
+            (cls.VMEMMAP, vmemmap_start, vmemmap_start + vmemmap_size),
+        ]
+
+    @classmethod
+    def _ranges(cls, prog: drgn.Program) -> List[Tuple["AddrKind", int, int]]:
+        ranges = prog.cache.get("drgn_tools_AddrKind_ranges")
+        if ranges:
+            return ranges
+
+        if prog.platform.arch == drgn.Architecture.X86_64:
+            ranges = cls._ranges_x86_64(prog)
+        elif prog.platform.arch == drgn.Architecture.AARCH64:
+            ranges = cls._ranges_aarch64(prog)
+        else:
+            raise NotImplementedError(
+                f"AddrKind is not implemented for {prog.platform.arch}"
+            )
         prog.cache["drgn_tools_AddrKind_ranges"] = ranges
         return ranges
 
@@ -250,8 +416,6 @@ class AddrKind(enum.Enum):
         :param prog: program we're debugging
         :param addr: address to categorize
         """
-        if prog.platform.arch != drgn.Architecture.X86_64:
-            raise NotImplementedError("Only implemented for x86_64")
         addr = int(addr)
 
         for kind, start, end in cls._ranges(prog):
