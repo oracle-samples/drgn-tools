@@ -116,5 +116,9 @@ def test_AddrKind_categorize_module_percpu(prog: drgn.Program) -> None:
 
 
 @pytest.mark.skip_live
-def test_check_freelists_at_crashing_cpu(prog: drgn.Program) -> None:
-    mm.check_freelists_at_crashing_cpu(prog)
+def test_check_freelists_at_cpu(prog: drgn.Program) -> None:
+    if "crashing_cpu" in prog:
+        cpu = prog["crashing_cpu"].value_()
+    else:
+        cpu = prog["panic_cpu"].counter.value_()
+    mm.check_freelists_at_cpu(prog, cpu)
