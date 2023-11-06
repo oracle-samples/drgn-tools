@@ -25,17 +25,24 @@ launch a QEMU with all the right parameters to create a newly installed image.
 """
 import argparse
 import dataclasses
+import http.server
 import logging
+import os
 import re
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import wait
 from pathlib import Path
+from typing import Dict
 from typing import List
+from typing import Optional
 from typing import TextIO
 
+from drgn_tools.util import download_file
 from testing.heavyvm.images import CONFIGURATIONS
 from testing.heavyvm.images import ImageInfo
 from testing.heavyvm.images import NAME_TO_CONFIGURATION
@@ -44,6 +51,8 @@ from testing.util import BASE_DIR
 
 
 KS_DIR = Path(__file__).parent / "ks"
+DOWNLOAD_LOCK = threading.Lock()
+DOWNLOADS: Dict[Path, threading.Event] = {}
 
 
 @dataclasses.dataclass
@@ -52,6 +61,7 @@ class Context:
     iso_dir: Path
     image_dir: Path
     ks_dir: Path
+    ks_url: str
     tmp_dir: Path
     overwrite: bool
     interactive: bool
@@ -62,18 +72,47 @@ class Context:
 
 
 def download_image(ctx: Context) -> None:
+    # This is complicated by the fact that several threads could be racing to
+    # download the same ISO. While we could atomically open the file with
+    # O_CREAT|O_EXCL (or catch the EEXIST), the threads which lose the race
+    # would not know when the download is completed. So, we need to have some
+    # signalling. For each download, we have an event, and we protect the
+    # mapping of file to event with a lock. Threads that win the race create the
+    # event, do the download, and trigger the event. Threads that lose the race
+    # wait on the event.
     output_file = ctx.iso_dir / ctx.image_info.iso_name
+    output_file = output_file.absolute()
+    partial = ctx.iso_dir / f"{ctx.image_info.iso_name}.part"
+
     if output_file.exists():
         ctx.log.info("ISO already downloaded")
         return
-    ctx.log.info("Downloading ISO...")
-    ctx.iso_dir.mkdir(exist_ok=True)
-    subprocess.run(
-        ["wget", "-q", ctx.image_info.iso_url, "-O", str(output_file)],
-        check=True,
-        stdout=ctx.cmdlog(),
-        stderr=subprocess.STDOUT,
-    )
+
+    event: Optional[threading.Event] = None
+    wait_event: Optional[threading.Event] = None
+    with DOWNLOAD_LOCK:
+        wait_event = DOWNLOADS.get(output_file)
+        if not wait_event:
+            event = threading.Event()
+            DOWNLOADS[output_file] = event
+
+    if wait_event:
+        # Somebody beat us to it, we now wait and then return
+        ctx.log.info("Waiting for download of ISO ...")
+        wait_event.wait()
+        ctx.log.info("Finished waiting for ISO download!")
+    else:
+        # We are responsible for downloading and then signaling
+        assert event is not None
+        ctx.log.info("Downloading ISO...")
+        ctx.iso_dir.mkdir(exist_ok=True)
+        with partial.open("wb") as f:
+            download_file(ctx.image_info.iso_url, f)
+        ctx.log.info("Finished downloading!")
+        os.rename(partial, output_file)
+        with DOWNLOAD_LOCK:
+            del DOWNLOADS[output_file]
+        event.set()
 
 
 def extract_boot_info(ctx: Context) -> List[str]:
@@ -82,21 +121,29 @@ def extract_boot_info(ctx: Context) -> List[str]:
     """
     iso_path_str = str(ctx.iso_dir / ctx.image_info.iso_name)
 
-    def extract(name: str, path: Path):
-        with path.open("wb") as f:
-            subprocess.run(
-                ["isoinfo", "-i", iso_path_str, "-x", f"/ISOLINUX/{name}"],
-                stdout=f.fileno(),
-                check=True,
-            )
+    with tempfile.TemporaryDirectory() as td:
+        subprocess.run(
+            [
+                "7z",
+                "x",
+                iso_path_str,
+                "isolinux/vmlinuz",
+                "isolinux/initrd.img",
+                "isolinux/isolinux.cfg",
+            ],
+            cwd=td,
+            stdout=ctx.cmdlog(),
+            check=True,
+        )
+        tdpath = Path(td)
+        os.rename(tdpath / "isolinux/vmlinuz", ctx.tmp_dir / "vmlinuz")
+        os.rename(tdpath / "isolinux/initrd.img", ctx.tmp_dir / "initrd.img")
+        isolinux_cfg = tdpath / "isolinux/isolinux.cfg"
+        with isolinux_cfg.open() as f:
+            cfg = f.read()
 
-    extract("VMLINUZ.;1", ctx.tmp_dir / "vmlinuz")
-    extract("INITRD.IMG;1", ctx.tmp_dir / "initrd.img")
-    ctx.log.info("Extracted vmlinuz and initrd.img from ISO")
+    ctx.log.info("Extracted vmlinuz, initrd.img, and isolinux.cfg from ISO")
 
-    with tempfile.NamedTemporaryFile() as tf:
-        extract("ISOLINUX.CFG;1", Path(tf.name))
-        cfg = tf.read().decode("utf-8")
     for line in cfg.split("\n"):
         if "initrd=initrd.img" in line:
             args = line.strip().split()
@@ -128,29 +175,28 @@ def make_empty_image(ctx: Context) -> None:
     )
 
 
-def make_kickstart_disk(ctx: Context) -> None:
-    ks_script_path = ctx.ks_dir / ctx.image_info.ks_name
-    ks_disk_path = ctx.tmp_dir / "kickstart.img"
-    ctx.log.info("Creating kickstart disk...")
-    subprocess.run(
-        ["dd", "if=/dev/zero", f"of={ks_disk_path}", "bs=1M", "count=40"],
-        check=True,
-        stdout=ctx.cmdlog(),
-        stderr=subprocess.STDOUT,
-    )
-    subprocess.run(
-        ["mformat", "-F", "-i", str(ks_disk_path)],
-        check=True,
-        stdout=ctx.cmdlog(),
-        stderr=subprocess.STDOUT,
-    )
-    subprocess.run(
-        ["mcopy", "-i", str(ks_disk_path), str(ks_script_path), "::ks.cfg"],
-        check=True,
-        stdout=ctx.cmdlog(),
-        stderr=subprocess.STDOUT,
-    )
-    ctx.log.info("Created kickstart disk.")
+class KickstartServer:
+    def __init__(self, port=8325) -> None:
+        self.port = port
+        self.server = socketserver.TCPServer(
+            ("", port), http.server.SimpleHTTPRequestHandler
+        )
+        self.thread = threading.Thread(target=self.run)
+
+    def url_for(self, host: str, path: Path) -> str:
+        rel = str(path.relative_to(Path.cwd()))
+        return f"http://{host}:{self.port}/{rel}"
+
+    def run(self) -> None:
+        with self.server:
+            self.server.serve_forever()
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.server.shutdown()
+        self.thread.join()
 
 
 def get_qemu(ctx: Context) -> QemuRunner:
@@ -172,16 +218,11 @@ def run_installer(ctx: Context, cmdline: List[str]) -> None:
     Run the installer.
     """
     cmdline += [
-        "inst.ks=hd:sdb:ks.cfg",
+        f"inst.ks={ctx.ks_url}",
         "console=ttyS0",
     ]
     qemu = get_qemu(ctx)
     qemu.cdrom(str(ctx.iso_dir / ctx.image_info.iso_name))
-    qemu.drive(
-        driver="raw",
-        node_name="hdb",
-        file=str(ctx.tmp_dir / "kickstart.img"),
-    )
     if ctx.interactive:
         qemu.mon_serial()
         qemu.vnc()
@@ -272,7 +313,6 @@ def run_post_install(ctx: Context) -> None:
 def do_imgbuild(ctx: Context) -> None:
     download_image(ctx)
     cmdline = extract_boot_info(ctx)
-    make_kickstart_disk(ctx)
     make_empty_image(ctx)
     run_installer(ctx, cmdline)
     run_post_install(ctx)
@@ -341,6 +381,8 @@ def main() -> None:
         print("over serial port. Limited to one task at a time.")
         args.num_workers = 1
 
+    srv = KickstartServer()
+    srv.start()
     logging.basicConfig(level=logging.INFO)
     ret = 0
     with tempfile.TemporaryDirectory() as td:
@@ -352,11 +394,13 @@ def main() -> None:
             tmp_sub_dir = tmp_dir / image_info.name
             tmp_sub_dir.mkdir()
             log.info("Launching with tmpdir: %s", tmp_sub_dir)
+            ks_url = srv.url_for("10.0.2.2", args.ks_dir / image_info.ks_name)
             ctx = Context(
                 image_info,
                 args.iso_dir,
                 args.image_dir,
                 args.ks_dir,
+                ks_url,
                 tmp_sub_dir,
                 args.overwrite,
                 args.interactive,
@@ -374,6 +418,7 @@ def main() -> None:
             if not args.no_wait:
                 print(f"Tmpdir: {td}")
                 input("Hit enter when done examining tmpdir")
+    srv.stop()
     sys.exit(ret)
 
 

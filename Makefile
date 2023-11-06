@@ -19,8 +19,6 @@ litevm-test:
 .PHONY: vmcore-test
 vmcore-test:
 	-tox -e runner -- python -m testing.vmcore test
-	@cp '.tox/runner/log/2-commands[0].log' test-vmcore.log
-	@echo 'View the test log files: "less -R test-vmcore.log"'
 
 
 test: litevm-test vmcore-test
