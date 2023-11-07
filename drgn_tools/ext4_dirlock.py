@@ -87,7 +87,6 @@ variable from the stack frame.
 import argparse
 
 import drgn
-from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.fs import d_path
 from drgn.helpers.linux.sched import task_state_to_char
@@ -97,49 +96,11 @@ from drgn_tools.bt import bt_has
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
+from drgn_tools.locking import show_lock_waiter
+from drgn_tools.locking import timestamp_str
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import has_member
-
-
-def timestamp_str(ns: int) -> str:
-    value = ns // 1000000
-    ms = value % 1000
-    value = value // 1000
-    secs = value % 60
-    value = value // 60
-    mins = value % 60
-    value = value // 60
-    hours = value % 24
-    days = value // 24
-    return "%d %02d:%02d:%02d.%03d" % (days, hours, mins, secs, ms)
-
-
-def show_lock_waiter(
-    prog: Program, task: Object, index: int, stacktrace: bool
-) -> None:
-    """
-    Show lock waiter
-
-    :param prog: drgn program
-    :param task: ``struct task_struct *``
-    :param index: index of waiter
-    :param stacktrace: true to dump stack trace of the waiter
-    :returns: None
-    """
-    prefix = "[%d] " % index
-    print(
-        "%12s: %-16s %-8d %-6s %-16s"
-        % (
-            prefix,
-            task.comm.string_().decode(),
-            task.pid.value_(),
-            task_state_to_char(task),
-            timestamp_str(task_lastrun2now(task)),
-        )
-    )
-    if stacktrace:
-        bt(task)
 
 
 def ext4_dirlock_scan(prog: drgn.Program, stacktrace: bool = False) -> None:
