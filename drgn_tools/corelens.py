@@ -9,6 +9,7 @@ import collections
 import importlib
 import inspect
 import os
+import pkgutil
 import re
 import shlex
 import sys
@@ -170,24 +171,12 @@ class CorelensModule(abc.ABC):
 
 def all_corelens_modules() -> Dict[str, CorelensModule]:
     # NOTE: we will only discover subclasses via __subclasses__() if they have
-    # already been imported. It's possible in the future that we'll want a
-    # mechanism to support third-party modules, but for now, we can be satisfied
-    # with simply maintaining a list of Python modules which contain
-    # CorelensModule subclasses.
-    python_mods = [
-        "drgn_tools.printk",
-        "drgn_tools.nvme",
-        "drgn_tools.virtio",
-        "drgn_tools.ext4_dirlock",
-        "drgn_tools.workqueue",
-        "drgn_tools.smp",
-        "drgn_tools.block",
-        "drgn_tools.md",
-        "drgn_tools.rds",
-        "drgn_tools.cpuinfo",
-    ]
-    for python_module in python_mods:
-        importlib.import_module(python_module)
+    # already been imported. Maybe in the future, we'll have some third-party
+    # modules, but for now, we just import everything in drgn_tools so we can
+    # be confident we have them all.
+    paths = [str(Path(__file__).parent)]
+    for mod in pkgutil.iter_modules(path=paths, prefix="drgn_tools."):
+        importlib.import_module(mod.name)
 
     subclasses = collections.deque(CorelensModule.__subclasses__())
     result = []
