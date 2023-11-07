@@ -196,7 +196,7 @@ def rq_pending_time_ms(rq: Object) -> int:
     """
     Get io pending time in ms
 
-    :param rq: ``struct request *``
+    :param rq: ``struct request *`` or ``struct request``
     :returns: request pending time
     """
     prog = rq.prog_
@@ -261,7 +261,7 @@ def rq_op(rq: Object) -> str:
     """
     Get request operation name
 
-    :param rq: ``struct request *``
+    :param rq: ``struct request *`` or ``struct request``
     :returns: combined request operation enum name as str
     """
     prog = rq.prog_
@@ -277,7 +277,7 @@ def rq_flags(rq: Object) -> str:
     """
     Get request operation flags
 
-    :param rq: ``struct request *``
+    :param rq: ``struct request *`` or ``struct request``
     :returns: operation flags of the request
     """
     # uek4 didn't have this member
@@ -385,7 +385,15 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
         name = disk.disk_name.string_().decode()
         if diskname != "all" and diskname != name:
             continue
-        for hwq, rq in for_each_mq_pending_request(disk.queue):
+        # Read the requests all at once into a list, and use read_() to
+        # transform them into "values" - this is in case we are running on a
+        # live system, as it reduces the chances of in-memory changes breaking
+        # things.
+        mq_pending = [
+            (hwq[0].read_(), rq.value_(), rq[0].read_())
+            for hwq, rq in for_each_mq_pending_request(disk.queue)
+        ]
+        for hwq, rq_ptr, rq in mq_pending:
             # for mq disk from same hba host who are sharing hwq.tags
             # check gendisk to dump io only from this particular disk.
             if (hwq.flags & BLK_MQ_F_TAG_SHARED) != 0 and request_target(
@@ -397,7 +405,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
                 % (
                     name,
                     hwq.value_(),
-                    rq.value_(),
+                    rq_ptr,
                     rq_op(rq),
                     rq_flags(rq),
                     rq.__sector,
@@ -405,13 +413,17 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
                     rq_pending_time_ms(rq),
                 )
             )
-        for rq in for_each_sq_pending_request(disk.queue):
+        sq_pending = [
+            (rq.value_(), rq[0].read_())
+            for rq in for_each_sq_pending_request(disk.queue)
+        ]
+        for rq_ptr, rq in sq_pending:
             print(
                 "%-20s %-20s %-20lx %-16s\n%-20s %-20d %-20d %-16d"
                 % (
                     name,
                     "-",
-                    rq.value_(),
+                    rq_ptr,
                     rq_op(rq),
                     rq_flags(rq),
                     rq.__sector,
