@@ -294,23 +294,30 @@ def d_count(dentry: Object) -> int:
     return dentry.d_lockref.count
 
 
-def __dentry_iter(prog: Program) -> Iterator[Object]:
+def __dentry_iter(prog: Program, chunk_size: int = 2048) -> Iterator[Object]:
     """Iterate through the hashtable"""
-    dentry_hashtable = prog["dentry_hashtable"]
+    dentry_hashtable = prog["dentry_hashtable"].read_()
     # for uek5 and newer
     dentry_hashtable_size = 2 ** (32 - int(prog["d_hash_shift"].read_()))
     # for uek4
     if not prog.symbols("in_lookup_hashtable"):
         dentry_hashtable_size = 2 ** (int(prog["d_hash_shift"].read_()))
+    if dentry_hashtable_size % chunk_size != 0:
+        raise ValueError("chunk size is too big")
 
-    # iterate though the hashtable bucket by bucket
-    for i in range(dentry_hashtable_size):
-        bucket = dentry_hashtable[i]
-        d_hash = bucket.first
-        while d_hash:
-            dentry = drgn.container_of(d_hash, "struct dentry", "d_hash")
-            yield dentry
-            d_hash = d_hash.next
+    # iterate though the hashtable chunk by chunk
+    chunk_type = prog.array_type(dentry_hashtable[0].type_, chunk_size)
+    for chunk_start in range(0, dentry_hashtable_size, chunk_size):
+        array_chunk = drgn.Object(
+            prog, chunk_type, address=dentry_hashtable + chunk_start
+        ).read_()
+        for i in range(chunk_size):
+            bucket = array_chunk[i]
+            d_hash = bucket.first
+            while d_hash:
+                dentry = drgn.container_of(d_hash, "struct dentry", "d_hash")
+                yield dentry
+                d_hash = d_hash.next.read_()
 
 
 def __file_type(mode: Object) -> str:
