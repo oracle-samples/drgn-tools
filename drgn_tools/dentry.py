@@ -3,6 +3,7 @@
 """
 Helpers for dentries.
 """
+import argparse
 import stat
 from typing import Iterable
 from typing import Iterator
@@ -13,6 +14,7 @@ from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.fs import dentry_path
 
+from drgn_tools.corelens import CorelensModule
 from drgn_tools.itertools import count
 from drgn_tools.itertools import take
 from drgn_tools.table import print_table
@@ -270,3 +272,35 @@ def __file_type(mode: Object) -> str:
         return "WHT"
 
     return "UNKN"
+
+
+class DentryCache(CorelensModule):
+    """List dentries from the dentry hash table"""
+
+    name = "dentrycache"
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--limit",
+            "-l",
+            type=int,
+            default=10000,
+            help="list at most <number> dentries, 10000 by default",
+        )
+        parser.add_argument(
+            "--negative",
+            "-n",
+            action="store_true",
+            help="list negative dentries only, disabled by default",
+        )
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        if args.negative:
+            dentries = for_each_negative_dentry_in_hashtable(prog)
+        else:
+            dentries = for_each_dentry_in_hashtable(prog)
+
+        if args.limit:
+            dentries = take(args.limit, dentries)
+
+        print_dentry_table(dentries)
