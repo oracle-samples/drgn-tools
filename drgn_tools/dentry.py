@@ -358,6 +358,12 @@ class DentryCache(CorelensModule):
             action="store_true",
             help="list negative dentries only, disabled by default",
         )
+        parser.add_argument(
+            "--detailed",
+            "-d",
+            action="store_true",
+            help="include inode, super, file type, refcount",
+        )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         if args.negative:
@@ -368,4 +374,10 @@ class DentryCache(CorelensModule):
         if args.limit:
             dentries = take(args.limit, dentries)
 
-        print_dentry_table(dentries)
+        if args.detailed:
+            print_dentry_table(dentries)
+        else:
+            # Emulate oled dentrycache
+            for i, dentry in enumerate(dentries):
+                path = dentry_path_any_mount(dentry).decode()
+                print(f"{i:05d} {path}")
