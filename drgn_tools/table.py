@@ -7,6 +7,27 @@ from typing import List
 from typing import Optional
 
 
+def print_row(fields: List[Any], col_widths: List[int]):
+    """
+    Print a single row of a table, given pre-determined column widths
+
+    Note that this doesn't guarantee that the width of every field in the row
+    will be less than the width of the column: in that case, the field's full
+    contents will be printed and columns will be misaligned. For guaranteed
+    aligned columns, see print_table(), or be very careful about your column
+    widths.
+
+    :param fields: a list of fields to print
+    :param col_widths: the width of each field (not including spaces)
+    """
+    print(
+        "  ".join(
+            str(val) if w <= 0 else str(val).ljust(w)
+            for val, w in zip(fields, col_widths)
+        )
+    )
+
+
 def print_table(
     fields: List[List[Any]],
     outfile: Optional[str] = None,
