@@ -1,5 +1,6 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import re
 import sys
 import time
 import typing as t
@@ -44,6 +45,42 @@ def get_uts(prog: Program) -> t.Dict[str, str]:
     uts["domainname"] = uts_to_string(uts_obj.domainname)
 
     return uts
+
+
+def kernel_version(prog: Program) -> t.Tuple[int, int, int]:
+    """
+    Returns the kernel version as a tuple (major, minor, patch)
+
+    This is not the full release string, and it shouldn't be confused with the
+    UEK-specific parsing that is present in
+    :class:`drgn_tools.debuginfo.KernelVersion`. It simply corresponds to the
+    upstream major, minor, and patch versions, which typically (but not always)
+    remain constant over a distribution kernel's releases.
+
+    Given a kernel version, especially the major.minor version alone, there is
+    no guarantee about whether a commit is necessarily present or not. The
+    linux-stable process regularly backports commits from newer releases into
+    older ones, especially when they have a Fixes tag. Distributions like UEK
+    also backport certain changes, regardless of whether they were included in
+    stable releases.
+
+    This should be used only as a last resort for helper compatibility. At each
+    usage of this function, a comment should be in place describing (a) the
+    exact git commit SHA which introduces the change, and which kernel version
+    the change appears in. (b) Why couldn't the change in behavior be handled by
+    detecting changes to variables or types? (c) Address whether there is a risk
+    that stable/distro kernels may have a bakckport of the commit, which
+    couldn't be detected via a simple kernel version comparison.
+    """
+    release = prog["UTS_RELEASE"].string_().decode("utf-8")
+    # Accepts 5.15.0, 6.0, 4.1.3-whatever...
+    match = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?", release)
+    if not match:
+        raise ValueError(f"Cannot understand kernel release: {release}")
+    maj, min, patch = match.groups()
+    if not patch:
+        patch = "0"
+    return (int(maj), int(min), int(patch))
 
 
 def has_member(obj: Object, name: str) -> bool:
