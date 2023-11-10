@@ -18,6 +18,7 @@ from drgn_tools.corelens import CorelensModule
 from drgn_tools.itertools import count
 from drgn_tools.itertools import take
 from drgn_tools.table import print_row
+from drgn_tools.util import kernel_version
 
 
 MNT_INTERNAL = 0x4000
@@ -297,11 +298,18 @@ def d_count(dentry: Object) -> int:
 def __dentry_iter(prog: Program, chunk_size: int = 2048) -> Iterator[Object]:
     """Iterate through the hashtable"""
     dentry_hashtable = prog["dentry_hashtable"].read_()
-    # for uek5 and newer
-    dentry_hashtable_size = 2 ** (32 - int(prog["d_hash_shift"].read_()))
-    # for uek4
-    if not prog.symbols("in_lookup_hashtable"):
-        dentry_hashtable_size = 2 ** (int(prog["d_hash_shift"].read_()))
+
+    # Commit 854d3e63438d ("dcache: subtract d_hash_shift from 32 in advance")
+    # changes the logical meaning of d_hash_shift with absolutely no detectable
+    # change to any type or symbol. It was first included in 4.16 and has never
+    # been backported to any stable kernel release or UEK. There is simply no
+    # other way to know how to interpret d_hash_shift, except by using the
+    # kernel version. Thankfully, it's just a simply comparison against 4.16.
+    if kernel_version(prog) < (4, 16, 0):
+        dentry_hashtable_size = 2 ** (int(prog["d_hash_shift"]))
+    else:
+        dentry_hashtable_size = 2 ** (32 - int(prog["d_hash_shift"]))
+
     if dentry_hashtable_size % chunk_size != 0:
         raise ValueError("chunk size is too big")
 
