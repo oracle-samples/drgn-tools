@@ -4,4 +4,4 @@ from drgn_tools import lock
 
 
 def test_locks(prog):
-    lock.scan_task(prog, stack=True)
+    lock.scan_lock(prog, stack=True)
