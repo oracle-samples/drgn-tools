@@ -5,6 +5,7 @@ import sys
 import time
 import typing as t
 from contextlib import contextmanager
+from enum import IntEnum
 from urllib.request import urlopen
 
 from drgn import NULL
@@ -414,3 +415,16 @@ def uek4_radix_tree_lookup(root: Object, index: int) -> Object:
             break
 
     return node
+
+
+class BitNumberFlags(IntEnum):
+    @classmethod
+    def decode(cls, value: int) -> str:
+        names = []
+        for bit in cls:
+            if (1 << bit) & value:
+                names.append(bit.name)
+                value &= ~(1 << bit)
+        if not names or value:
+            names.append(f"0x{value:x}")
+        return "|".join(names)
