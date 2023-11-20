@@ -1,13 +1,18 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import argparse
 import typing as t
 
 import drgn
 from drgn import FaultError
+from drgn import Program
 from drgn import TypeKind
+from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import for_each_task
+from drgn.helpers.linux.sched import cpu_curr
 
+from drgn_tools.corelens import CorelensModule
 from drgn_tools.mm import AddrKind
 from drgn_tools.module import KernelModule
 from drgn_tools.task import task_cpu
@@ -441,3 +446,32 @@ def bt_has(
             pass
 
     return frame_list
+
+
+def print_all_bt(prog: Program) -> None:
+    """
+    Prints the stack trace of all tasks
+    """
+    print("On-CPU Tasks:")
+    online_tasks = set()
+
+    for cpu in for_each_online_cpu(prog):
+        task = cpu_curr(prog, cpu)
+        online_tasks.add(task.pid.value_())
+        bt(task)
+
+    print("\nOff-CPU Tasks:")
+    for task in for_each_task(prog):
+        if task.pid.value_() not in online_tasks:
+            bt(task)
+
+
+class Bt(CorelensModule):
+    """
+    Module to print stack trace of all tasks
+    """
+
+    name = "bt"
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        print_all_bt(prog)
