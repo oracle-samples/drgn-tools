@@ -17,8 +17,8 @@ from drgn_tools.task import task_lastrun2now
 MUTEX_FLAGS = 0x7
 
 
-def mtx_owner(prog: Program, mtx: drgn.Object) -> drgn.Object:
-    owner = mtx.owner.counter.value_()
+def mutex_owner(prog: Program, mutex: drgn.Object) -> drgn.Object:
+    owner = mutex.owner.counter.value_()
     if owner < 0:
         owner = 2**64 + owner - 1
     Owner = owner & (~MUTEX_FLAGS)

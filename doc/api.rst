@@ -119,10 +119,3 @@ drgn_tools.cmdline
 
 .. automodule:: drgn_tools.cmdline
    :members:
-
-
-drgn_tools.lock
------------------------
-
-.. automodule:: drgn_tools.lock
-   :members:
