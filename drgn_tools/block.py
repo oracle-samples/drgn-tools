@@ -390,10 +390,10 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
         # live system, as it reduces the chances of in-memory changes breaking
         # things.
         mq_pending = [
-            (hwq[0].read_(), rq.value_(), rq[0].read_())
+            (hwq.value_(), hwq[0].read_(), rq.value_(), rq[0].read_())
             for hwq, rq in for_each_mq_pending_request(disk.queue)
         ]
-        for hwq, rq_ptr, rq in mq_pending:
+        for hwq_ptr, hwq, rq_ptr, rq in mq_pending:
             # for mq disk from same hba host who are sharing hwq.tags
             # check gendisk to dump io only from this particular disk.
             if (hwq.flags & BLK_MQ_F_TAG_SHARED) != 0 and request_target(
@@ -404,7 +404,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
                 "%-20s %-20lx %-20lx %-16s\n%-20s %-20d %-20d %-16d"
                 % (
                     name,
-                    hwq.value_(),
+                    hwq_ptr,
                     rq_ptr,
                     rq_op(rq),
                     rq_flags(rq),
