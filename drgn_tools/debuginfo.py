@@ -310,19 +310,22 @@ def _get_debuginfo_paths(
 
 
 def _find_debuginfo(paths: List[Path], mod: str) -> Optional[Path]:
+    replace_pat = re.compile(r"[_-]")
     for search_dir in paths:
         if "lib/modules" in str(search_dir) and mod != "vmlinux":
             # If the path contains "lib/modules", it's likely the result of
             # extracting an RPM. That means that we'll have a nested directory
             # structure to search for modules. Be lenient on hyphens and
             # underscores too.
-            mod_pat = mod.replace("-", "[_-]")
+            mod_pat = replace_pat.sub("[_-]", mod)
             for candidate in search_dir.glob(f"**/{mod_pat}.ko.debug*"):
                 return candidate
         else:
-            name_no_hyphen = None
+            name_alt = None
             if "-" in mod:
-                name_no_hyphen = mod.replace("-", "_")
+                name_alt = mod.replace("-", "_")
+            elif "_" in mod:
+                name_alt = mod.replace("_", "-")
             exts = (
                 ("",) if mod == "vmlinux" else (".ko.debug", ".ko", ".ko.xz")
             )
@@ -335,10 +338,9 @@ def _find_debuginfo(paths: List[Path], mod: str) -> Optional[Path]:
                 candidate = search_dir / f"{mod}{ext}"
                 if candidate.exists():
                     return candidate
-                # try the standardized underscore
-                if name_no_hyphen:
-                    candidate = search_dir / f"{name_no_hyphen}{ext}"
-                    print(candidate)
+                # try the alternative name (hyphen or underscore)
+                if name_alt:
+                    candidate = search_dir / f"{name_alt}{ext}"
                     if candidate.exists():
                         return candidate
     return None
