@@ -321,7 +321,7 @@ def for_each_sq_elevator_rq(q: Object) -> Iterable[Object]:
     if q.elevator.value_() == 0:
         return []
     prog = q.prog_
-    name = q.elevator.type.elevator_name.string_()
+    name = q.elevator.type.elevator_name.string_().decode()
     addr = q.elevator.elevator_data.value_()
     list1 = None
     list2 = None
