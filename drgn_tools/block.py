@@ -14,11 +14,19 @@ from drgn import cast
 from drgn import Object
 from drgn import TypeKind
 from drgn.helpers.common.format import decode_enum_type_flags
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.block import for_each_disk
+from drgn.helpers.linux.block import part_devt
+from drgn.helpers.linux.block import part_name
+from drgn.helpers.linux.device import MAJOR
+from drgn.helpers.linux.device import MINOR
 from drgn.helpers.linux.list import list_for_each_entry
+from drgn.helpers.linux.xarray import xa_for_each
 
 from drgn_tools.bitops import for_each_bit_set
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.scsi import print_scsi_hosts
+from drgn_tools.table import print_table
 from drgn_tools.util import has_member
 from drgn_tools.util import type_exists
 
@@ -425,7 +433,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
             ).value_() != disk.value_():
                 continue
             print(
-                "%-20s %-20lx %-20lx %-16s\n%-20s %-20d %-20d %-16d"
+                "%-20s 0x%-20lx 0x%-20lx %-16s\n%-20s %-20d %-20d %-16d"
                 % (
                     name,
                     hwq_ptr,
@@ -491,6 +499,97 @@ def get_inflight_io_nr(prog: drgn.Program, disk: Object) -> int:
     return nr
 
 
+def print_total_inflight_ios(prog: drgn.Program) -> None:
+    """
+    Calculates number of inflight IOs
+    """
+    num_inflight_ios = 0
+    for disk in for_each_disk(prog):
+        num_inflight_ios += get_inflight_io_nr(prog, disk)
+    print(f"{num_inflight_ios} inflight IOs found")
+
+
+def is_blkdev_hdpart(prog: drgn.Program) -> bool:
+    """
+    Checks whether partitions are represented by struct block_device
+    or struct hd_struct
+    """
+    has_bdev_struct = True
+    try:
+        for disk in for_each_disk(prog):
+            for bdev in for_each_partition_in_table(disk.part_tbl):
+                return has_bdev_struct
+    except AttributeError:
+        has_bdev_struct = False
+
+    return has_bdev_struct
+
+
+def for_each_partition_in_table(xarray: Object) -> Iterable[Object]:
+    """
+    Helper to iterate through partition table
+    """
+    for _, entry in xa_for_each(xarray.address_of_()):
+        part_ptr = cast("struct block_device *", entry)
+        if not part_ptr.value_():
+            continue
+        yield part_ptr
+
+
+def get_blk_info_from_bdev_struct(disk: Object) -> list:
+    """
+    Collects block device information from
+    ``struct block_device``
+    :returns: a list with each block device information
+    """
+    info = []
+    for bdev in for_each_partition_in_table(disk.part_tbl):
+        devt = bdev.bd_dev.value_()
+        name = escape_ascii_string(part_name(bdev), escape_backslash=True)
+        gendisk = hex(bdev.bd_disk.value_())
+        bdev_inode = bdev.bd_inode
+        num_blocks = bdev_inode.i_size.value_()
+        timeout = bdev.bd_disk.queue.timeout.expires.value_()
+        info.append(
+            [MAJOR(devt), MINOR(devt), timeout, num_blocks, gendisk, name]
+        )
+    return info
+
+
+def get_blk_info_from_hd_struct(disk: Object) -> list:
+    """
+    Collects block device information from
+    ``struct hd_struct``
+    :returns: a list with each block device information
+    """
+    info = []
+    for partno in range(disk.part_tbl.len):
+        part = disk.part_tbl.part[partno]
+        devt = part_devt(part)
+        name = part_name(part).decode()
+        num_blocks = part.nr_sects.value_()
+        gendisk = hex(disk.value_())
+        timeout = disk.queue.timeout.expires.value_()
+        info.append(
+            [MAJOR(devt), MINOR(devt), timeout, num_blocks, gendisk, name]
+        )
+    return info
+
+
+def print_block_devs_info(prog: drgn.Program) -> None:
+    """
+    Prints the block device information
+    """
+    output = [["MAJOR", "MINOR", "TIMEOUT", "#BLOCKS", "GENDISK", "NAME"]]
+    has_bdev_struct = is_blkdev_hdpart(prog)
+    for disk in for_each_disk(prog):
+        if has_bdev_struct:
+            output += get_blk_info_from_bdev_struct(disk)
+        else:
+            output += get_blk_info_from_hd_struct(disk)
+    print_table(output)
+
+
 class InflightIOModule(CorelensModule):
     """Display I/O requests that are currently pending"""
 
@@ -506,3 +605,21 @@ class InflightIOModule(CorelensModule):
 
     def run(self, prog: drgn.Program, args: argparse.Namespace) -> None:
         dump_inflight_io(prog, args.diskname)
+
+
+class BlockInfo(CorelensModule):
+    """
+    Corelens Module for scsi-devs-info
+    """
+
+    name = "blockinfo"
+
+    def run(self, prog: drgn.Program, args: argparse.Namespace) -> None:
+        print("\n\nSCSI HOSTS\n==========")
+        print_scsi_hosts(prog)
+        print("\n\nBLOCK DEVICES INFORMATION\n=========================")
+        print_block_devs_info(prog)
+        print("\n\nInFlight I/Os\n=============")
+        dump_inflight_io(prog, "all")
+        print("\n")
+        print_total_inflight_ios(prog)
