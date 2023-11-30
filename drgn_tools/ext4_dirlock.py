@@ -89,11 +89,13 @@ import argparse
 import drgn
 from drgn import Program
 from drgn.helpers.linux.fs import d_path
+from drgn.helpers.linux.list import list_for_each
 from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.bt import bt
 from drgn_tools.bt import bt_has
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.itertools import count
 from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
 from drgn_tools.locking import show_lock_waiter
@@ -138,6 +140,10 @@ def ext4_dirlock_scan(prog: drgn.Program, stacktrace: bool = False) -> None:
         print("%-12s: 0x%x" % ("inode", inode.value_()))
         print("%-12s: %d" % ("Size", inode.i_size.value_()))
         print("%-12s: %d" % ("Blocks", inode.i_blocks.value_()))
+        print(
+            "%-12s: %d"
+            % ("subdirs", count(list_for_each(dentry.d_subdirs.address_of_())))
+        )
         print(
             "%-12s: %-16s %-8s %-6s %-16s"
             % ("Inode Lock", "Command", "Pid", "Status", "Lastrun2now")
