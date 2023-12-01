@@ -334,6 +334,9 @@ def for_each_sq_elevator_rq(q: Object) -> Iterable[Object]:
         list2 = elevator_data.fifo_list[1].address_of_()
     elif name == "cfq":
         # TODO: implement this
+        print(
+            "queue 0x%lx: dump pending IO from cfq not supported!" % q.value_()
+        )
         return []
     else:
         return []
