@@ -9,6 +9,7 @@ import drgn
 from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
+from drgn.helpers.linux.sched import task_cpu
 from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.bt import bt
@@ -52,7 +53,7 @@ def show_lock_waiter(
     :returns: None
     """
     prefix = "[%d] " % index
-    ncpu = task.cpu.value_()
+    ncpu = task_cpu(task)
     print(
         "%12s: %-4s %-4d %-16s %-8d %-6s %-16s"
         % (
