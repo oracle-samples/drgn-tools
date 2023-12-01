@@ -133,33 +133,48 @@ class OracleLinuxYumFetcher(DebuginfoFetcher):
     A fetcher which downloads from oss.oracle.com Yum server
     """
 
-    url_fmt: str = "https://oss.oracle.com/ol{olver}/debuginfo/{rpm}"
+    urls: List[str] = ["https://oss.oracle.com/ol{olver}/debuginfo/{rpm}"]
     out_dir: Path = Path.home() / "vmlinux_repo"
 
-    def __init__(self, url_fmt: Optional[str] = None) -> None:
-        if url_fmt:
-            self.url_fmt = url_fmt
+    def __init__(self, urls: Optional[str] = None) -> None:
+        if urls:
+            self.urls = []
+            for u in urls.split("\n"):
+                u = u.strip()
+                if u:
+                    self.urls.append(u)
 
     def fetch_modules(
         self, uname: str, modules: List[str], quiet: bool = False
     ) -> Dict[str, Path]:
         version = KernelVersion.parse(uname)
-        url = self.url_fmt.format(
-            olver=version.ol_version,
-            rpm=version.oraclelinux_debuginfo_rpm(),
-        )
+        urls = [
+            url_fmt.format(
+                olver=version.ol_version,
+                rpm=version.oraclelinux_debuginfo_rpm(),
+            )
+            for url_fmt in self.urls
+        ]
         out_dir = self.out_dir / uname
         with tempfile.NamedTemporaryFile(suffix=".rpm", mode="wb") as f:
             # Apparently a temporary file is not a "BytesIO", so type
             # checking fails. Ignore that error.
-            try:
-                download_file(url, f, quiet, desc="Downloading RPM")  # type: ignore
-            except HTTPError as e:
+            errors = []
+            for url in urls:
+                try:
+                    download_file(url, f, quiet, desc="Downloading RPM")  # type: ignore
+                    break
+                except HTTPError as e:
+                    errors.append(
+                        "download failed for debuginfo RPM: {} {}\n{}".format(
+                            e.code, e.reason, url
+                        )
+                    )
+            else:
                 log.warning(
-                    "%s: download failed for debuginfo RPM: %d %s",
+                    "%s: tried all URLs and download failed:\n%s",
                     self.__class__.__name__,
-                    e.code,
-                    e.reason,
+                    "\n".join(errors),
                 )
                 return {}
             f.flush()
