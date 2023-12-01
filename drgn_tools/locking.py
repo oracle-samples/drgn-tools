@@ -5,9 +5,69 @@ Helper for linux kernel locking
 """
 from typing import Iterable
 
+import drgn
 from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
+from drgn.helpers.linux.sched import task_state_to_char
+
+from drgn_tools.bt import bt
+from drgn_tools.task import task_lastrun2now
+
+MUTEX_FLAGS = 0x7
+
+
+def mutex_owner(prog: Program, mutex: drgn.Object) -> drgn.Object:
+    owner = mutex.owner.counter.value_()
+    if owner < 0:
+        owner = 2**64 + owner - 1
+    Owner = owner & (~MUTEX_FLAGS)
+    struct_owner = Object(prog, "struct task_struct *", value=Owner)
+    return struct_owner
+
+
+def timestamp_str(ns: int) -> str:
+    value = ns // 1000000
+    ms = value % 1000
+    value = value // 1000
+    secs = value % 60
+    value = value // 60
+    mins = value % 60
+    value = value // 60
+    hours = value % 24
+    days = value // 24
+    return "%d %02d:%02d:%02d.%03d" % (days, hours, mins, secs, ms)
+
+
+def show_lock_waiter(
+    prog: Program, task: Object, index: int, stacktrace: bool
+) -> None:
+    """
+    Show lock waiter
+
+    :param prog: drgn program
+    :param task: ``struct task_struct *``
+    :param index: index of waiter
+    :param stacktrace: true to dump stack trace of the waiter
+    :returns: None
+    """
+    prefix = "[%d] " % index
+    ncpu = task.cpu.value_()
+    print(
+        "%12s: %-4s %-4d %-16s %-8d %-6s %-16s"
+        % (
+            prefix,
+            "cpu:",
+            ncpu,
+            task.comm.string_().decode(),
+            task.pid.value_(),
+            task_state_to_char(task),
+            timestamp_str(task_lastrun2now(task)),
+        )
+    )
+    if stacktrace:
+        print("")
+        bt(task)
 
 
 def for_each_rwsem_waiter(prog: Program, rwsem: Object) -> Iterable[Object]:
