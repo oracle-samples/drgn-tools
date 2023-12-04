@@ -310,11 +310,13 @@ def _check_module_debuginfo(
                             f"{mod.name} skipped because '{missing_dbinfo}'"
                             " did not have debuginfo loaded"
                         )
+                        skip = True
                 elif fnmatch(missing_dbinfo, pattern):
                     errors.append(
                         f"{mod.name} skipped because '{missing_dbinfo}'"
                         " did not have debuginfo loaded"
                     )
+                    skip = True
         if skip:
             continue
 
