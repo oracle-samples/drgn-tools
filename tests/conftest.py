@@ -95,7 +95,10 @@ def pytest_configure(config):
         vmcore_file = vmcore_dir / "vmcore"
         vmlinux_file = vmcore_dir / "vmlinux"
         if not vmcore_file.is_file() or not vmlinux_file.is_file():
-            pytest.exit(1, msg=f"error: vmcore {vmcore} does not exist")
+            pytest.exit(
+                reason=f"error: vmcore {vmcore} does not exist",
+                returncode=1,
+            )
         VMCORE = vmcore_file
         DEBUGINFO.append(vmlinux_file)
         for module in vmcore_dir.glob("*.ko.debug"):
