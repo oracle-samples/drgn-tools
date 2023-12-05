@@ -6,3 +6,6 @@ vmtest:
     - tox -e runner -- python -m testing.vmcore test --core-directory /var/drgn-tools/vmcores
     - mkdir -p tmp/overlays tmp/info
     - tox -e runner -- python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz
+  artifacts:
+    reports:
+      junit: vmcore.xml

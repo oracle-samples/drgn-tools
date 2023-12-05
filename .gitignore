@@ -12,3 +12,4 @@ deploy_dev.sh
 drgntools-fio.dat
 testdata
 test.log
+vmcore.xml
