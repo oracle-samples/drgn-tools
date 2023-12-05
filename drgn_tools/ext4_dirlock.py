@@ -88,6 +88,7 @@ import argparse
 
 import drgn
 from drgn import Program
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.fs import d_path
 from drgn.helpers.linux.list import list_for_each
 from drgn.helpers.linux.sched import task_state_to_char
@@ -128,7 +129,19 @@ def ext4_dirlock_scan(prog: drgn.Program, stacktrace: bool = False) -> None:
         return
 
     for task, frame in frame_list:
-        dentry = frame["dir_file"].f_path.dentry
+        try:
+            dentry = frame["dir_file"].f_path.dentry
+        except (drgn.ObjectAbsentError, KeyError):
+            print(
+                f"warning: task {task.pid.value_()} "
+                f"({escape_ascii_string(task.comm.string_())}) has "
+                "ext4_htree_fill_tree() in its stack, but we cannot "
+                "read the stack frame variables. Results may be "
+                "incomplete."
+            )
+            if stacktrace:
+                bt(task)
+            continue
         inode = frame["dir_file"].f_inode
         disk = dentry.d_sb.s_bdev.bd_disk
         print(
