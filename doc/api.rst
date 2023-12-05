@@ -1,128 +1,306 @@
 API Reference
 =============
 
-drgn_tools.bt
--------------
+drgn\_tools.bitops module
+-------------------------
 
-.. automodule:: drgn_tools.bt
+.. automodule:: drgn_tools.bitops
    :members:
+   :undoc-members:
+   :show-inheritance:
 
-
-drgn_tools.task
----------------
-
-.. automodule:: drgn_tools.task
-   :members:
-
-drgn_tools.util
----------------
-
-.. automodule:: drgn_tools.util
-   :members:
-
-drgn_tools.module
------------------
-
-.. automodule:: drgn_tools.module
-   :members:
-
-drgn_tools.mm
--------------
-
-.. automodule:: drgn_tools.mm
-   :members:
-
-drgn_tools.printk
------------------
-
-.. automodule:: drgn_tools.printk
-   :members:
-
-drgn_tools.virtio
------------------
-
-.. automodule:: drgn_tools.virtio
-   :members:
-
-drgn_tools.debuginfo
---------------------
-
-.. automodule:: drgn_tools.debuginfo
-   :members:
-
-
-drgn_tools.taint
-----------------
-
-.. automodule:: drgn_tools.taint
-   :members:
-
-
-drgn_tools.corelens
--------------------
-
-.. automodule:: drgn_tools.corelens
-   :members:
-
-
-drgn_tools.block
-----------------
+drgn\_tools.block module
+------------------------
 
 .. automodule:: drgn_tools.block
    :members:
+   :undoc-members:
+   :show-inheritance:
 
+drgn\_tools.bt module
+---------------------
 
-drgn_tools.locking
-------------------
-
-.. automodule:: drgn_tools.locking
+.. automodule:: drgn_tools.bt
    :members:
+   :undoc-members:
+   :show-inheritance:
 
+drgn\_tools.buddyinfo module
+----------------------------
 
-drgn_tools.ext4_dirlock
------------------------
-
-.. automodule:: drgn_tools.ext4_dirlock
+.. automodule:: drgn_tools.buddyinfo
    :members:
+   :undoc-members:
+   :show-inheritance:
 
+drgn\_tools.cli module
+----------------------
 
-drgn_tools.smp
------------------------
-
-.. automodule:: drgn_tools.smp
+.. automodule:: drgn_tools.cli
    :members:
+   :undoc-members:
+   :show-inheritance:
 
-
-drgn_tools.md
--------------
-
-.. automodule:: drgn_tools.md
-   :members:
-
-
-drgn_tools.rds
------------------------
-
-.. automodule:: drgn_tools.rds
-   :members:
-
-
-drgn_tools.cpuinfo
------------------------
-
-.. automodule:: drgn_tools.cpuinfo
-   :members:
-
-
-drgn_tools.cmdline
------------------------
+drgn\_tools.cmdline module
+--------------------------
 
 .. automodule:: drgn_tools.cmdline
    :members:
+   :undoc-members:
+   :show-inheritance:
 
+drgn\_tools.config module
+-------------------------
 
-drgn_tools.meminfo
+.. automodule:: drgn_tools.config
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.corelens module
+---------------------------
+
+.. automodule:: drgn_tools.corelens
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.cpuinfo module
+--------------------------
+
+.. automodule:: drgn_tools.cpuinfo
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.debuginfo module
+----------------------------
+
+.. automodule:: drgn_tools.debuginfo
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.dentry module
+-------------------------
+
+.. automodule:: drgn_tools.dentry
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.ext4\_dirlock module
+--------------------------------
+
+.. automodule:: drgn_tools.ext4_dirlock
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.file module
 -----------------------
+
+.. automodule:: drgn_tools.file
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.irq module
+----------------------
+
+.. automodule:: drgn_tools.irq
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.itertools module
+----------------------------
+
+.. automodule:: drgn_tools.itertools
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.lock module
+-----------------------
+
+.. automodule:: drgn_tools.lock
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.locking module
+--------------------------
+
+.. automodule:: drgn_tools.locking
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.logging module
+--------------------------
+
+.. automodule:: drgn_tools.logging
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.md module
+---------------------
+
+.. automodule:: drgn_tools.md
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.meminfo module
+--------------------------
 
 .. automodule:: drgn_tools.meminfo
    :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.mm module
+---------------------
+
+.. automodule:: drgn_tools.mm
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.module module
+-------------------------
+
+.. automodule:: drgn_tools.module
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.mounts module
+-------------------------
+
+.. automodule:: drgn_tools.mounts
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.nfs\_tools module
+-----------------------------
+
+.. automodule:: drgn_tools.nfs_tools
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.numastat module
+---------------------------
+
+.. automodule:: drgn_tools.numastat
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.nvme module
+-----------------------
+
+.. automodule:: drgn_tools.nvme
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.printk module
+-------------------------
+
+.. automodule:: drgn_tools.printk
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.rds module
+----------------------
+
+.. automodule:: drgn_tools.rds
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.smp module
+----------------------
+
+.. automodule:: drgn_tools.smp
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.sys module
+----------------------
+
+.. automodule:: drgn_tools.sys
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.sysctl module
+-------------------------
+
+.. automodule:: drgn_tools.sysctl
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.table module
+------------------------
+
+.. automodule:: drgn_tools.table
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.taint module
+------------------------
+
+.. automodule:: drgn_tools.taint
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.task module
+-----------------------
+
+.. automodule:: drgn_tools.task
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.util module
+-----------------------
+
+.. automodule:: drgn_tools.util
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.virtio module
+-------------------------
+
+.. automodule:: drgn_tools.virtio
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.workqueue module
+----------------------------
+
+.. automodule:: drgn_tools.workqueue
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: drgn_tools
+   :members:
+   :undoc-members:
+   :show-inheritance:
