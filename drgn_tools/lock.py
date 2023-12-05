@@ -1,27 +1,28 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
-“corelens lock ”  should support :
-1.      Should find process stuck in  mutex or semaphore.
-2.      Find the contested mutex
-3.      List all waiters on that lock and the time of wait
+``corelens lock`` should support:
 
-Target Mutex API list for the lock contentation:
-void mutex_lock(struct mutex *lock);
-void mutex_lock_nested(struct mutex *lock, unsigned int subclass);
-int mutex_lock_interruptible_nested(struct mutex *lock,
-                                    unsigned int subclass);
-int mutex_lock_interruptible(struct mutex *lock);
-int atomic_dec_and_mutex_lock(atomic_t *cnt, struct mutex *lock);
+1. Should find process stuck in  mutex or semaphore.
+2. Find the contested mutex
+3. List all waiters on that lock and the time of wait
 
-Try variants of mutex are ignored as they will not block.
-The common function used in all these api's is:
-__mutex_lock() and is sufficant to trap all block by mutexes.
+Target Mutex API list for the lock contentation::
 
-For semaphores,
-There is no owners, and waiters generally have the common functions
-as : "__down_common" and "__down" depending upon releases. So trapping
-these two function is sufficient to check the semaphore waiters.
+    void mutex_lock(struct mutex *lock);
+    void mutex_lock_nested(struct mutex *lock, unsigned int subclass);
+    int mutex_lock_interruptible_nested(struct mutex *lock,
+                                        unsigned int subclass);
+    int mutex_lock_interruptible(struct mutex *lock);
+    int atomic_dec_and_mutex_lock(atomic_t *cnt, struct mutex *lock);
+
+Try variants of mutex are ignored as they will not block.  The common function
+used in all these api's is: ``__mutex_lock()`` and is sufficant to trap all
+block by mutexes.
+
+For semaphores, There is no owners, and waiters generally have the common
+functions as: ``__down_common`` and ``__down`` depending upon releases. So
+trapping these two function is sufficient to check the semaphore waiters.
 """
 import argparse
 from typing import Set
