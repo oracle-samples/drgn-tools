@@ -18,6 +18,7 @@ from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import for_each_task
+from drgn.helpers.linux.sched import cpu_curr
 from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.corelens import CorelensModule
@@ -34,17 +35,6 @@ def nanosecs_to_secs(nanosecs: int) -> float:
     """
     val = nanosecs // 1000000
     return val / 1000
-
-
-def get_current_task(prog: drgn.Program, cpu: int) -> Object:
-    """
-    Get current task of a cpu
-
-    :param prog: drgn program
-    :param cpu: cpu index
-    :returns: ``struct task_struct *`` for current task of cpu
-    """
-    return per_cpu(prog["runqueues"], cpu).curr
 
 
 def get_task_arrival_time(task: Object) -> int:
@@ -111,9 +101,7 @@ def get_current_run_time(prog: drgn.Program, cpu: int) -> int:
     :param cpu: cpu index
     :returns: duration in ns granularity
     """
-    current = get_current_task(prog, cpu)
-
-    return task_lastrun2now(current)
+    return task_lastrun2now(cpu_curr(prog, cpu))
 
 
 def get_runq_lag(prog: drgn.Program, cpunum: int) -> int:
