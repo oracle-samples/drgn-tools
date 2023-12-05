@@ -8,7 +8,6 @@ from drgn import FaultError
 from drgn import Program
 from drgn import TypeKind
 from drgn.helpers.linux.cpumask import for_each_online_cpu
-from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.sched import cpu_curr
 
@@ -190,7 +189,7 @@ def _bt_user_friendly_arg(
         if cpu is not None and pid is not None:
             raise ValueError("Provide either cpu or pid, but not both")
         elif cpu is not None:
-            task = per_cpu(prog["current_task"], cpu)
+            task = cpu_curr(prog, cpu)
         elif pid is not None:
             task = prog.thread(pid).object
         else:
