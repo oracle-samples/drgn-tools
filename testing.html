@@ -133,7 +133,7 @@ this:</p>
 <p>The <code class="docutils literal notranslate"><span class="pre">assert</span></code> keyword is used to make these test assertion: you can use any
 expression that results in a boolean.</p>
 <p>Generally, you’ll need some resources to run a test: for example, to test drgn
-helpers, you need a <a class="reference external" href="https://drgn.readthedocs.io/en/latest/api_reference.html#drgn.Program" title="(in drgn v0.0.24+47.gff2a395)"><code class="xref py py-class docutils literal notranslate"><span class="pre">drgn.Program</span></code></a> which has a linux kernel and debug
+helpers, you need a <a class="reference external" href="https://drgn.readthedocs.io/en/latest/api_reference.html#drgn.Program" title="(in drgn v0.0.25+3.g393ad5d)"><code class="xref py py-class docutils literal notranslate"><span class="pre">drgn.Program</span></code></a> which has a linux kernel and debug
 symbols loaded (either live, or vmcore). Rather than writing test code for this
 yourself, you can simply use a pytest <a class="reference external" href="https://docs.pytest.org/en/7.0.x/how-to/fixtures.html#how-to-fixtures">“fixture”</a>. To do
 this, you add an argument to your test function, named <code class="docutils literal notranslate"><span class="pre">prog</span></code>:</p>
@@ -212,7 +212,7 @@ you can use data from the system to make a more accurate test. However, another
 example might be <code class="docutils literal notranslate"><span class="pre">tests/test_block.py</span></code>, which runs fio in order to get block
 device activity, so that the in-flight I/O system can print output.</p>
 <p>In these cases, if you need to change your test behavior, you can check
-<a class="reference external" href="https://drgn.readthedocs.io/en/latest/api_reference.html#drgn.Program.flags" title="(in drgn v0.0.24+47.gff2a395)"><code class="xref py py-attr docutils literal notranslate"><span class="pre">drgn.Program.flags</span></code></a> to customize the behavior. But if you need to fully
+<a class="reference external" href="https://drgn.readthedocs.io/en/latest/api_reference.html#drgn.Program.flags" title="(in drgn v0.0.25+3.g393ad5d)"><code class="xref py py-attr docutils literal notranslate"><span class="pre">drgn.Program.flags</span></code></a> to customize the behavior. But if you need to fully
 skip certain environments, you can annotate your test as follows:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">pytest</span>
 

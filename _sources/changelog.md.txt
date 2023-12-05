@@ -6,6 +6,52 @@ Unreleased
 
 Changes which are committed to git, but not yet released, may appear here.
 
+0.6.0 - Tue, Dec 5, 2023
+------------------------
+
+This is the first major release of drgn-tools after open-sourcing! We've been on
+a mission to add many Corelens modules, and so this release contains several of
+those. There are also lots of quality of life improvements and a few bug fixes.
+Since it's been almost three months since our last release, this is a bigger
+one. I hope to make releases a bit more frequently form here on out.
+
+### Added
+
+- Added a `-L` option to corelens which lists all corelens modules alongside a
+  brief description of each.
+- Consistent with the new changes in drgn, we now can open `/proc/kcore` using
+  sudo, without running drgn & drgn-tools as root.
+- The "litevm" testing framework now runs in Github Actions!
+- Support for aarch64 / arm64 is now available and tested!
+- Corelens modules & helpers added:
+  - `drgn_tools.irq` and `irq` corelens module
+  - `drgn_tools.cpuinfo` and `cpuinfo` corelens module
+  - `dentrycache` corelens module (most of the helpers were present in 0.5.1)
+  - `bt` module (equivalent of crash's `foreach bt`)
+  - `drgn_tools.meminfo` and `meminfo` corelens module (similar to
+    /proc/meminfo)
+  - `drgn_tools.mounts` and `mounts` corelens module (similar to /proc/mounts)
+  - `drgn_tools.task` and `ps` corelens module (only supports `ps -m` for now)
+  - `drgn_tools.lock` and `lock` corelens module (detecting contended semaphores
+    and mutexes)
+  - `drgn_tools.numastat` and `numastat` corelens module
+  - `drgn_tools.buddyinfo` and `buddyinfo` corelens module
+  - `drgn_tools.nfs` and `nfs` corelens module
+
+### Changed
+
+- corelens: the `--vmlinux` argument has now become `--debuginfo`. This should
+  instead specify a directory containing a vmlinux and any module `.ko.debug`
+  files necessary to run.
+- The required drgn version is 0.0.25.
+
+### Fixed
+
+- corelens: modules are now specified using `-M`, just as the help output
+  indicates. Previously they were specified using `--`.
+- corelens: modules missing necessary debuginfo are now skipped. Previously, we
+  logged an error, but continued to execute them anyway.
+
 0.5.1 - Tue, Sept 12, 2023
 --------------------------
 

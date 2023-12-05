@@ -48,7 +48,7 @@ format your code. But here are a few high level, common Python style guidelines:
 
 - Use 4 spaces for indentation
 - Use 2 newlines to separate functions, 1 newline to separate class methods
-- Name functions using ``snake_case`` and classes using ``CamelCase``
+- Name functions using ``snake_case`` and classes using ``PascalCase``
 - Try to keep it to 80 characters for a line
 
 Some other guidelines are enforced by our pre-commit hooks:

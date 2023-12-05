@@ -37,12 +37,66 @@
 <h2>Unreleased<a class="headerlink" href="#unreleased" title="Link to this heading">¶</a></h2>
 <p>Changes which are committed to git, but not yet released, may appear here.</p>
 </section>
+<section id="tue-dec-5-2023">
+<h2>0.6.0 - Tue, Dec 5, 2023<a class="headerlink" href="#tue-dec-5-2023" title="Link to this heading">¶</a></h2>
+<p>This is the first major release of drgn-tools after open-sourcing! We’ve been on
+a mission to add many Corelens modules, and so this release contains several of
+those. There are also lots of quality of life improvements and a few bug fixes.
+Since it’s been almost three months since our last release, this is a bigger
+one. I hope to make releases a bit more frequently form here on out.</p>
+<section id="added">
+<h3>Added<a class="headerlink" href="#added" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Added a <code class="docutils literal notranslate"><span class="pre">-L</span></code> option to corelens which lists all corelens modules alongside a
+brief description of each.</p></li>
+<li><p>Consistent with the new changes in drgn, we now can open <code class="docutils literal notranslate"><span class="pre">/proc/kcore</span></code> using
+sudo, without running drgn &amp; drgn-tools as root.</p></li>
+<li><p>The “litevm” testing framework now runs in Github Actions!</p></li>
+<li><p>Support for aarch64 / arm64 is now available and tested!</p></li>
+<li><p>Corelens modules &amp; helpers added:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.irq</span></code> and <code class="docutils literal notranslate"><span class="pre">irq</span></code> corelens module</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.cpuinfo</span></code> and <code class="docutils literal notranslate"><span class="pre">cpuinfo</span></code> corelens module</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">dentrycache</span></code> corelens module (most of the helpers were present in 0.5.1)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bt</span></code> module (equivalent of crash’s <code class="docutils literal notranslate"><span class="pre">foreach</span> <span class="pre">bt</span></code>)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.meminfo</span></code> and <code class="docutils literal notranslate"><span class="pre">meminfo</span></code> corelens module (similar to
+/proc/meminfo)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.mounts</span></code> and <code class="docutils literal notranslate"><span class="pre">mounts</span></code> corelens module (similar to /proc/mounts)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.task</span></code> and <code class="docutils literal notranslate"><span class="pre">ps</span></code> corelens module (only supports <code class="docutils literal notranslate"><span class="pre">ps</span> <span class="pre">-m</span></code> for now)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.lock</span></code> and <code class="docutils literal notranslate"><span class="pre">lock</span></code> corelens module (detecting contended semaphores
+and mutexes)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.numastat</span></code> and <code class="docutils literal notranslate"><span class="pre">numastat</span></code> corelens module</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.buddyinfo</span></code> and <code class="docutils literal notranslate"><span class="pre">buddyinfo</span></code> corelens module</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.nfs</span></code> and <code class="docutils literal notranslate"><span class="pre">nfs</span></code> corelens module</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="changed">
+<h3>Changed<a class="headerlink" href="#changed" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>corelens: the <code class="docutils literal notranslate"><span class="pre">--vmlinux</span></code> argument has now become <code class="docutils literal notranslate"><span class="pre">--debuginfo</span></code>. This should
+instead specify a directory containing a vmlinux and any module <code class="docutils literal notranslate"><span class="pre">.ko.debug</span></code>
+files necessary to run.</p></li>
+<li><p>The required drgn version is 0.0.25.</p></li>
+</ul>
+</section>
+<section id="fixed">
+<h3>Fixed<a class="headerlink" href="#fixed" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>corelens: modules are now specified using <code class="docutils literal notranslate"><span class="pre">-M</span></code>, just as the help output
+indicates. Previously they were specified using <code class="docutils literal notranslate"><span class="pre">--</span></code>.</p></li>
+<li><p>corelens: modules missing necessary debuginfo are now skipped. Previously, we
+logged an error, but continued to execute them anyway.</p></li>
+</ul>
+</section>
+</section>
 <section id="tue-sept-12-2023">
 <h2>0.5.1 - Tue, Sept 12, 2023<a class="headerlink" href="#tue-sept-12-2023" title="Link to this heading">¶</a></h2>
 <p>In this release we have several new helpers, as well as a lot of changes in
 preparation for open-sourcing.</p>
-<section id="added">
-<h3>Added<a class="headerlink" href="#added" title="Link to this heading">¶</a></h3>
+<section id="id1">
+<h3>Added<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p>0.5.1 patch adds an entry point for the “corelens” script.</p></li>
 <li><p>Debuginfo fetching API is added. An implementation which downloads from the
@@ -60,8 +114,8 @@ large VM images. This is suitable for use in environments like Github actions.</
 </li>
 </ul>
 </section>
-<section id="changed">
-<h3>Changed<a class="headerlink" href="#changed" title="Link to this heading">¶</a></h3>
+<section id="id2">
+<h3>Changed<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p>The required drgn version is 0.0.24.</p></li>
 <li><p>Existing VM testing framework has been renamed to “heavyvm”.</p></li>
@@ -70,15 +124,15 @@ large VM images. This is suitable for use in environments like Github actions.</
 </section>
 <section id="thur-jun-29-2023">
 <h2>0.4.0 - Thur, Jun 29, 2023<a class="headerlink" href="#thur-jun-29-2023" title="Link to this heading">¶</a></h2>
-<section id="id1">
-<h3>Added<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h3>
+<section id="id3">
+<h3>Added<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p>New md/raid helpers and corresponding corelens module.</p></li>
 <li><p>New RDS helper and corresponding corelens module.</p></li>
 </ul>
 </section>
-<section id="id2">
-<h3>Changed<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h3>
+<section id="id4">
+<h3>Changed<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p>Test VMs are now updated to OL8.8 and OL9.2.</p></li>
 <li><p>The minimum requirement for drgn is not 0.0.23, the latest release.</p></li>
@@ -95,8 +149,8 @@ have debuginfoa available.</p></li>
 </section>
 <section id="tue-may-23-2023">
 <h2>0.3.0 - Tue, May 23, 2023<a class="headerlink" href="#tue-may-23-2023" title="Link to this heading">¶</a></h2>
-<section id="id3">
-<h3>Added<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h3>
+<section id="id5">
+<h3>Added<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p>The <code class="docutils literal notranslate"><span class="pre">drgn_tools.corelens</span></code> script has finally become more useful and less
 preliminary. This is intended to be an automatic mechanism for running
@@ -126,8 +180,8 @@ calls and help see which CPU is waiting on which others. There is a Corelens
 module as well. Thanks Imran for these!</p></li>
 </ul>
 </section>
-<section id="fixed">
-<h3>Fixed<a class="headerlink" href="#fixed" title="Link to this heading">¶</a></h3>
+<section id="id6">
+<h3>Fixed<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p>The <code class="docutils literal notranslate"><span class="pre">drgn_tools.debuginfo</span></code> script now correctly outputs the filename <code class="docutils literal notranslate"><span class="pre">vmlinux</span></code>
 rather than <code class="docutils literal notranslate"><span class="pre">vmlinux.ko.debug</span></code>, as it did before.</p></li>
@@ -136,8 +190,8 @@ rather than <code class="docutils literal notranslate"><span class="pre">vmlinux
 </section>
 <section id="tue-april-25-2023">
 <h2>0.2.0 - Tue, April 25, 2023<a class="headerlink" href="#tue-april-25-2023" title="Link to this heading">¶</a></h2>
-<section id="id4">
-<h3>Added<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<section id="id7">
+<h3>Added<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p>Added <code class="docutils literal notranslate"><span class="pre">drgn_tools.debuginfo</span></code> CLI script. This can be called with a UEK release
 string to find vmlinux, extracting it if necessary. In the process, it will
@@ -150,8 +204,8 @@ against vmcores and live systems. For now, there’s no major change introduced,
 and the system is just a sketch.</p></li>
 </ul>
 </section>
-<section id="id5">
-<h3>Changed<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<section id="id8">
+<h3>Changed<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">drgn_tools.bt.bt()</span></code> now has a <code class="docutils literal notranslate"><span class="pre">show_absent</span></code> flag – and it is <strong>false by
 default</strong>. This is a breaking change, but I think a welcome one. There are
@@ -163,8 +217,8 @@ see the module documentation for more information. TL;DR: if you wanted to get
 expanded stack trace frames, without printing them, you’re now in luck!</p></li>
 </ul>
 </section>
-<section id="id6">
-<h3>Fixed<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h3>
+<section id="id9">
+<h3>Fixed<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p>A relatively uncommon <code class="docutils literal notranslate"><span class="pre">FaultError</span></code> in <code class="docutils literal notranslate"><span class="pre">bt()</span></code> was fixed</p></li>
 <li><p>Fixed some address computation bugs for exported module symbols</p></li>
@@ -222,15 +276,15 @@ reliable now.</p></li>
 <li><p>Really fixed the version string</p></li>
 </ul>
 </section>
-<section id="id7">
-<h2>0.0.6 - Tue, Feb 14, 2023<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h2>
+<section id="id10">
+<h2>0.0.6 - Tue, Feb 14, 2023<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>Fixed the version string</p></li>
 <li><p>Fixed missing newline in cli header</p></li>
 </ul>
 </section>
-<section id="id8">
-<h2>0.0.5 - Tue, Feb 14, 2023<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h2>
+<section id="id11">
+<h2>0.0.5 - Tue, Feb 14, 2023<a class="headerlink" href="#id11" title="Link to this heading">¶</a></h2>
 <ul class="simple">
 <li><p>Minor improvements to module symbol table lookup and backtrace printing.</p></li>
 <li><p>Minor improvements to CLI code to support unreleased drgn changes.</p></li>
@@ -252,8 +306,8 @@ reliable now.</p></li>
 <h2>0.0.3 - Mon, Jan 9, 2023<a class="headerlink" href="#mon-jan-9-2023" title="Link to this heading">¶</a></h2>
 <p>Adds the backtrace helper.</p>
 </section>
-<section id="id9">
-<h2>0.0.2 - Mon, Jan 9, 2023<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h2>
+<section id="id12">
+<h2>0.0.2 - Mon, Jan 9, 2023<a class="headerlink" href="#id12" title="Link to this heading">¶</a></h2>
 <p>This the first release for internal distribution, with more helpers.</p>
 <p>Contains additional helpers:</p>
 <ul class="simple">
