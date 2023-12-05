@@ -18,6 +18,7 @@ from typing import List
 from typing import Tuple
 
 import oci.config
+from junitparser import JUnitXml
 from oci.exceptions import ConfigFileNotFound
 from oci.object_storage import ObjectStorageClient
 from oci.object_storage import UploadManager
@@ -247,6 +248,11 @@ def test(vmcore_list: List[str]) -> None:
                 return True
         return False
 
+    failed = []
+    passed = []
+    xml = JUnitXml()
+    xml_run = Path("test.xml")
+
     for path in CORE_DIR.iterdir():
         core_name = path.name
         if not should_run_vmcore(core_name):
@@ -256,7 +262,9 @@ def test(vmcore_list: List[str]) -> None:
             f"Running tests on vmcore {core_name}",
             collapsed=True,
         ):
-            subprocess.run(
+            if xml_run.exists():
+                xml_run.unlink()
+            res = subprocess.run(
                 [
                     "tox",
                     "--",
@@ -264,9 +272,27 @@ def test(vmcore_list: List[str]) -> None:
                     core_name,
                     "--vmcore-dir",
                     str(CORE_DIR),
+                    "--junitxml=test.xml",
+                    "-o",
+                    "junit_logging=all",
                 ],
-                check=True,
             )
+            run_data = JUnitXml.fromfile(str(xml_run))
+            xml += run_data
+            if res.returncode != 0:
+                failed.append(core_name)
+            else:
+                passed.append(core_name)
+
+    xml_run.unlink()
+    xml.write("vmcore.xml")
+    print("Complete test logs: vmcore.xml")
+    print("Vmcore Test Summary -- Passed:")
+    print("\n".join(f"- {n}" for n in passed))
+    if failed:
+        print("Vmcore Test Summary -- FAILED:")
+        print("\n".join(f"- {n}" for n in failed))
+        sys.exit(1)
 
 
 def get_client() -> ObjectStorageClient:

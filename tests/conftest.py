@@ -1,5 +1,6 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import sys
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import List
@@ -35,6 +36,16 @@ def prog_type() -> str:
         return "core"
     else:
         return "live"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def log_global_env_facts(prog, record_testsuite_property):
+    if VMCORE:
+        record_testsuite_property("target", VMCORE_NAME)
+    else:
+        record_testsuite_property("target", "live")
+    release = prog["UTS_RELEASE"].string_().decode("utf-8")
+    record_testsuite_property("release", release)
 
 
 def pytest_addoption(parser):
@@ -103,6 +114,13 @@ def pytest_configure(config):
         DEBUGINFO.append(vmlinux_file)
         for module in vmcore_dir.glob("*.ko.debug"):
             DEBUGINFO.append(module)
+
+    config.inicfg["junit_suite_name"] = "Python {}.{}.{} - {}".format(
+        sys.version_info.major,
+        sys.version_info.minor,
+        sys.version_info.micro,
+        f"vmcore {vmcore}" if vmcore else "live",
+    )
 
 
 def pytest_runtest_setup(item: pytest.Item):
