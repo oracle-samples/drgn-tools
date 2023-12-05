@@ -12,6 +12,7 @@ def common_mod(prog):
         "nf_nat",
         "ib_core",
         "9pnet",
+        "libcrc32c",
     ]
     for name in COMMON_MODS:
         km = KernelModule.find(prog, name)
