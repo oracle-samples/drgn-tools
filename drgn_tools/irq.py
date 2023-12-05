@@ -4,7 +4,10 @@
 Helpers related to kernel irq management framework under kernel/irq.
 
 """
+import argparse
+from typing import Any
 from typing import Iterator
+from typing import List
 
 from drgn import NULL
 from drgn import Object
@@ -14,6 +17,8 @@ from drgn.helpers.linux.cpumask import for_each_present_cpu
 from drgn.helpers.linux.percpu import per_cpu_ptr
 from drgn.helpers.linux.radixtree import radix_tree_lookup
 
+from drgn_tools.corelens import CorelensModule
+from drgn_tools.table import print_table
 from drgn_tools.util import cpumask_to_cpulist
 from drgn_tools.util import has_member
 from drgn_tools.util import uek4_radix_tree_lookup
@@ -450,9 +455,9 @@ def print_all_irqs(prog: Program, ignore_zero: bool = False) -> None:
 
     :return: None
     """
-    print(
-        "IRQ     NAME                              DESC(struct irq_desc *)             AFFINITY       COUNT"
-    )
+    rows: List[List[Any]] = [
+        ["IRQ", "NAME", "DESC(struct irq_desc *)", "AFFINITY", "COUNT"]
+    ]
     for irq in for_each_in_use_irq_num(prog):
         if irq_has_action(prog, irq):
             desc = irq_to_desc(prog, irq)
@@ -462,6 +467,14 @@ def print_all_irqs(prog: Program, ignore_zero: bool = False) -> None:
             affinity = get_irq_affinity_list(prog, irq)
             count = _irq_count(prog, irq)
             if count or not ignore_zero:
-                print(
-                    f"{irq:<7} {name:<36} 0x{desc.value_():<15x}  {affinity:>20}  {count:>10}"
-                )
+                rows.append([irq, name, hex(desc.value_()), affinity, count])
+    print_table(rows)
+
+
+class IrqModule(CorelensModule):
+    """Print basic IRQ information"""
+
+    name = "irq"
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        print_all_irqs(prog)
