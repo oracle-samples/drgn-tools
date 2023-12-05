@@ -3,7 +3,7 @@ vmtest:
     - rm -rf .tox
     - git archive HEAD -o archive.tar.gz
     - tox -e runner --notest
-    - tox -e runner -- python -m testing.vmcore test --core-directory /var/drgn-tools/vmcores
+    - tox -e runner -- python -m testing.vmcore test -e py39 --core-directory /var/drgn-tools/vmcores
     - mkdir -p tmp/overlays tmp/info
     - tox -e runner -- python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz
   artifacts:
