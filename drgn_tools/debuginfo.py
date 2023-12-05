@@ -192,7 +192,7 @@ class OracleLinuxYumFetcher(DebuginfoFetcher):
             path = Path(f.name)
             if self.rpm_cache:
                 cached.parent.mkdir(exist_ok=True, parents=True)
-                shutil.move(path, cached)
+                shutil.move(str(path), str(cached))
                 path.touch()  # prevent error in unlink
                 path = cached
             return extract_rpm(path, out_dir, modules)
