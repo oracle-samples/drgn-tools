@@ -45,7 +45,7 @@ templates_path = ["_templates"]
 # This pattern also affects html_static_path and html_extra_path.
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
-nitpick_ignore = [('py:class', 'drgn_tools.itertools.T')]
+nitpick_ignore = [("py:class", "drgn_tools.itertools.T")]
 
 # -- Options for HTML output -------------------------------------------------
 
