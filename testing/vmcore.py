@@ -15,6 +15,7 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import oci.config
@@ -239,7 +240,7 @@ def upload_all(client: ObjectStorageClient, core: str) -> None:
             future.result()
 
 
-def test(vmcore_list: List[str]) -> None:
+def test(vmcore_list: List[str], env: Optional[str] = None) -> None:
     def should_run_vmcore(name: str) -> bool:
         if not vmcore_list:
             return True
@@ -264,9 +265,12 @@ def test(vmcore_list: List[str]) -> None:
         ):
             if xml_run.exists():
                 xml_run.unlink()
+            cmd = ["tox"]
+            if env:
+                cmd += ["-e", env]
             res = subprocess.run(
-                [
-                    "tox",
+                cmd
+                + [
                     "--",
                     "--vmcore",
                     core_name,
@@ -337,6 +341,12 @@ def main():
         "multiple times to specify multiple vmcore names. You can also "
         "use fnmmatch patterns to specify several cores at once.",
     )
+    parser.add_argument(
+        "--tox-env",
+        "-e",
+        default=None,
+        help="run tests within this tox environment",
+    )
     args = parser.parse_args()
     if args.core_directory:
         CORE_DIR = args.core_directory.absolute()
@@ -350,7 +360,7 @@ def main():
             sys.exit("error: --upload-core is required for upload operation")
         upload_all(get_client(), args.upload_core)
     elif args.action == "test":
-        test(args.vmcore)
+        test(args.vmcore, env=args.tox_env)
 
 
 if __name__ == "__main__":
