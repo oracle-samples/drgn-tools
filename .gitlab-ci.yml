@@ -7,5 +7,7 @@ vmtest:
     - mkdir -p tmp/overlays tmp/info
     - tox -e runner -- python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz
   artifacts:
+    paths:
+      - vmcore.xml
     reports:
       junit: vmcore.xml
