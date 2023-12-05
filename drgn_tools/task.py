@@ -210,6 +210,8 @@ class Taskinfo(CorelensModule):
 
     name = "ps"
 
+    default_args = ["-m"]
+
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
             "-m",
