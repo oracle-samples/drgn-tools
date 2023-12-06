@@ -51,8 +51,16 @@ def main() -> None:
         "-x",
         action="store_true",
         help=(
-            "extract the debuginfo for all loaded moudles (requires "
+            "extract the debuginfo for all loaded modules (requires "
             "a vmlinux repository)"
+        ),
+    )
+    parser.add_argument(
+        "--ctf",
+        "-C",
+        help=(
+            "the path of a vmlinux.ctfa file to use instead of searching for"
+            " DWARF DEBUGINFO"
         ),
     )
     args = parser.parse_args()
@@ -72,23 +80,34 @@ def main() -> None:
     release = prog["UTS_RELEASE"].string_().decode("ascii")
     print(f"Detected version: {release}")
 
-    vmlinux = find_debuginfo(prog, "vmlinux")
-    if not vmlinux:
-        print("vmlinux not found, trying to fetch")
-        fetched = fetch_debuginfo(release, ["vmlinux"])
-        if not fetched:
-            print("error: could not find vmlinux")
+    more = ""
+    if not args.ctf:
+        vmlinux = find_debuginfo(prog, "vmlinux")
+        if not vmlinux:
+            print("vmlinux not found, trying to fetch")
+            fetched = fetch_debuginfo(release, ["vmlinux"])
+            if not fetched:
+                print("error: could not find vmlinux")
+                sys.exit(1)
+            vmlinux = fetched["vmlinux"]
+        if not vmlinux:
+            print("error: vmlinux not found, and no failed to fetch it")
             sys.exit(1)
-        vmlinux = fetched["vmlinux"]
-    if not vmlinux:
-        print("error: vmlinux not found, and no failed to fetch it")
-        sys.exit(1)
 
-    print(f"Using {str(vmlinux)}")
-    prog.load_debug_info([vmlinux])
-    more = "\n"
+        print(f"Using {str(vmlinux)}")
+        more += "\n"
+        prog.load_debug_info([vmlinux])
 
-    load_module_debuginfo(prog, extract=args.extract_modules, quiet=True)
+        load_module_debuginfo(prog, extract=args.extract_modules, quiet=True)
+
+    else:
+        try:
+            from drgn.helpers.linux.ctf import load_ctf
+
+            load_ctf(prog, args.ctf)
+            print(f"Using CTF {os.path.abspath(args.ctf)}")
+        except ImportError:
+            sys.exit("error: drgn is not built with CTF")
 
     def banner_func(banner: str) -> str:
         header = version_header()
