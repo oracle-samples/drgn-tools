@@ -10,20 +10,26 @@ and configurations.
 """
 import argparse
 from typing import Iterable
+from typing import NamedTuple
+from typing import Optional
 
 import drgn
 from drgn import Object
 from drgn import Program
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_online_cpu
+from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.sched import cpu_curr
 from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.mm import totalram_pages
 from drgn_tools.table import print_table
 from drgn_tools.util import has_member
+
+ByteToKB = 1024
 
 
 def nanosecs_to_secs(nanosecs: int) -> float:
@@ -185,6 +191,133 @@ def get_command(task: Object) -> str:
     return escape_ascii_string(task.comm.string_())
 
 
+def get_ppid(task: Object) -> int:
+    """
+    :returns: Parent PID of the task
+    """
+    return task.parent.pid.value_()
+
+
+class TaskRss(NamedTuple):
+    """
+    : Represent's a task's resident set size. See task_rss().
+    """
+
+    rss_file: int
+    rss_anon: int
+    rss_shmem: int
+
+    @property
+    def total(self) -> int:
+        return self.rss_file + self.rss_anon + self.rss_shmem
+
+
+def get_task_rss(task: Object, cache: Optional[dict] = None) -> TaskRss:
+    """
+    Return the task's resident set size (RSS) in pages
+
+    The task's RSS is the number of pages which are currently resident in
+    memory. The RSS values can be broken down into anonymous pages (not bound to
+    any file), file pages (those associated with memory mapped files), and
+    shared memory pages (those which aren't associated with on-disk files, but
+    belonging to shared memory mappings). This function returns a tuple
+    containing each category, but the common behavior is to use the "total"
+    value which sums them up.
+
+    :param task: ``struct task_struct *`` for which to compute RSS
+    :param cache: if provided, we can use this to cache the mapping of
+      "mm_struct" to RSS. This helps avoid re-computing the RSS value for
+      processes with many threads, but note that it could result in out of date
+      values on a live system.
+    :returns: the file, anon, and shmem page values
+    """
+    try:
+        mmptr = task.mm.value_()
+        if mmptr is None:
+            return TaskRss(0, 0, 0)
+    except AttributeError:
+        return TaskRss(0, 0, 0)
+    else:
+        if mmptr and cache and mmptr in cache:
+            return cache[mmptr]
+
+    prog = task.prog_
+
+    MM_FILEPAGES = prog.constant("MM_FILEPAGES").value_()
+    MM_ANONPAGES = prog.constant("MM_ANONPAGES").value_()
+    try:
+        MM_SHMEMPAGES = prog.constant("MM_SHMEMPAGES").value_()
+    except LookupError:
+        MM_SHMEMPAGES = -1
+
+    filerss = anonrss = shmemrss = 0
+
+    if mmptr:
+        filerss = task.mm.rss_stat.count[MM_FILEPAGES].counter.value_()
+        anonrss = task.mm.rss_stat.count[MM_ANONPAGES].counter.value_()
+        if MM_SHMEMPAGES >= 0:
+            shmemrss = task.mm.rss_stat.count[MM_SHMEMPAGES].counter.value_()
+
+    ltask = task.group_leader
+
+    filerss += ltask.rss_stat.count[MM_FILEPAGES].value_()
+    anonrss += ltask.rss_stat.count[MM_ANONPAGES].value_()
+    if MM_SHMEMPAGES >= 0:
+        shmemrss += ltask.rss_stat.count[MM_SHMEMPAGES].value_()
+
+    for gtask in list_for_each_entry(
+        "struct task_struct",
+        task.group_leader.thread_group.address_of_(),
+        "thread_group",
+    ):
+        filerss += gtask.rss_stat.count[MM_FILEPAGES].value_()
+        anonrss += gtask.rss_stat.count[MM_ANONPAGES].value_()
+        if MM_SHMEMPAGES >= 0:
+            shmemrss += gtask.rss_stat.count[MM_SHMEMPAGES].value_()
+    rss = TaskRss(filerss, anonrss, shmemrss)
+    if cache is not None:
+        cache[mmptr] = rss
+
+    return rss
+
+
+def get_rss(task: Object) -> int:
+    """
+    Return the task's resident set size (RSS) in kilobytes
+    """
+    prog = task.prog_
+    task_rss = get_task_rss(task).total
+
+    page_size = prog["PAGE_SIZE"].value_()
+    rss_kb = (task_rss * page_size) // ByteToKB
+
+    return rss_kb
+
+
+def get_pct_mem(task: Object) -> float:
+    """
+    Return the percent memory usage value
+    """
+    prog = task.prog_
+    task_rss = get_task_rss(task).total
+    total_pages = totalram_pages(prog).value_()
+    pct_mem = (task_rss * 100) / total_pages
+    return pct_mem
+
+
+def get_vmem(task: Object) -> float:
+    """
+    Return virtual memory size of the task
+    """
+    prog = task.prog_
+    page_size = prog["PAGE_SIZE"].value_()
+    try:
+        vmem = (task.mm.total_vm.value_() * page_size) // ByteToKB
+    except drgn.FaultError:
+        vmem = 0
+    return vmem
+
+
 def show_tasks_last_runtime(tasks: Iterable[Object]) -> None:
     """
     Display task information in their last arrival order.
@@ -200,6 +333,30 @@ def show_tasks_last_runtime(tasks: Iterable[Object]) -> None:
         time_nanosec = task_lastrun2now(t)
         last_arrival = format_nanosecond_duration(time_nanosec)
         rows.append([last_arrival, state, pid, hex(t.value_()), cpu, command])
+    print_table(rows)
+
+
+def show_taskinfo(tasks: Iterable[Object]) -> None:
+    """
+    Display task information.
+    """
+    rows = [["PID", "PPID", "CPU", "TASK", "ST", "%MEM", "VSZ", "RSS", "COMM"]]
+    tasks = list(tasks)
+    tasks.sort(key=get_pid)
+    for t in tasks:
+        rows.append(
+            [
+                str(get_pid(t)),
+                str(get_ppid(t)),
+                str(task_cpu(t)),
+                hex(t.value_()),
+                task_state_to_char(t),
+                str("%.1f" % get_pct_mem(t)),
+                str(get_vmem(t)),
+                str(get_rss(t)),
+                get_command(t),
+            ]
+        )
     print_table(rows)
 
 
@@ -221,7 +378,8 @@ class Taskinfo(CorelensModule):
         )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
+        tasks = for_each_task(prog)
         if args.last_run:
-            show_tasks_last_runtime(for_each_task(prog))
+            show_tasks_last_runtime(tasks)
         else:
-            raise NotImplementedError("currently, only ps -m is implemented")
+            show_taskinfo(tasks)
