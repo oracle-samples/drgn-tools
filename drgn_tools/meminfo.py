@@ -211,13 +211,11 @@ def for_each_node_zone(prog: Program, node: Object) -> Iterator[Object]:
 
     :param prog: drgn program
     :param node: The drgn object of a NUMA node's ``struct pglist_data``.
-    :returns: Iterator of ``struct zone *`` objects.
+    :returns: Iterator of ``struct zone`` objects.
     """
     node_zones = node.node_zones
-    max_num_zones = prog["__MAX_NR_ZONES"].value_()
-    for j in range(max_num_zones):
-        if node_zones[j].value_() != 0x0:
-            yield node_zones[j]
+    for j in range(node.nr_zones):
+        yield node_zones[j]
 
 
 def for_each_zone(prog: Program) -> Iterator[Object]:
