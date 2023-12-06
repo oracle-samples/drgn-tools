@@ -5,5 +5,8 @@ from drgn.helpers.linux.pid import for_each_task
 from drgn_tools import task
 
 
-def test_task_last_runtime(prog):
+def test_show_taskinfo(prog):
+    print("===== Task information in their last arrival order =====")
     task.show_tasks_last_runtime(for_each_task(prog))
+    print("===== Display task information =====")
+    task.show_taskinfo(prog, for_each_task(prog))
