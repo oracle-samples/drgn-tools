@@ -226,8 +226,7 @@ def rq_pending_time_ns(rq: Object) -> int:
     """
     prog = rq.prog_
     if has_member(rq, "start_time"):
-        # TODO: arch specific
-        return (prog["jiffies_64"] - rq.start_time).value_() * 1000000
+        return (prog["jiffies"] - rq.start_time).value_() * 1000000
     elif has_member(rq, "start_time_ns"):
         base = prog["tk_core"].timekeeper.tkr_mono.base
         delta = base - rq.start_time_ns
