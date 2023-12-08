@@ -100,10 +100,10 @@ from drgn_tools.itertools import count
 from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
 from drgn_tools.locking import show_lock_waiter
-from drgn_tools.locking import timestamp_str
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import has_member
+from drgn_tools.util import timestamp_str
 
 
 def ext4_dirlock_scan(prog: drgn.Program, stacktrace: bool = False) -> None:
