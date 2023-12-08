@@ -13,6 +13,8 @@ import pytest
 VMCORE: Optional[Path] = None
 VMCORE_NAME: Optional[str] = None
 DEBUGINFO: List[Path] = []
+CTF = False
+CTF_FILE: Optional[str] = None
 
 CORE_DIR = Path.cwd() / "vmcores"
 
@@ -22,12 +24,20 @@ def prog() -> drgn.Program:
     p = drgn.Program()
     if VMCORE:
         p.set_core_dump(VMCORE)
-        p.load_debug_info(DEBUGINFO)
-        return p
     else:
         p.set_kernel()
+    if CTF:
+        try:
+            from drgn.helpers.linux.ctf import load_ctf
+
+            load_ctf(p, path=CTF_FILE)
+        except ModuleNotFoundError:
+            raise Exception("CTF is not supported, cannot run CTF test")
+    elif DEBUGINFO:
+        p.load_debug_info(DEBUGINFO)
+    else:
         p.load_default_debug_info()
-        return p
+    return p
 
 
 @pytest.fixture(scope="session")
@@ -36,6 +46,14 @@ def prog_type() -> str:
         return "core"
     else:
         return "live"
+
+
+@pytest.fixture(scope="session")
+def debuginfo_type() -> str:
+    if CTF:
+        return "ctf"
+    else:
+        return "dwarf"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -63,12 +81,20 @@ def pytest_addoption(parser):
         default=None,
         help="Search for vmcores in DIR",
     )
+    parser.addoption(
+        "--ctf",
+        action="store_true",
+        default=False,
+        help="Use CTF data instead of DWARF",
+    )
 
 
 def pytest_configure(config):
     global VMCORE
     global VMCORE_NAME
     global CORE_DIR
+    global CTF
+    global CTF_FILE
 
     # The default for tests is to run in every environment: vmcore and live
     # kernel. But using markers, we can restrict tests:
@@ -100,20 +126,35 @@ def pytest_configure(config):
     if core_dir:
         CORE_DIR = Path(core_dir)
     vmcore = config.getoption("vmcore")
+    CTF = config.getoption("ctf")
     if vmcore:
         VMCORE_NAME = vmcore
         vmcore_dir = CORE_DIR / vmcore
         vmcore_file = vmcore_dir / "vmcore"
-        vmlinux_file = vmcore_dir / "vmlinux"
-        if not vmcore_file.is_file() or not vmlinux_file.is_file():
+        VMCORE = vmcore_file
+        if not vmcore_file.is_file():
             pytest.exit(
                 reason=f"error: vmcore {vmcore} does not exist",
                 returncode=1,
             )
-        VMCORE = vmcore_file
-        DEBUGINFO.append(vmlinux_file)
-        for module in vmcore_dir.glob("*.ko.debug"):
-            DEBUGINFO.append(module)
+        if CTF:
+            ctf_file = vmcore_dir / "vmlinux.ctfa"
+            if not ctf_file.is_file():
+                pytest.exit(
+                    reason=f"error: CTF for vmcore {vmcore} does not exist",
+                    returncode=1,
+                )
+            CTF_FILE = str(ctf_file)
+        else:
+            vmlinux_file = vmcore_dir / "vmlinux"
+            if not vmcore_file.is_file() or not vmlinux_file.is_file():
+                pytest.exit(
+                    reason=f"error: vmlinux for {vmcore} does not exist",
+                    returncode=1,
+                )
+            DEBUGINFO.append(vmlinux_file)
+            for module in vmcore_dir.glob("*.ko.debug"):
+                DEBUGINFO.append(module)
 
     config.inicfg["junit_suite_name"] = "Python {}.{}.{} - {}".format(
         sys.version_info.major,
@@ -121,6 +162,8 @@ def pytest_configure(config):
         sys.version_info.micro,
         f"vmcore {vmcore}" if vmcore else "live",
     )
+    if CTF:
+        print("TESTING WITH CTF")
 
 
 def pytest_runtest_setup(item: pytest.Item):
