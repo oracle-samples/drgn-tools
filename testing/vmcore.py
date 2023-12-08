@@ -240,7 +240,9 @@ def upload_all(client: ObjectStorageClient, core: str) -> None:
             future.result()
 
 
-def test(vmcore_list: List[str], env: Optional[str] = None) -> None:
+def test(
+    vmcore_list: List[str], env: Optional[str] = None, ctf: bool = False
+) -> None:
     def should_run_vmcore(name: str) -> bool:
         if not vmcore_list:
             return True
@@ -251,6 +253,7 @@ def test(vmcore_list: List[str], env: Optional[str] = None) -> None:
 
     failed = []
     passed = []
+    skipped = []
     xml = JUnitXml()
     xml_run = Path("test.xml")
 
@@ -268,19 +271,22 @@ def test(vmcore_list: List[str], env: Optional[str] = None) -> None:
             cmd = ["tox"]
             if env:
                 cmd += ["-e", env]
-            res = subprocess.run(
-                cmd
-                + [
-                    "--",
-                    "--vmcore",
-                    core_name,
-                    "--vmcore-dir",
-                    str(CORE_DIR),
-                    "--junitxml=test.xml",
-                    "-o",
-                    "junit_logging=all",
-                ],
-            )
+            cmd += [
+                "--",
+                "--vmcore",
+                core_name,
+                "--vmcore-dir",
+                str(CORE_DIR),
+                "--junitxml=test.xml",
+                "-o",
+                "junit_logging=all",
+            ]
+            if ctf:
+                if not (path / "vmlinux.ctfa").is_file():
+                    skipped.append(core_name)
+                    continue
+                cmd.append("--ctf")
+            res = subprocess.run(cmd)
             run_data = JUnitXml.fromfile(str(xml_run))
             xml += run_data
             if res.returncode != 0:
@@ -288,11 +294,15 @@ def test(vmcore_list: List[str], env: Optional[str] = None) -> None:
             else:
                 passed.append(core_name)
 
-    xml_run.unlink()
+    if xml_run.exists():
+        xml_run.unlink()
     xml.write("vmcore.xml")
     print("Complete test logs: vmcore.xml")
     print("Vmcore Test Summary -- Passed:")
     print("\n".join(f"- {n}" for n in passed))
+    if skipped:
+        print("Vmcore Test Summary -- Skipped (missing CTF):")
+        print("\n".join(f"- {n}" for n in skipped))
     if failed:
         print("Vmcore Test Summary -- FAILED:")
         print("\n".join(f"- {n}" for n in failed))
@@ -347,6 +357,12 @@ def main():
         default=None,
         help="run tests within this tox environment",
     )
+    parser.add_argument(
+        "--ctf",
+        action="store_true",
+        help="Use CTF debuginfo for tests rather than DWARF (skips vmcores "
+        "without a vmlinux.ctfa file)",
+    )
     args = parser.parse_args()
     if args.core_directory:
         CORE_DIR = args.core_directory.absolute()
@@ -360,7 +376,7 @@ def main():
             sys.exit("error: --upload-core is required for upload operation")
         upload_all(get_client(), args.upload_core)
     elif args.action == "test":
-        test(args.vmcore, env=args.tox_env)
+        test(args.vmcore, env=args.tox_env, ctf=args.ctf)
 
 
 if __name__ == "__main__":

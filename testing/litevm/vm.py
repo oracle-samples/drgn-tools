@@ -345,7 +345,9 @@ def run_vm(kernel: TestKernel, extract_dir: Path, commands: List[List[str]]):
         sys.exit(1)
 
 
-def run_tests_commands(pyver: Optional[str]) -> List[List[str]]:
+def run_tests_commands(
+    pyver: Optional[str], ctf: bool = False
+) -> List[List[str]]:
     tox = Path(__file__).parent.parent.parent / ".tox"
     commands = []
     for venv in tox.iterdir():
@@ -356,7 +358,17 @@ def run_tests_commands(pyver: Optional[str]) -> List[List[str]]:
         pytest = venv / "bin/pytest"
         if not pytest.exists():
             continue
-        cmd = [str(pytest), "tests", "--cov=drgn_tools", "--cov=tests", "-rP"]
+        cmd = [
+            str(venv / "bin/python"),
+            "-m",
+            "pytest",
+            "tests",
+            "--cov=drgn_tools",
+            "--cov=tests",
+            "-rP",
+        ]
+        if ctf:
+            cmd.append("--ctf")
         if pyver and venv.name.endswith(pyver):
             return [cmd]
         commands.append(cmd)
@@ -388,6 +400,11 @@ def main():
         help="Only run against one python version in tox env",
     )
     parser.add_argument(
+        "--ctf",
+        action="store_true",
+        help="Use CTF debuginfo for tests rather than DWARF",
+    )
+    parser.add_argument(
         "command",
         nargs="*",
         help="Command to run on each vm (leave empty for default: test)",
@@ -398,7 +415,7 @@ def main():
             sys.exit("Cannot specify --python-version and custom command")
         commands = [args.command]
     else:
-        commands = run_tests_commands(args.python_version)
+        commands = run_tests_commands(args.python_version, args.ctf)
     for k in TEST_KERNELS:
         k.cache_dir = args.yum_cache_dir
         if args.kernel and not fnmatch.fnmatch(k.slug(), args.kernel):
