@@ -14,6 +14,7 @@ from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.bt import bt
 from drgn_tools.task import task_lastrun2now
+from drgn_tools.util import timestamp_str
 
 MUTEX_FLAGS = 0x7
 
@@ -25,19 +26,6 @@ def mutex_owner(prog: Program, mutex: drgn.Object) -> drgn.Object:
     Owner = owner & (~MUTEX_FLAGS)
     struct_owner = Object(prog, "struct task_struct *", value=Owner)
     return struct_owner
-
-
-def timestamp_str(ns: int) -> str:
-    value = ns // 1000000
-    ms = value % 1000
-    value = value // 1000
-    secs = value % 60
-    value = value // 60
-    mins = value % 60
-    value = value // 60
-    hours = value % 24
-    days = value // 24
-    return "%d %02d:%02d:%02d.%03d" % (days, hours, mins, secs, ms)
 
 
 def show_lock_waiter(

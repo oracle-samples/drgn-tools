@@ -20,6 +20,7 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn_tools.bitops import for_each_bit_set
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.util import has_member
+from drgn_tools.util import timestamp_str
 from drgn_tools.util import type_exists
 
 
@@ -216,9 +217,9 @@ def for_each_mq_pending_request(q: Object) -> Iterable[Tuple[Object, Object]]:
                 yield (hwq, rq)
 
 
-def rq_pending_time_ms(rq: Object) -> int:
+def rq_pending_time_ns(rq: Object) -> int:
     """
-    Get io pending time in ms
+    Get io pending time in ns
 
     :param rq: ``struct request *`` or ``struct request``
     :returns: request pending time
@@ -226,11 +227,11 @@ def rq_pending_time_ms(rq: Object) -> int:
     prog = rq.prog_
     if has_member(rq, "start_time"):
         # TODO: arch specific
-        return prog["jiffies_64"] - rq.start_time
+        return (prog["jiffies_64"] - rq.start_time).value_() * 1000000
     elif has_member(rq, "start_time_ns"):
         base = prog["tk_core"].timekeeper.tkr_mono.base
         delta = base - rq.start_time_ns
-        return delta / 1000000 if base > rq.start_time_ns else 0
+        return delta.value_() if base > rq.start_time_ns else 0
     else:
         return 0
 
@@ -418,7 +419,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
             "flags",
             "offset",
             "len",
-            "inflight-time(ms)",
+            "inflight-time",
         )
     )
 
@@ -446,7 +447,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
             ).value_() != disk.value_():
                 continue
             print(
-                "%-20s %-20lx %-20lx %-16s\n%-20s %-20d %-20d %-16d"
+                "%-20s %-20lx %-20lx %-16s\n%-20s %-20d %-20d %-16s"
                 % (
                     name,
                     hwq_ptr,
@@ -455,7 +456,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
                     rq_flags(rq),
                     rq.__sector,
                     rq.__data_len,
-                    rq_pending_time_ms(rq),
+                    timestamp_str(rq_pending_time_ns(rq)),
                 )
             )
         sq_pending = [
@@ -464,7 +465,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
         ]
         for rq_ptr, rq in sq_pending:
             print(
-                "%-20s %-20s %-20lx %-16s\n%-20s %-20d %-20d %-16d"
+                "%-20s %-20s %-20lx %-16s\n%-20s %-20d %-20d %-16s"
                 % (
                     name,
                     "-",
@@ -473,7 +474,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
                     rq_flags(rq),
                     rq.__sector,
                     rq.__data_len,
-                    rq_pending_time_ms(rq),
+                    timestamp_str(rq_pending_time_ns(rq)),
                 )
             )
 
