@@ -358,9 +358,27 @@ def for_each_sq_pending_request(q: Object) -> Iterable[Object]:
     :param q: ``struct request_queue *``
     :returns: pending ``struct request *`` as Iterator
     """
-    if not has_member(q, "queue_head"):
+    if (not has_member(q, "queue_head")) or is_mq(q):
         return
-    # dispatching list
+    # dispatched request
+    if q.queue_tags.value_() != 0:
+        # for request_queue that support tags, there maybe IO requests
+        # which were under error handling, those requests will be in
+        # "tag_busy_list" while not in "timeout_list".
+        for rq in list_for_each_entry(
+            "struct request",
+            q.tag_busy_list.address_of_(),
+            "queuelist",
+        ):
+            yield rq
+    else:
+        for rq in list_for_each_entry(
+            "struct request",
+            q.timeout_list.address_of_(),
+            "timeout_list",
+        ):
+            yield rq
+    # to be dispatched
     for rq in list_for_each_entry(
         "struct request", q.queue_head.address_of_(), "queuelist"
     ):
