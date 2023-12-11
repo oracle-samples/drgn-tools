@@ -8,7 +8,6 @@ from drgn import FaultError
 from drgn import Program
 from drgn import TypeKind
 from drgn.helpers.linux.cpumask import for_each_online_cpu
-from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.sched import cpu_curr
 
@@ -100,10 +99,12 @@ def find_pt_regs(trace: drgn.StackTrace) -> t.Optional[drgn.Object]:
                 # still print absent variables (since it helps to have their
                 # type info). In this case we'll just bite the bullet and
                 # skip printing the variable altogether.
-                # TODO: when v0.0.23 is released, assuming it contains
-                # the fix for the below bug, drop this exception handler.
                 # https://github.com/osandov/drgn/issues/233
-                if "unknown DWARF expression opcode" in str(e):
+                # https://github.com/osandov/drgn/issues/374
+                if "unknown DW" in str(e):
+                    # unknown DWARF expression opcode
+                    # unknown DW_AT_const_value form
+                    # This detection should be good enough :)
                     continue
                 else:
                     raise
@@ -188,7 +189,7 @@ def _bt_user_friendly_arg(
         if cpu is not None and pid is not None:
             raise ValueError("Provide either cpu or pid, but not both")
         elif cpu is not None:
-            task = per_cpu(prog["current_task"], cpu)
+            task = cpu_curr(prog, cpu)
         elif pid is not None:
             task = prog.thread(pid).object
         else:

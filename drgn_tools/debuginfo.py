@@ -133,38 +133,69 @@ class OracleLinuxYumFetcher(DebuginfoFetcher):
     A fetcher which downloads from oss.oracle.com Yum server
     """
 
-    url_fmt: str = "https://oss.oracle.com/ol{olver}/debuginfo/{rpm}"
+    urls: List[str] = ["https://oss.oracle.com/ol{olver}/debuginfo/{rpm}"]
     out_dir: Path = Path.home() / "vmlinux_repo"
+    rpm_cache: bool = False
 
-    def __init__(self, url_fmt: Optional[str] = None) -> None:
-        if url_fmt:
-            self.url_fmt = url_fmt
+    def __init__(
+        self, urls: Optional[str] = None, rpm_cache: bool = False
+    ) -> None:
+        self.rpm_cache = rpm_cache
+        if urls:
+            self.urls = []
+            for u in urls.split("\n"):
+                u = u.strip()
+                if u:
+                    self.urls.append(u)
 
     def fetch_modules(
         self, uname: str, modules: List[str], quiet: bool = False
     ) -> Dict[str, Path]:
         version = KernelVersion.parse(uname)
-        url = self.url_fmt.format(
-            olver=version.ol_version,
-            rpm=version.oraclelinux_debuginfo_rpm(),
-        )
+        rpm = version.oraclelinux_debuginfo_rpm()
+        cached = self.out_dir / "rpms" / rpm
         out_dir = self.out_dir / uname
+
+        # Even if we don't enable caching, that doesn't mean we shouldn't take
+        # advantage of a cached RPM we find. The rpm_cache setting merely
+        # controls whether we keep the downloaded RPM around.
+        if cached.is_file():
+            return extract_rpm(cached, out_dir, modules)
+
+        urls = [
+            url_fmt.format(olver=version.ol_version, rpm=rpm)
+            for url_fmt in self.urls
+        ]
         with tempfile.NamedTemporaryFile(suffix=".rpm", mode="wb") as f:
             # Apparently a temporary file is not a "BytesIO", so type
             # checking fails. Ignore that error.
-            try:
-                download_file(url, f, quiet, desc="Downloading RPM")  # type: ignore
-            except HTTPError as e:
+            errors = []
+            for url in urls:
+                try:
+                    download_file(url, f, quiet, desc="Downloading RPM")  # type: ignore
+                    break
+                except HTTPError as e:
+                    errors.append(
+                        "download failed for debuginfo RPM: {} {}\n{}".format(
+                            e.code, e.reason, url
+                        )
+                    )
+            else:
                 log.warning(
-                    "%s: download failed for debuginfo RPM: %d %s",
+                    "%s: tried all URLs and download failed:\n%s",
                     self.__class__.__name__,
-                    e.code,
-                    e.reason,
+                    "\n".join(errors),
                 )
                 return {}
             f.flush()
             out_dir.mkdir(parents=True, exist_ok=True)
-            return extract_rpm(Path(f.name), out_dir, modules)
+            path = Path(f.name)
+            if self.rpm_cache:
+                cached.parent.mkdir(exist_ok=True, parents=True)
+                shutil.move(str(path), str(cached))
+                path.touch()  # prevent error in unlink
+                path = cached
+            return extract_rpm(path, out_dir, modules)
 
     def output_directories(self) -> List[Path]:
         return [self.out_dir]

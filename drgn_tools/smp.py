@@ -15,15 +15,15 @@ from drgn.helpers.linux.llist import llist_empty
 from drgn.helpers.linux.llist import llist_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.percpu import per_cpu_ptr
+from drgn.helpers.linux.sched import cpu_curr
 
 from drgn_tools.bt import bt
 from drgn_tools.bt import bt_frames
 from drgn_tools.corelens import CorelensModule
-from drgn_tools.task import get_current_run_time
-from drgn_tools.task import get_current_task
 from drgn_tools.task import get_runq_lag
 from drgn_tools.task import has_member
 from drgn_tools.task import nanosecs_to_secs
+from drgn_tools.task import task_lastrun2now
 
 
 def _get_csd_type(prog: drgn.Program) -> Type:
@@ -292,8 +292,8 @@ def dump_smp_ipi_state(prog: drgn.Program) -> None:
 
             print("\nCall stack at source cpu: ", src)
             bt(prog, cpu=src)
-            waiter_task = get_current_task(prog, src)
-            wait_time_ns = get_current_run_time(prog, src)
+            waiter_task = cpu_curr(prog, src)
+            wait_time_ns = task_lastrun2now(waiter_task)
             wait_time_s = nanosecs_to_secs(wait_time_ns)
             waiter_name = escape_ascii_string(
                 waiter_task.comm.string_(), escape_backslash=True
@@ -310,8 +310,8 @@ def dump_smp_ipi_state(prog: drgn.Program) -> None:
 
         print("\nCall stack at destination cpu: ", cpu)
         bt(prog, cpu=cpu)
-        dst_task = get_current_task(prog, cpu)
-        run_time_ns = get_current_run_time(prog, cpu)
+        dst_task = cpu_curr(prog, cpu)
+        run_time_ns = task_lastrun2now(dst_task)
         run_time_s = nanosecs_to_secs(run_time_ns)
         dst_task_name = escape_ascii_string(
             dst_task.comm.string_(), escape_backslash=True

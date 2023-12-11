@@ -24,7 +24,7 @@ def get_mountinfo(prog: drgn.Program) -> List[List[str]]:
         devname = mnt.mnt_devname
         fstype = mnt.mnt.mnt_sb.s_type.name
         mntpt = drgn.helpers.linux.fs.d_path(
-            mnt.mnt.address_of_(), mnt.mnt_mountpoint
+            mnt.mnt_parent.mnt.address_of_(), mnt.mnt_mountpoint
         )
 
         mount_stats = [

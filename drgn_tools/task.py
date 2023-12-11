@@ -8,11 +8,21 @@ impacted by many configuration options. This module aims to help paper over
 those many differences so your code will run on a variety of kernel versions
 and configurations.
 """
+import argparse
+from typing import Iterable
+
 import drgn
 from drgn import Object
+from drgn import Program
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.percpu import per_cpu
+from drgn.helpers.linux.pid import for_each_task
+from drgn.helpers.linux.sched import cpu_curr
+from drgn.helpers.linux.sched import task_state_to_char
 
+from drgn_tools.corelens import CorelensModule
+from drgn_tools.table import print_table
 from drgn_tools.util import has_member
 
 
@@ -25,17 +35,6 @@ def nanosecs_to_secs(nanosecs: int) -> float:
     """
     val = nanosecs // 1000000
     return val / 1000
-
-
-def get_current_task(prog: drgn.Program, cpu: int) -> Object:
-    """
-    Get current task of a cpu
-
-    :param prog: drgn program
-    :param cpu: cpu index
-    :returns: ``struct task_struct *`` for current task of cpu
-    """
-    return per_cpu(prog["runqueues"], cpu).curr
 
 
 def get_task_arrival_time(task: Object) -> int:
@@ -102,9 +101,7 @@ def get_current_run_time(prog: drgn.Program, cpu: int) -> int:
     :param cpu: cpu index
     :returns: duration in ns granularity
     """
-    current = get_current_task(prog, cpu)
-
-    return task_lastrun2now(current)
+    return task_lastrun2now(cpu_curr(prog, cpu))
 
 
 def get_runq_lag(prog: drgn.Program, cpunum: int) -> int:
@@ -161,3 +158,70 @@ def task_cpu(task: drgn.Object) -> int:
     if has_member(task, "cpu"):
         return task.cpu.value_()
     return task_thread_info(task).cpu.value_()
+
+
+def format_nanosecond_duration(nanosecs: int) -> str:
+    """
+    :returns: conversion of nanoseconds to [dd hh:mm:ss.ms] format
+    """
+    secs = nanosecs_to_secs(nanosecs)
+    dd, rem = divmod(secs, 86400)
+    hh, rem = divmod(rem, 3600)
+    mm, secs = divmod(rem, 60)
+    return "%02ld %02ld:%02ld:%06.3f" % (dd, hh, mm, secs)
+
+
+def get_pid(task: Object) -> int:
+    """
+    :returns: PID of the task
+    """
+    return task.pid.value_()
+
+
+def get_command(task: Object) -> str:
+    """
+    :returns: name of the command
+    """
+    return escape_ascii_string(task.comm.string_())
+
+
+def show_tasks_last_runtime(tasks: Iterable[Object]) -> None:
+    """
+    Display task information in their last arrival order.
+    """
+    rows = [["LAST_ARRIVAL", "ST", "PID", "TASK", "CPU", "COMMAND"]]
+    tasks = list(tasks)
+    tasks.sort(key=task_lastrun2now)
+    for t in tasks:
+        cpu = str(task_cpu(t))
+        pid = str(get_pid(t))
+        state = task_state_to_char(t)
+        command = get_command(t)
+        time_nanosec = task_lastrun2now(t)
+        last_arrival = format_nanosecond_duration(time_nanosec)
+        rows.append([last_arrival, state, pid, hex(t.value_()), cpu, command])
+    print_table(rows)
+
+
+class Taskinfo(CorelensModule):
+    """
+    Corelens Module for ps
+    """
+
+    name = "ps"
+
+    default_args = ["-m"]
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "-m",
+            dest="last_run",
+            action="store_true",
+            help="show last run information",
+        )
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        if args.last_run:
+            show_tasks_last_runtime(for_each_task(prog))
+        else:
+            raise NotImplementedError("currently, only ps -m is implemented")

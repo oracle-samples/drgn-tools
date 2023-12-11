@@ -28,6 +28,7 @@ from drgn_tools.corelens import CorelensModule
 from drgn_tools.scsi import print_scsi_hosts
 from drgn_tools.table import print_table
 from drgn_tools.util import has_member
+from drgn_tools.util import timestamp_str
 from drgn_tools.util import type_exists
 
 
@@ -224,21 +225,20 @@ def for_each_mq_pending_request(q: Object) -> Iterable[Tuple[Object, Object]]:
                 yield (hwq, rq)
 
 
-def rq_pending_time_ms(rq: Object) -> int:
+def rq_pending_time_ns(rq: Object) -> int:
     """
-    Get io pending time in ms
+    Get io pending time in ns
 
     :param rq: ``struct request *`` or ``struct request``
     :returns: request pending time
     """
     prog = rq.prog_
     if has_member(rq, "start_time"):
-        # TODO: arch specific
-        return prog["jiffies_64"] - rq.start_time
+        return (prog["jiffies"] - rq.start_time).value_() * 1000000
     elif has_member(rq, "start_time_ns"):
         base = prog["tk_core"].timekeeper.tkr_mono.base
         delta = base - rq.start_time_ns
-        return delta / 1000000 if base > rq.start_time_ns else 0
+        return delta.value_() if base > rq.start_time_ns else 0
     else:
         return 0
 
@@ -329,7 +329,7 @@ def for_each_sq_elevator_rq(q: Object) -> Iterable[Object]:
     if q.elevator.value_() == 0:
         return []
     prog = q.prog_
-    name = q.elevator.type.elevator_name.string_()
+    name = q.elevator.type.elevator_name.string_().decode()
     addr = q.elevator.elevator_data.value_()
     list1 = None
     list2 = None
@@ -342,6 +342,9 @@ def for_each_sq_elevator_rq(q: Object) -> Iterable[Object]:
         list2 = elevator_data.fifo_list[1].address_of_()
     elif name == "cfq":
         # TODO: implement this
+        print(
+            "queue 0x%lx: dump pending IO from cfq not supported!" % q.value_()
+        )
         return []
     else:
         return []
@@ -363,9 +366,27 @@ def for_each_sq_pending_request(q: Object) -> Iterable[Object]:
     :param q: ``struct request_queue *``
     :returns: pending ``struct request *`` as Iterator
     """
-    if not has_member(q, "queue_head"):
+    if (not has_member(q, "queue_head")) or is_mq(q):
         return
-    # dispatching list
+    # dispatched request
+    if q.queue_tags.value_() != 0:
+        # for request_queue that support tags, there maybe IO requests
+        # which were under error handling, those requests will be in
+        # "tag_busy_list" while not in "timeout_list".
+        for rq in list_for_each_entry(
+            "struct request",
+            q.tag_busy_list.address_of_(),
+            "queuelist",
+        ):
+            yield rq
+    else:
+        for rq in list_for_each_entry(
+            "struct request",
+            q.timeout_list.address_of_(),
+            "timeout_list",
+        ):
+            yield rq
+    # to be dispatched
     for rq in list_for_each_entry(
         "struct request", q.queue_head.address_of_(), "queuelist"
     ):
@@ -405,7 +426,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
             "flags",
             "offset",
             "len",
-            "inflight-time(ms)",
+            "inflight-time",
         )
     )
 
@@ -433,7 +454,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
             ).value_() != disk.value_():
                 continue
             print(
-                "%-20s 0x%-20lx 0x%-20lx %-16s\n%-20s %-20d %-20d %-16d"
+                "%-20s %-20lx %-20lx %-16s\n%-20s %-20d %-20d %-16s"
                 % (
                     name,
                     hwq_ptr,
@@ -442,7 +463,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
                     rq_flags(rq),
                     rq.__sector,
                     rq.__data_len,
-                    rq_pending_time_ms(rq),
+                    timestamp_str(rq_pending_time_ns(rq)),
                 )
             )
         sq_pending = [
@@ -451,7 +472,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
         ]
         for rq_ptr, rq in sq_pending:
             print(
-                "%-20s %-20s %-20lx %-16s\n%-20s %-20d %-20d %-16d"
+                "%-20s %-20s %-20lx %-16s\n%-20s %-20d %-20d %-16s"
                 % (
                     name,
                     "-",
@@ -460,7 +481,7 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
                     rq_flags(rq),
                     rq.__sector,
                     rq.__data_len,
-                    rq_pending_time_ms(rq),
+                    timestamp_str(rq_pending_time_ns(rq)),
                 )
             )
 

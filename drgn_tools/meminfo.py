@@ -139,6 +139,28 @@ def get_mm_constants(prog: Program) -> Dict[str, int]:
         _hpage_pmd_order = _hpage_pmd_shift - mm_consts["PAGE_SHIFT"]
         mm_consts["HPAGE_PMD_NR"] = 1 << _hpage_pmd_order
 
+        # The vm statistics items for transparent hugepages may be counted
+        # in hugepages or in pages (since latest kernels). This commit
+        # (ID: 69473e5de87389be6c0fa4a5d574a50c8f904fb3) changed the unit from
+        # hugepages to pages and updates ``memory_stats`` to reflect it.
+        try:
+            unit = 1
+            for item in prog["memory_stats"]:
+                if item.name.string_().decode("utf-8") == "anon_thp":
+                    # If ``ratio`` exists and does not equal to PAGE_SIZE, the
+                    # unit is in hugepages. After the above commit, ``ratio``
+                    # was changed to 1 (page). Later, the ``ratio`` column was
+                    # removed because all statistics have the same unit.
+                    if (
+                        has_member(item, "ratio")
+                        and item.ratio.value_() != mm_consts["PAGE_SIZE"]
+                    ):
+                        unit = mm_consts["HPAGE_PMD_NR"]
+                        break
+        except KeyError:
+            unit = mm_consts["HPAGE_PMD_NR"]
+        mm_consts["TRANS_HPAGE_UNIT"] = unit
+
         # Determine the max number of swap file types.
         # In mm/swap_state.c, ``nr_swapper_spaces`` is defined as:
         # "static unsigned int nr_swapper_spaces[MAX_SWAPFILES] __read_mostly;"
@@ -189,13 +211,11 @@ def for_each_node_zone(prog: Program, node: Object) -> Iterator[Object]:
 
     :param prog: drgn program
     :param node: The drgn object of a NUMA node's ``struct pglist_data``.
-    :returns: Iterator of ``struct zone *`` objects.
+    :returns: Iterator of ``struct zone`` objects.
     """
     node_zones = node.node_zones
-    max_num_zones = prog["__MAX_NR_ZONES"].value_()
-    for j in range(max_num_zones):
-        if node_zones[j].value_() != 0x0:
-            yield node_zones[j]
+    for j in range(node.nr_zones):
+        yield node_zones[j]
 
 
 def for_each_zone(prog: Program) -> Iterator[Object]:
@@ -514,27 +534,7 @@ def get_all_meminfo(prog: Program) -> Dict[str, int]:
     ].counter.value_() << (mm_consts["PAGE_SHIFT"] - 10)
 
     # Collect transparent hugepage meminfo
-    # The vm statistics items for transparent hugepages may be counted
-    # in hugepages or in pages (since latest kernels). This commit
-    # (ID: 69473e5de87389be6c0fa4a5d574a50c8f904fb3) changed the unit from
-    # hugepages to pages and updates ``memory_stats`` to reflect the change.
-    try:
-        unit = 1
-        for item in prog["memory_stats"]:
-            if item.name.string_().decode("utf-8") == "anon_thp":
-                # If ``ratio`` exists and does not equal to PAGE_SIZE, the unit
-                # is in hugepages. After the above commit, ``ratio`` was
-                # changed to 1 (page). Later, the ``ratio`` column was removed
-                # because all statistics have the same unit.
-                if (
-                    has_member(item, "ratio")
-                    and item.ratio.value_() != mm_consts["PAGE_SIZE"]
-                ):
-                    unit = mm_consts["HPAGE_PMD_NR"]
-                    break
-    except KeyError:
-        unit = get_mm_constants(prog)["HPAGE_PMD_NR"]
-
+    unit = mm_consts["TRANS_HPAGE_UNIT"]
     if "NR_ANON_THPS" in global_stats:
         stats["AnonHugePages"] = global_stats["NR_ANON_THPS"] * unit
         stats["ShmemHugePages"] = global_stats["NR_SHMEM_THPS"] * unit

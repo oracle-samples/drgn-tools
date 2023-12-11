@@ -87,59 +87,23 @@ variable from the stack frame.
 import argparse
 
 import drgn
-from drgn import Object
 from drgn import Program
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.fs import d_path
+from drgn.helpers.linux.list import list_for_each
 from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.bt import bt
 from drgn_tools.bt import bt_has
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.itertools import count
 from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
+from drgn_tools.locking import show_lock_waiter
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import has_member
-
-
-def timestamp_str(ns: int) -> str:
-    value = ns // 1000000
-    ms = value % 1000
-    value = value // 1000
-    secs = value % 60
-    value = value // 60
-    mins = value % 60
-    value = value // 60
-    hours = value % 24
-    days = value // 24
-    return "%d %02d:%02d:%02d.%03d" % (days, hours, mins, secs, ms)
-
-
-def show_lock_waiter(
-    prog: Program, task: Object, index: int, stacktrace: bool
-) -> None:
-    """
-    Show lock waiter
-
-    :param prog: drgn program
-    :param task: ``struct task_struct *``
-    :param index: index of waiter
-    :param stacktrace: true to dump stack trace of the waiter
-    :returns: None
-    """
-    prefix = "[%d] " % index
-    print(
-        "%12s: %-16s %-8d %-6s %-16s"
-        % (
-            prefix,
-            task.comm.string_().decode(),
-            task.pid.value_(),
-            task_state_to_char(task),
-            timestamp_str(task_lastrun2now(task)),
-        )
-    )
-    if stacktrace:
-        bt(task)
+from drgn_tools.util import timestamp_str
 
 
 def ext4_dirlock_scan(prog: drgn.Program, stacktrace: bool = False) -> None:
@@ -165,7 +129,19 @@ def ext4_dirlock_scan(prog: drgn.Program, stacktrace: bool = False) -> None:
         return
 
     for task, frame in frame_list:
-        dentry = frame["dir_file"].f_path.dentry
+        try:
+            dentry = frame["dir_file"].f_path.dentry
+        except (drgn.ObjectAbsentError, KeyError):
+            print(
+                f"warning: task {task.pid.value_()} "
+                f"({escape_ascii_string(task.comm.string_())}) has "
+                "ext4_htree_fill_tree() in its stack, but we cannot "
+                "read the stack frame variables. Results may be "
+                "incomplete."
+            )
+            if stacktrace:
+                bt(task)
+            continue
         inode = frame["dir_file"].f_inode
         disk = dentry.d_sb.s_bdev.bd_disk
         print(
@@ -177,6 +153,10 @@ def ext4_dirlock_scan(prog: drgn.Program, stacktrace: bool = False) -> None:
         print("%-12s: 0x%x" % ("inode", inode.value_()))
         print("%-12s: %d" % ("Size", inode.i_size.value_()))
         print("%-12s: %d" % ("Blocks", inode.i_blocks.value_()))
+        print(
+            "%-12s: %d"
+            % ("subdirs", count(list_for_each(dentry.d_subdirs.address_of_())))
+        )
         print(
             "%-12s: %-16s %-8s %-6s %-16s"
             % ("Inode Lock", "Command", "Pid", "Status", "Lastrun2now")

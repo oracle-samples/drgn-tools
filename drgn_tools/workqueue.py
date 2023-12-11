@@ -212,6 +212,26 @@ def print_workqueue_names(prog: Program) -> None:
         )
 
 
+def _wq_data_mask(prog: Program) -> int:
+    """
+    Return the WORK_STRUCT_WQ_DATA_MASK constant
+
+    Up until quite recently, WORK_STRUCT_WQ_DATA_MASK was an enumerator, so it
+    was easy to look up in drgn as a constant. Sadly, this ended with
+    afa4bb778e48 ("workqueue: clean up WORK_* constant types, clarify masking"),
+    which has changed it to a preprocessor constant (for a valid reason, but
+    it's still frustrating to lose information). Even more frustrating, this
+    commit has hit linux-stable, meaning that many older kernels are now losing
+    this definition for debuggers. Thankfully, we can reproduce the value
+    easily.
+    """
+    try:
+        return prog["WORK_STRUCT_WQ_DATA_MASK"].value_()
+    except KeyError:
+        flag_mask = (1 << prog["WORK_STRUCT_FLAG_BITS"]) - 1
+        return (~flag_mask).value_()
+
+
 def get_work_pwq(work: Object) -> Object:
     """
     Get pool_workqueue associated with a work
@@ -225,7 +245,7 @@ def get_work_pwq(work: Object) -> Object:
     if data & prog["WORK_STRUCT_PWQ"].value_():
         return cast(
             "struct pool_workqueue *",
-            data & prog["WORK_STRUCT_WQ_DATA_MASK"].value_(),
+            data & _wq_data_mask(prog),
         )
     else:
         return NULL(work.prog_, "struct pool_workqueue *")
@@ -244,7 +264,7 @@ def get_work_pool(work: Object) -> Object:
     data = cast("unsigned long", work.data.counter.read_())
 
     if data & prog["WORK_STRUCT_PWQ"].value_():
-        pwq = data & prog["WORK_STRUCT_WQ_DATA_MASK"].value_()
+        pwq = data & _wq_data_mask(prog)
         pool = Object(prog, "struct pool_workqueue", address=pwq).pool
     else:
         pool_id = data >> prog["WORK_OFFQ_POOL_SHIFT"].value_()

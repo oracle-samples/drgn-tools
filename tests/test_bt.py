@@ -7,7 +7,12 @@ from drgn_tools import bt
 
 
 @pytest.mark.skip_vmcore("*-uek4")
-def test_bt_smoke(prog, request):
+def test_bt_smoke(prog, request, debuginfo_type):
+    if (
+        debuginfo_type == "ctf"
+        and prog.platform.arch == drgn.Architecture.AARCH64
+    ):
+        pytest.xfail("still unsupported for unwinding with aarch64 + CTF")
     if prog.flags & drgn.ProgramFlags.IS_LIVE:
         thread = prog.thread(1)
     else:
