@@ -2,10 +2,8 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import argparse
 from typing import Iterable
-from typing import List
 
 from _drgn import FaultError
-from drgn import cast
 from drgn import Object
 from drgn import Program
 from drgn.helpers.common.format import escape_ascii_string
@@ -14,16 +12,6 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.module import KernelModule
 from drgn_tools.table import print_table
-
-_MOD_INTEGER_PARAMS = {
-    "byte": "unsigned char *",
-    "short": "short *",
-    "ushort": "unsigned short *",
-    "int": "int *",
-    "uint": "unsigned int *",
-    "long": "long *",
-    "ulong": "unsigned long *",
-}
 
 
 def for_each_module_use(source_list_addr: Object) -> Iterable[Object]:
@@ -39,95 +27,51 @@ def for_each_module_use(source_list_addr: Object) -> Iterable[Object]:
 
 
 def print_module_parameters(prog: Program) -> None:
-    """
-    Provide the list of ``module parameters`` as an iterable object
-
-    :param prog: drgn program.
-    :returns: None
-    """
-
-    # Module details
+    """Prints each loaded module and its parameter values"""
     for mod in KernelModule.all(prog):
         print("\n")
         print("MODULE NAME:".ljust(15), mod.name)
         print("PARAM COUNT:", str(mod.obj.num_kp.value_()))
         print("ADDRESS    :", hex(mod.obj.num_kp.address_of_()))
+        if not mod.obj.num_kp:
+            continue
+
         table_value = []
         table_value.append(["PARAMETER", "ADDRESS", "TYPE", "VALUE"])
-        for i in range(0, mod.obj.num_kp):
-            parm_valf = ""
-            parm_val = ""
-            kp = mod.obj.kp[i]
+        for name, info in mod.params().items():
             try:
-                param_type = prog.symbol(kp.ops.get).name
-            except LookupError:
-                table_value.append(
-                    [
-                        kp.name.string_().decode("utf-8"),
-                        str(hex(kp.address_of_())),
-                        "UNKNOWN",
-                        "UNKNOWN",
-                    ]
-                )
-                continue
-
-            if param_type.startswith("param_get_"):
-                param_type = param_type[len("param_get_") :]
-                if param_type in _MOD_INTEGER_PARAMS:
-                    parm_valf_address = cast(
-                        _MOD_INTEGER_PARAMS[param_type], kp.arg
+                if info.value is None:
+                    formatted = ""
+                elif info.type_name == "charp" and not info.value:
+                    formatted = "(null)"
+                elif info.type_name in ("charp", "string"):
+                    formatted = escape_ascii_string(
+                        info.value.string_(),
+                        escape_double_quote=True,
+                        escape_backslash=True,
                     )
-                    try:
-                        parm_valf = parm_valf_address[0].value_()
-                    except FaultError:
-                        parm_valf = "(page fault)"
-                elif "bool" in param_type:
-                    param_type = "bool"
-                    parm_valf_address = cast("bool *", kp.arg)
-                    parm_val = Object(
-                        prog, "bool", address=parm_valf_address.value_()
-                    ).value_()
-                    if parm_val == 1:
-                        parm_valf = "Y"
-                    else:
-                        parm_valf = "N"
-                elif "charp" in param_type:
-                    param_type = "charp"
-                    value = Object(prog, "char **", value=kp.arg)
-                    if value[0]:
-                        parm_valf = escape_ascii_string(value[0].string_())
-                    else:
-                        parm_valf = "(null)"
-                elif "string" in param_type:
-                    param_type = "string"
-                    try:
-                        if escape_ascii_string(kp.str.string.string_()):
-                            parm_valf = escape_ascii_string(
-                                kp.str.string.string_()
-                            )
-                        else:
-                            parm_valf = "(null)"
-                    except FaultError:
-                        parm_valf = "(page fault)"
-            elif "array" in param_type:
-                param_type = "array"
-                parm_valf = f"array_length: {int(kp.arr.max)}"
+                    formatted = f'"{formatted}"'
+                elif info.type_name == "bool":
+                    formatted = "Y" if info.value else "N"
+                else:
+                    formatted = info.value.format_(type_name=False)
+            except FaultError:
+                # As mentioned in decode_param() docstring, a FaultError can
+                # occur when a module parameter variable is marked __initdata.
+                formatted = "(page fault)"
             table_value.append(
                 [
-                    str(kp.name.string_().decode("utf-8")),
-                    str(hex(kp.address_of_())),
-                    param_type,
-                    str(parm_valf),
+                    name,
+                    hex(info.kernel_param.address_of_()),
+                    info.type_name,
+                    formatted,
                 ]
             )
         print_table(table_value)
 
 
-def get_module_summary(prog: Program) -> List[List[str]]:
-    """
-    Provide the list of ``module details and dependencies`` as an iterable object
-    :returns: Nested list of ``module details and dependencies`` as an iterable object
-    """
+def print_module_summary(prog: Program) -> None:
+    """Print a list of module details and dependencies"""
     # List all loaded modules
     table_value = []
     table_value.append(
@@ -146,12 +90,7 @@ def get_module_summary(prog: Program) -> List[List[str]]:
                 ",".join(dep_mod),
             ]
         )
-    return table_value
-
-
-def print_module_summary(prog: Program) -> None:
-    print_mod = get_module_summary(prog)
-    print_table(print_mod)
+    print_table(table_value)
 
 
 class ListModules(CorelensModule):

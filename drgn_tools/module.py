@@ -277,6 +277,98 @@ def module_build_id(mod: Object) -> str:
     raise ValueError("Build ID not found!")
 
 
+class ParamInfo(NamedTuple):
+    """Contains information about a kernel module parameter"""
+
+    name: str
+    kernel_param: Object
+    type_name: str
+    value: Optional[Object]
+
+
+_MOD_PARAM_TYPES = {
+    "param_get_byte": "unsigned char",
+    "param_get_short": "short",
+    "param_get_ushort": "unsigned short",
+    "param_get_int": "int",
+    "param_get_uint": "unsigned int",
+    "param_get_long": "long",
+    "param_get_ulong": "unsigned long",
+    "param_get_ullong": "unsigned long long",
+    "param_get_bool": "bool",
+    "param_get_charp": "char *",
+}
+
+
+def decode_param(kp: Object) -> ParamInfo:
+    """
+    Given a ``struct kernel_param *``, return its value
+
+    This fills out a :class:`ParamInfo` based on the value of the module
+    parameter. In the ideal case, a human-readable type, and the parameter's
+    value itself are both created. However, there are some cases where we cannot
+    determine the object, in which case the type name is still provided, in as
+    much detail as possible.
+
+    Please note that the resulting object is not guaranteed to be readable. For
+    instance, strings may be NULL. Another relatively common issue is that some
+    module parameters are marked ``__initdata``, so their data will be thrown
+    out after the module is loaded. Thus, users should take care to handle a
+    potential ``FaultError`` when using the parameter value.
+
+    :param kp: ``struct kernel_param *``
+    :returns: a :class:`ParamInfo`
+
+    """
+    prog = kp.prog_
+    name = kp.name.string_().decode("utf-8")
+    try:
+        param_type = prog.symbol(kp.ops.get).name
+    except LookupError:
+        return ParamInfo(name, kp, "UNKNOWN", None)
+
+    PREFIX = "param_get_"
+    if param_type in _MOD_PARAM_TYPES:
+        obj = Object(prog, _MOD_PARAM_TYPES[param_type], address=kp.arg)
+        param_type = param_type[len(PREFIX) :]
+    elif param_type == "param_get_string":
+        obj = cast("char *", kp.arg)
+        param_type = "string"
+    elif param_type == "param_array_get":
+        length = int(kp.arr.num[0] if kp.arr.num else kp.arr.max)
+        try:
+            elem_type = prog.symbol(kp.arr.ops.get).name
+        except LookupError:
+            return ParamInfo(name, kp, f"UNKNOWN[{length}]", None)
+
+        if elem_type not in _MOD_PARAM_TYPES:
+            return ParamInfo(name, kp, f"<{elem_type}?>[{length}]", None)
+
+        type_ = prog.type(_MOD_PARAM_TYPES[elem_type])
+        elem_type = elem_type[len(PREFIX) :]
+        param_type = f"{elem_type}[{length}]"
+        if type_.size != kp.arr.elemsize:
+            return ParamInfo(name, kp, param_type, None)
+        obj = Object(prog, prog.array_type(type_, length), address=kp.arr.elem)
+    else:
+        return ParamInfo(name, kp, f"<{param_type}?>", None)
+    return ParamInfo(name, kp, param_type, obj)
+
+
+def module_params(mod: Object) -> Dict[str, ParamInfo]:
+    """
+    Return a dictionary of kernel module parameters
+
+    :param mod: the kernel module, ``struct module *``
+    :returns: a dict mapping parameter name to information about it
+    """
+    ret = {}
+    for i in range(mod.num_kp):
+        info = decode_param(mod.kp[i])
+        ret[info.name] = info
+    return ret
+
+
 def module_symbols(module: Object) -> List[Tuple[str, Object]]:
     """
     Return a list of ELF symbols for a module via kallsyms.
@@ -816,6 +908,13 @@ class KernelModule:
         Return the build ID of this module, useful for matching debuginfo.
         """
         return module_build_id(self.obj)
+
+    def params(self) -> Dict[str, ParamInfo]:
+        """
+        Return a dictionary of the parameters of the module, see
+        :func:`module_params()`
+        """
+        return module_params(self.obj)
 
     def symbols(self) -> List[Tuple[str, Object]]:
         """
