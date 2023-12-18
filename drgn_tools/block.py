@@ -19,10 +19,10 @@ from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.bitops import for_each_bit_set
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.table import print_table
 from drgn_tools.util import has_member
 from drgn_tools.util import timestamp_str
 from drgn_tools.util import type_exists
-
 
 BB_LEN_MASK = 0x00000000000001FF
 BB_OFFSET_MASK = 0x7FFFFFFFFFFFFE00
@@ -509,7 +509,22 @@ def get_inflight_io_nr(prog: drgn.Program, disk: Object) -> int:
                 nr += hwq.nr_active.counter
         else:
             nr += len(list(for_each_hwq_pending_rq(hwq)))
-    return nr
+    return int(nr)
+
+
+def print_block_devs_info(prog: drgn.Program) -> None:
+    """
+    Prints the block device information
+    """
+    output = [["MAJOR", "GENDISK", "NAME", "REQUEST_QUEUE", "Inflight I/Os"]]
+    for disk in for_each_disk(prog):
+        major = int(disk.major)
+        gendisk = hex(disk.value_())
+        name = disk.disk_name.string_().decode("utf-8")
+        rq = hex(disk.queue.value_())
+        ios = get_inflight_io_nr(prog, disk)
+        output.append([str(major), gendisk, name, rq, str(ios)])
+    print_table(output)
 
 
 class InflightIOModule(CorelensModule):
@@ -527,3 +542,14 @@ class InflightIOModule(CorelensModule):
 
     def run(self, prog: drgn.Program, args: argparse.Namespace) -> None:
         dump_inflight_io(prog, args.diskname)
+
+
+class BlockInfo(CorelensModule):
+    """
+    Corelens Module for block device info
+    """
+
+    name = "blockinfo"
+
+    def run(self, prog: drgn.Program, args: argparse.Namespace) -> None:
+        print_block_devs_info(prog)
