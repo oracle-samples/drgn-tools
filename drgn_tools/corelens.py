@@ -194,6 +194,7 @@ def all_corelens_modules() -> Dict[str, CorelensModule]:
 
 def _load_candidate_modules(
     module_args: List[List[str]],
+    run_all: bool,
 ) -> List[Tuple[CorelensModule, argparse.Namespace]]:
     """
     Load the modules which the user has requested to run.
@@ -207,8 +208,11 @@ def _load_candidate_modules(
     :returns: A list of (corelens) modules to run and their arguments
     """
     all_modules = all_corelens_modules()
-    if not module_args:
+    if run_all:
         return [(mod, mod._parse_args()) for mod in all_modules.values()]
+    if not module_args:
+        sys_mod = all_modules["sys"]
+        return [(sys_mod, sys_mod._parse_args())]
     candidate_modules_to_run = []
     for arglist in module_args:
         mod_name = arglist[0]
@@ -390,22 +394,26 @@ def _print_module_listing() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run analysis helper code",
+        description="Kernel core dump analysis tool",
         prog="corelens",
-        usage="corelens [options] vmcore [-M MODULE [options] [-M MODULE ...]]",
+        usage=(
+            "corelens [-o OUT] vmcore [-M MODULE [options] [-M MODULE ...]]\n"
+            "       corelens [-o OUT] vmcore -A\n"
+            "       corelens -h           (for help)\n"
+            "       corelens -L           (to list modules)\n"
+            "       corelens -M MODULE -h (for module-specific help)"
+        ),
         epilog="""
         After specifying the options and a vmcore, you may optionally specify
         modules and their arguments. You must introduce each module name and its
         arguments from the next with "-M". If you do not specify any modules,
-        then corelens will run all applicable modules with their default
-        arguments.
+        then corelens will print basic information about the vmcore.
         """,
     )
     parser.add_argument(
         "vmcore",
         help="vmcore to run against (use /proc/kcore for live)",
         nargs="?",
-        default="/proc/kcore",
     )
     parser.add_argument(
         "--list",
@@ -424,8 +432,15 @@ def main() -> None:
         help="CTF archive to load (overrides debuginfo and module search)",
     )
     parser.add_argument(
+        "-A",
+        action="store_true",
+        dest="run_all",
+        help="run all corelens modules for the given verbosity level",
+    )
+    parser.add_argument(
         "--output-directory",
         "-o",
+        metavar="OUT",
         help="store output in a directory (each module has its own output file)",
     )
     split_args = _split_args(sys.argv[1:])
@@ -434,7 +449,20 @@ def main() -> None:
         _print_module_listing()
         sys.exit(0)
 
-    candidate_modules_to_run = _load_candidate_modules(split_args[1:])
+    # Load corelens modules before initializing prog, so that the argument
+    # parsers get a chance to run. This way, it's legal to do things like:
+    # corelens -M dentrycache -h, which prints the dentrycache help without
+    # needing to specify a vmcore.
+    if args.run_all and split_args[1:]:
+        sys.exit("error: either specify -A or a list of modules, not both")
+    candidate_modules_to_run = _load_candidate_modules(
+        split_args[1:], args.run_all
+    )
+
+    if not args.vmcore:
+        parser.print_usage()
+        sys.exit("error: specify a vmcore or /proc/kcore, or a help option")
+
     prog = _load_prog_and_debuginfo(args)
     modules_to_run, errors, warnings = _check_module_debuginfo(
         candidate_modules_to_run, prog
