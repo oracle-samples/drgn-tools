@@ -567,12 +567,15 @@ def extract_rpm(
                 continue
             # standardize the names to use underscore
             name = file_path.name.replace("-", "_")
+            dst = dest_dir / name
             # pathlib rename does not work since this is likely to be across
             # filesystems. Use shutil, and use a str() because shutil.move()
             # only got support for handling Path objects in 3.9.
+            if dst.exists():
+                dst.unlink()
             shutil.move(
                 str(file_path),
-                str(dest_dir / name),
+                str(dst),
             )
             if file_path.name == "vmlinux":
                 extracted.append(name)
