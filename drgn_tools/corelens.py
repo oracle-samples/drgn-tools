@@ -336,7 +336,7 @@ def _run_module(
     """
     try:
         if to_stdout:
-            print(f"====== MODULE {mod.name} ======")
+            print(f"\n====== MODULE {mod.name} ======")
         mod.run(prog, args)
     except Exception:
         formatted = traceback.format_exc()
