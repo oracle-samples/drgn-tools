@@ -3,6 +3,7 @@
 """
 Helpers for file cache.
 """
+import argparse
 from typing import Iterator
 from typing import List
 from typing import Tuple
@@ -13,12 +14,14 @@ from drgn import cast
 from drgn import container_of
 from drgn import Object
 from drgn import Program
-from drgn.helpers.linux.fs import dentry_path
+from drgn.helpers.linux.list import hlist_empty
 from drgn.helpers.linux.list import hlist_for_each_entry
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.radixtree import radix_tree_for_each
 from drgn.helpers.linux.xarray import xa_for_each
 
+from drgn_tools.corelens import CorelensModule
+from drgn_tools.dentry import dentry_path_any_mount
 from drgn_tools.table import print_table
 from drgn_tools.util import human_bytes
 
@@ -68,10 +71,12 @@ def filecache_dump(
     skip_fs_types: Union[List[str], None] = None,
 ) -> None:
     """
-    Dump the filecache stats including the pages, size, filesystem type and filepath. Dump NUMA stats as well if numa set to True.
+    Dump the filecache stats including the pages, size, filesystem type and
+    filepath. Dump NUMA stats as well if numa set to True.
 
     :param top_n: The largest <top_n> files to be dumped
-    :param page_limit: Only files with the number of pages greater than <page_limit> are dumped
+    :param page_limit: Only files with the number of pages greater than
+      <page_limit> are dumped
     :param fs_types: File system types to dump. None to dump all
     :param skip_fs_types: File system types to skip. None to skip nothing
     """
@@ -93,13 +98,37 @@ def filecache_dump(
 
         fs_type = __fst_name_by_inode(f[1])
         file_path = ""
-        try:
-            file_path = __path_by_inode(f[1])
-        except drgn.FaultError:
-            file_path = "PATH NOT FOUND"
+        file_path = __path_by_inode(f[1])
         output_table.append([str(nrpages), nrpages_size, fs_type, file_path])
 
     print_table(output_table)
+
+
+class Filecache(CorelensModule):
+    """Prints files from page cache, sorted by the amount of cached pages"""
+
+    name = "filecache"
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--limit",
+            "-l",
+            default=1000,
+            metavar="N",
+            type=int,
+            help="Limit output to the top N files",
+        )
+        parser.add_argument(
+            "--min-pages",
+            "-m",
+            default=1,
+            metavar="M",
+            type=int,
+            help="Only show files with more than M pages cached",
+        )
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        filecache_dump(prog, args.limit, args.min_pages, None, None)
 
 
 def file_page_dump(file: Object) -> Iterator[Object]:
@@ -209,10 +238,14 @@ def __fst_name_by_inode(inode: Object) -> str:
 def __path_by_inode(inode: Object) -> str:
     """Get the filepath"""
     hlist_head = inode.i_dentry
-    hlist_node = hlist_head.first
-    dentry = container_of(hlist_node, "struct dentry", "d_u")
-    file_path = dentry_path(dentry).decode()
-    return file_path
+    if hlist_empty(hlist_head.address_of_()):
+        return "[NO DENTRY]"
+    try:
+        hlist_node = hlist_head.first
+        dentry = container_of(hlist_node, "struct dentry", "d_u")
+        return dentry_path_any_mount(dentry).decode()
+    except drgn.FaultError:
+        return "[ERROR]"
 
 
 def __walk_tree(address_space: Object) -> Iterator[Object]:
