@@ -399,6 +399,10 @@ def get_itlb_multihit_mitigation(prog: Program, cpu_caps_bugs: Object) -> str:
             mitigation = "KVM: Mitigation: VMX unsupported"
         elif not per_cpu(prog["cpu_tlbstate"], 0).cr4 & X86_CR4_VMXE:
             mitigation = "KVM: Mitigation: VMX disabled"
+        elif prog["itlb_multihit_kvm_mitigation"]:
+            mitigation = "KVM: Mitigation: Split huge pages"
+        else:
+            mitigation = "KVM: Vulnerable"
     elif prog["itlb_multihit_kvm_mitigation"]:
         mitigation = "KVM: Mitigation: Split huge pages"
     else:
