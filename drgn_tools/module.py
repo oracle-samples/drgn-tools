@@ -422,15 +422,43 @@ def module_symbols(module: Object) -> List[Tuple[str, Object]]:
     )
     strtab = prog.read(ks.strtab.value_(), last_string_start + last_string_len)
     syms = []
-    for i in range(ks.num_symtab.value_()):
+    # Start range at index 1, because the first ELF symbol is always bogus
+    for i in range(1, ks.num_symtab.value_()):
         elfsym = symtab[i]
-        if not elfsym.st_name:
-            continue
         str_index = elfsym.st_name.value_()
         nul_byte = strtab.find(b"\x00", str_index)
         name = strtab[str_index:nul_byte].decode("ascii")
         syms.append((name, elfsym))
     return syms
+
+
+def _first_kallsyms_symbol(module: Object) -> Optional[int]:
+    try:
+        ks = module.kallsyms
+    except AttributeError:
+        ks = module
+    if ks.num_symtab >= 2:
+        return int(ks.symtab[1].st_value)
+    return None
+
+
+def module_has_debuginfo(module: Object) -> bool:
+    """
+    Return true if a module has debuginfo
+
+    We do this by looking at the first symbol in the kallsyms. If drgn can find
+    a symbol for it, we return True, otherwise False. This is a fast, but
+    imperfect heuristic. In the future, drgn will have an API which lets us
+    enumerate modules directly query whether it has loaded debuginfo.
+    """
+    fst = _first_kallsyms_symbol(module)
+    if not fst:
+        return False
+    try:
+        module.prog_.symbol(fst)
+        return True
+    except LookupError:
+        return False
 
 
 def _elf_sym_to_symbol(name: str, obj: Object) -> Symbol:
@@ -827,25 +855,7 @@ class KernelModule:
 
         :returns: True if debuginfo exists for this module
         """
-
-        def have_symbol(addr: int) -> bool:
-            try:
-                self.obj.prog_.symbol(addr)
-                return True
-            except LookupError:
-                return False
-
-        first_text_address = self.address_region()[0]
-        if have_symbol(first_text_address.value_()):
-            return True
-
-        # Sometimes the first text address is nothing. Now try the exported
-        # symbols and then kallsyms.
-        exports = module_exports(self.obj)
-        if exports and have_symbol(exports[0][0]):
-            return True
-        kallsyms = module_symbols(self.obj)
-        return bool(kallsyms and have_symbol(kallsyms[0][1].st_value.value_()))
+        return module_has_debuginfo(self.obj)
 
     def find_debuginfo(self) -> Optional[Path]:
         """
