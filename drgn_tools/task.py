@@ -20,6 +20,9 @@ from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.sched import cpu_curr
 from drgn.helpers.linux.sched import task_state_to_char
+from drgn.helpers.linux.slab import find_slab_cache
+from drgn.helpers.linux.slab import slab_cache_for_each_allocated_object
+from drgn.helpers.linux.slab import slab_cache_is_merged
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_table
@@ -46,6 +49,7 @@ TASK_KILLABLE = TASK_WAKEKILL | TASK_UNINTERRUPTIBLE
 TASK_STOPPED = TASK_WAKEKILL | __TASK_STOPPED
 TASK_TRACED = TASK_WAKEKILL | __TASK_TRACED
 TASK_IDLE = TASK_UNINTERRUPTIBLE | TASK_NOLOAD
+
 
 def nanosecs_to_secs(nanosecs: int) -> float:
     """
@@ -222,6 +226,7 @@ def show_tasks_last_runtime(tasks: Iterable[Object]) -> None:
         last_arrival = format_nanosecond_duration(time_nanosec)
         rows.append([last_arrival, state, pid, hex(t.value_()), cpu, command])
     print_table(rows)
+
 
 def is_task_in_state(task: drgn.Object, state: int) -> bool:
     """
@@ -776,6 +781,7 @@ def count_idle_tasks(prog: drgn.Program) -> int:
     count = sum(1 for _ in for_each_idle_task(prog))
 
     return count
+
 
 class Taskinfo(CorelensModule):
     """
