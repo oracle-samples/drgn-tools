@@ -411,7 +411,7 @@ def is_task_struct_leaking(prog: drgn.Program) -> bool:
     return task_count != task_struct_count
 
 
-def for_each_task_in_state(prog: drgn.Program, state: int) -> Iterator[Object]:
+def for_each_task_in_state(prog: drgn.Program, state: int) -> Iterable[Object]:
     """
     Iterate over all tasks in a given state.
 
@@ -424,7 +424,7 @@ def for_each_task_in_state(prog: drgn.Program, state: int) -> Iterator[Object]:
             yield task
 
 
-def for_each_runnable_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_runnable_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_RUNNING`` tasks in a system.
 
@@ -438,7 +438,7 @@ def for_each_runnable_task(prog: drgn.Program) -> Iterator[Object]:
     return prog["init_task"].address_of_()
 
 
-def for_each_interruptible_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_interruptible_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_INTERRUPTIBLE`` tasks in a system.
 
@@ -449,7 +449,7 @@ def for_each_interruptible_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_uninterruptible_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_uninterruptible_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_UNINTERRUPTIBLE`` tasks in a system.
 
@@ -460,7 +460,7 @@ def for_each_uninterruptible_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_stopped_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_stopped_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_STOPPED`` tasks in a system.
 
@@ -471,7 +471,7 @@ def for_each_stopped_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_traced_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_traced_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_TRACED`` tasks in a system.
 
@@ -482,7 +482,7 @@ def for_each_traced_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_exit_dead_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_exit_dead_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``EXIT_DEAD`` tasks in a system.
 
@@ -493,7 +493,7 @@ def for_each_exit_dead_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_exit_zombie_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_exit_zombie_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``EXIT_ZOMBIE`` tasks in a system.
 
@@ -504,7 +504,7 @@ def for_each_exit_zombie_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_parked_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_parked_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_PARKED`` tasks in a system.
 
@@ -515,7 +515,7 @@ def for_each_parked_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_dead_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_dead_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_DEAD`` tasks in a system.
 
@@ -526,7 +526,7 @@ def for_each_dead_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_wakekill_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_wakekill_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_WAKEKILL`` tasks in a system.
 
@@ -537,7 +537,7 @@ def for_each_wakekill_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_waking_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_waking_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_WAKING`` tasks in a system.
 
@@ -548,7 +548,7 @@ def for_each_waking_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_noload_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_noload_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_NOLOAD`` tasks in a system.
 
@@ -559,7 +559,7 @@ def for_each_noload_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_new_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_new_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_NEW`` tasks in a system.
 
@@ -570,7 +570,7 @@ def for_each_new_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_killable_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_killable_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_KILLABLE`` tasks in a system.
 
@@ -581,7 +581,7 @@ def for_each_killable_task(prog: drgn.Program) -> Iterator[Object]:
         yield task
 
 
-def for_each_idle_task(prog: drgn.Program) -> Iterator[Object]:
+def for_each_idle_task(prog: drgn.Program) -> Iterable[Object]:
     """
     Iterate over all ``TASK_IDLE`` tasks in a system.
 
