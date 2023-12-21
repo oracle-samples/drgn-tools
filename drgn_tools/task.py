@@ -345,7 +345,12 @@ def is_task_in_state(task: drgn.Object, state: int) -> bool:
     :param state: specified state of task
     :returns: True if task is in specified state, False otherwise.
     """
-    return task.state.value_() == state
+
+    # Linux kernel commit 2f064a59a11f ("sched: Change task_struct::state")
+    # (in v5.14) renamed task_struct.state to task_struct.__state
+    state_attr = "state" if hasattr(task, "state") else "__state"
+    state_val = getattr(task, state_attr).read_()
+    return state_val == state
 
 
 def is_task_runnable(task: drgn.Object) -> bool:
