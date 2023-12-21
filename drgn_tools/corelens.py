@@ -243,23 +243,35 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
     if args.ctf and args.debuginfo:
         sys.exit("error: --debuginfo and --ctf conflict")
 
-    if args.ctf:
-        try:
-            from drgn.helpers.linux.ctf import load_ctf
+    # Search for DWARF debuginfo first, unless CTF is explicitly requested.
+    vmlinux = None
+    fmts_tried = []
+    if not args.ctf:
+        fmts_tried.append("DWARF")
+        vmlinux = find_debuginfo(prog, "vmlinux", dinfo_path=args.debuginfo)
 
-            load_ctf(prog, args.ctf)
+    if vmlinux:
+        # Found DWARF debuginfo, continue to use that.
+        prog.load_debug_info([vmlinux])
+        load_module_debuginfo(prog, extract=False, quiet=True)
+        return prog
+
+    # Try to use CTF debuginfo
+    try:
+        from drgn.helpers.linux.ctf import load_ctf
+
+        fmts_tried.append("CTF")
+        release = prog["UTS_RELEASE"].string_().decode()
+        path = args.ctf or f"/lib/modules/{release}/kernel/vmlinux.ctfa"
+        if os.path.isfile(path):
+            load_ctf(prog, path)
             return prog
-        except ImportError:
-            sys.exit("error: drgn is not built with CTF support")
+    except ModuleNotFoundError:
+        pass
 
-    vmlinux = find_debuginfo(prog, "vmlinux", dinfo_path=args.debuginfo)
-
-    if not vmlinux:
-        sys.exit("error: vmlinux not found")
-
-    prog.load_debug_info([vmlinux])
-    load_module_debuginfo(prog, extract=False, quiet=True)
-    return prog
+    # On failure, report what we tried so the user knows
+    tried = ", ".join(fmts_tried)
+    sys.exit(f"error: could not find debuginfo (tried {tried})")
 
 
 def _check_module_debuginfo(
