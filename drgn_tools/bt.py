@@ -6,7 +6,9 @@ import typing as t
 import drgn
 from drgn import FaultError
 from drgn import Program
+from drgn import ProgramFlags
 from drgn import TypeKind
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.sched import cpu_curr
@@ -453,18 +455,30 @@ def print_all_bt(prog: Program) -> None:
     """
     Prints the stack trace of all tasks
     """
-    print("On-CPU Tasks:")
     online_tasks = set()
 
-    for cpu in for_each_online_cpu(prog):
-        task = cpu_curr(prog, cpu)
-        online_tasks.add(task.pid.value_())
-        bt(task)
+    if not prog.flags & ProgramFlags.IS_LIVE:
+        print("On-CPU Tasks:")
 
-    print("\nOff-CPU Tasks:")
+        for cpu in for_each_online_cpu(prog):
+            task = cpu_curr(prog, cpu)
+            online_tasks.add(task.pid.value_())
+            bt(task)
+            print()
+
+        print("\nOff-CPU Tasks:")
+
     for task in for_each_task(prog):
         if task.pid.value_() not in online_tasks:
-            bt(task)
+            try:
+                bt(task)
+            except ValueError as e:
+                # Catch ValueError for unwinding running tasks on live
+                # systems. Print the task & comm but don't unwind.
+                pid = task.pid.value_()
+                comm = escape_ascii_string(task.comm.string_())
+                print(f"PID: {pid}  COMM: {comm}\nerror: {str(e)}")
+            print()
 
 
 class Bt(CorelensModule):
