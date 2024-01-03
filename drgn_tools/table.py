@@ -58,7 +58,7 @@ def print_table(
             "".join(
                 str(val).ljust(col_width + 2)
                 for (val, col_width) in zip(entry, col_widths)
-            ),
+            ).strip(),
             file=out,
         )
 
