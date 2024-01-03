@@ -15,6 +15,7 @@ from drgn import cast
 from drgn import IntegerLike
 from drgn import Object
 from drgn import Program
+from drgn import sizeof
 from drgn import Symbol
 from drgn import SymbolBinding
 from drgn import SymbolKind
@@ -347,7 +348,7 @@ def decode_param(kp: Object) -> ParamInfo:
         type_ = prog.type(_MOD_PARAM_TYPES[elem_type])
         elem_type = elem_type[len(PREFIX) :]
         param_type = f"{elem_type}[{length}]"
-        if type_.size != kp.arr.elemsize:
+        if sizeof(type_) != kp.arr.elemsize:
             return ParamInfo(name, kp, param_type, None)
         obj = Object(prog, prog.array_type(type_, length), address=kp.arr.elem)
     else:
