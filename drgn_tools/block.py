@@ -16,6 +16,7 @@ from drgn import TypeKind
 from drgn.helpers.common.format import decode_enum_type_flags
 from drgn.helpers.linux.block import for_each_disk
 from drgn.helpers.linux.list import list_for_each_entry
+from drgn.helpers.linux.xarray import xa_for_each
 
 from drgn_tools.bitops import for_each_bit_set
 from drgn_tools.corelens import CorelensModule
@@ -110,11 +111,16 @@ def for_each_hw_queue(q: Object) -> Iterable[Object]:
     """
     if not is_mq(q):
         return
-    prog = q.prog_
-    for i in range(q.nr_hw_queues):
-        yield Object(
-            prog, "struct blk_mq_hw_ctx *", value=q.queue_hw_ctx[i].value_()
-        )
+    try:
+        for i in range(q.nr_hw_queues):
+            yield q.queue_hw_ctx[i]
+    except AttributeError:
+        # Since 4e5cc99e1e48 ("blk-mq: manage hctx map via xarray"), these are
+        # managed with xarray via hctx_table. This was merged in 5.18 and thus
+        # first would first appear in UEK8. Appears to be backported to RHCK in
+        # OL9.
+        for _, voidp in xa_for_each(q.hctx_table):
+            yield cast("struct blk_mq_hw_ctx *", voidp)
 
 
 def for_each_sbitmap_set_bit(sb: Object) -> Iterable[int]:
