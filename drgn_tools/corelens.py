@@ -23,6 +23,7 @@ from typing import Optional
 from typing import Tuple
 
 from drgn import Program
+from drgn import ProgramFlags
 
 from drgn_tools.debuginfo import find_debuginfo
 from drgn_tools.module import get_module_load_summary
@@ -136,6 +137,13 @@ class CorelensModule(abc.ABC):
         When specified, this sets the default command line arguments
         """
         return []
+
+    @property
+    def live_ok(self) -> bool:
+        """
+        Set this to False if the module doesn't support live kernels
+        """
+        return True
 
     def _parse_args(
         self,
@@ -296,6 +304,11 @@ def _check_module_debuginfo(
     errors = []
     warnings = []
     for mod, args in candidate_modules:
+        if (prog.flags & ProgramFlags.IS_LIVE) and not mod.live_ok:
+            warnings.append(
+                f"{mod.name} skipped because it does not support live kernels"
+            )
+            continue
         if mod.need_dwarf and ctf:
             warnings.append(
                 f"{mod.name} skipped because it requires DWARF debuginfo, but "

@@ -347,5 +347,7 @@ class SmpIpiModule(CorelensModule):
 
     name = "smp"
 
+    live_ok = False
+
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         dump_smp_ipi_state(prog)
