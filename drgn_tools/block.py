@@ -59,6 +59,26 @@ def blkdev_ro(bdev: Object) -> bool:
     return bdev.bd_part.policy != 0
 
 
+def blkdev_name(bdev: Object) -> str:
+    """
+    Return block device name
+
+    :param bdev: ``struct block_device *``
+    :returns: device name
+    """
+    if has_member(bdev, "bd_partno"):
+        partno = int(bdev.bd_partno)
+    else:
+        partno = int(bdev.bd_part.partno)
+
+    disk_name = bdev.bd_disk.disk_name.string_().decode()
+    if partno == 0:
+        return disk_name
+    if disk_name[len(disk_name) - 1].isdigit():
+        return disk_name + "p" + str(partno)
+    return disk_name + str(partno)
+
+
 def for_each_request_queue(prog: drgn.Program) -> Iterable[Object]:
     """
     List all request_queue in the system.

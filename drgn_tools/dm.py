@@ -7,11 +7,13 @@ import argparse
 from typing import Iterable
 from typing import Tuple
 
+from drgn import cast
 from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.rbtree import rbtree_inorder_for_each_entry
 
+from drgn_tools.block import blkdev_name
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.table import print_table
@@ -104,6 +106,70 @@ def show_dm(prog: Program) -> None:
     print_table(output)
 
 
+def dm_table(dm: Object) -> Object:
+    """
+    return the ``struct dm_table *``
+
+    There were two definitions of ``struct dm_table`` before commit
+    1d3aa6f683b1("dm: remove dummy definition of 'struct dm_table'")
+    which was included in v4.10, specify file for the correct symbol.
+    """
+    if kernel_version(dm.prog_) < (4, 10, 0):
+        table_type = dm.prog_.type(
+            "struct dm_table *", "drivers/md/dm-table.c"
+        )
+        return cast(table_type, dm.map)
+    else:
+        return cast("struct dm_table *", dm.map)
+
+
+def dm_target_name(dm: Object) -> str:
+    table = dm_table(dm)
+    if table.value_() == 0x0:
+        return "None"
+    return table.targets.type.name.string_().decode()
+
+
+def show_table_linear(dm: Object, name: str) -> None:
+    table = dm_table(dm)
+    for tid in range(table.num_targets):
+        target = table.targets[tid]
+        dev = cast("struct linear_c *", target.private)
+        print(
+            "%s: %d %d linear %d:%d [%s] %d"
+            % (
+                name,
+                int(target.begin),
+                int(target.len),
+                dev.dev.bdev.bd_dev >> 20,
+                dev.dev.bdev.bd_dev & 0xFFFFF,
+                blkdev_name(dev.dev.bdev),
+                dev.start,
+            )
+        )
+
+
+dmtable_handler = {
+    "linear": show_table_linear,
+}
+
+
+def show_dm_table(prog: Program) -> None:
+    for dm, name in for_each_dm(prog):
+        target_name = dm_target_name(dm)
+        if target_name == "None":
+            print("dm %s doesn't have a target" % hex(dm.value_()))
+            continue
+        elif target_name not in dmtable_handler.keys():
+            print(
+                "dm %s used non-support target %s"
+                % (hex(dm.value_()), target_name)
+            )
+            continue
+        else:
+            dmtable_handler[target_name](dm, name)
+
+
 class Dm(CorelensModule):
     """Display info about device mapper devices"""
 
@@ -112,3 +178,4 @@ class Dm(CorelensModule):
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         show_dm(prog)
+        show_dm_table(prog)
