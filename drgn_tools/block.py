@@ -130,18 +130,21 @@ def for_each_sbitmap_set_bit(sb: Object) -> Iterable[int]:
     :param sb: ``struct sbitmap *``
     :returns: each set bit as Iterator
     """
-    index = 0
-    scanned = 0
-    while scanned < sb.depth:
+    # Until 3301bc53358a ("lib/sbitmap: kill 'depth' from sbitmap_word"), there
+    # was a "depth" field inside struct sbitmap_word. However, its value can be
+    # inferred by the index, and so it is no longer present. We can use the new
+    # approach here even on older kernels.
+    depth = 1 << sb.shift
+    for index in range(sb.map_nr):
         sb_word = sb.map[index]
-        depth = sb_word.depth
-        scanned += depth
+        if index == sb.map_nr - 1:
+            depth = sb.depth - (index << sb.shift)
         word = sb_word.word
+        # See commit ea86ea2cdced ("sbitmap: ammortize cost of clearing bits")
         if has_member(sb_word, "cleared"):
             word = word & ~sb_word.cleared
         for nr in for_each_bit_set(word, depth):
-            yield (index << sb.shift) + nr
-        index += 1
+            yield int((index << sb.shift) + nr)
 
 
 def for_each_tag_bt_set_bit(bt: Object) -> Iterable[int]:
