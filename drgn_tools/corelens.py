@@ -145,6 +145,17 @@ class CorelensModule(abc.ABC):
         """
         return True
 
+    @property
+    def run_when(self) -> str:
+        """
+        Specify when this corelens module should be run in reports
+
+        always: whenever -a or -A are specified
+        verbose: whenever -A is specified
+        never: never run by -a or -A. Can still be run via -M
+        """
+        return "always"
+
     def _parse_args(
         self,
         args: Optional[List[str]] = None,
@@ -203,6 +214,7 @@ def all_corelens_modules() -> Dict[str, CorelensModule]:
 def _load_candidate_modules(
     module_args: List[List[str]],
     run_all: bool,
+    run_all_verbose: bool,
 ) -> List[Tuple[CorelensModule, argparse.Namespace]]:
     """
     Load the modules which the user has requested to run.
@@ -216,8 +228,18 @@ def _load_candidate_modules(
     :returns: A list of (corelens) modules to run and their arguments
     """
     all_modules = all_corelens_modules()
-    if run_all:
-        return [(mod, mod._parse_args()) for mod in all_modules.values()]
+    if run_all_verbose:
+        return [
+            (mod, mod._parse_args())
+            for mod in all_modules.values()
+            if mod.run_when != "never"
+        ]
+    elif run_all:
+        return [
+            (mod, mod._parse_args())
+            for mod in all_modules.values()
+            if mod.run_when == "always"
+        ]
     if not module_args:
         sys_mod = all_modules["sys"]
         return [(sys_mod, sys_mod._parse_args())]
@@ -423,7 +445,7 @@ def main() -> None:
         prog="corelens",
         usage=(
             "corelens [-o OUT] vmcore [-M MODULE [options] [-M MODULE ...]]\n"
-            "       corelens [-o OUT] vmcore -A\n"
+            "       corelens [-o OUT] vmcore [-a|-A]\n"
             "       corelens -h           (for help)\n"
             "       corelens -L           (to list modules)\n"
             "       corelens -M MODULE -h (for module-specific help)"
@@ -456,11 +478,18 @@ def main() -> None:
         "--ctf",
         help="CTF archive to load (overrides debuginfo and module search)",
     )
-    parser.add_argument(
-        "-A",
+    grp = parser.add_mutually_exclusive_group()
+    grp.add_argument(
+        "-a",
         action="store_true",
         dest="run_all",
-        help="run all corelens modules for the given verbosity level",
+        help="run almost all of the corelens modules",
+    )
+    grp.add_argument(
+        "-A",
+        action="store_true",
+        dest="run_all_verbose",
+        help="run ALL of the corelens, including those which aren't run by -a",
     )
     parser.add_argument(
         "--output-directory",
@@ -481,7 +510,7 @@ def main() -> None:
     if args.run_all and split_args[1:]:
         sys.exit("error: either specify -A or a list of modules, not both")
     candidate_modules_to_run = _load_candidate_modules(
-        split_args[1:], args.run_all
+        split_args[1:], args.run_all, args.run_all_verbose
     )
 
     if not args.vmcore:
