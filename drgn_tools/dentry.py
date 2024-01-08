@@ -364,8 +364,8 @@ class DentryCache(CorelensModule):
             "--limit",
             "-l",
             type=int,
-            default=10000,
-            help="list at most <number> dentries, 10000 by default",
+            default=50,
+            help="list at most <number> dentries, 50 by default",
         )
         parser.add_argument(
             "--negative",
