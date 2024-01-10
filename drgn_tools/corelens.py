@@ -255,9 +255,12 @@ def _load_candidate_modules(
     return candidate_modules_to_run
 
 
-def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
+def _load_prog_and_debuginfo(args: argparse.Namespace) -> Tuple[Program, bool]:
     """
     Load up the program and debuginfo. Don't attempt extraction.
+
+    :returns: A 2-tuple. The first element is the loaded program, the second
+    element is true when CTF is in use.
     """
     prog = Program()
     try:
@@ -284,7 +287,7 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
         # Found DWARF debuginfo, continue to use that.
         prog.load_debug_info([vmlinux])
         load_module_debuginfo(prog, extract=False, quiet=True)
-        return prog
+        return prog, False
 
     # Try to use CTF debuginfo
     try:
@@ -295,7 +298,7 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
         path = args.ctf or f"/lib/modules/{release}/kernel/vmlinux.ctfa"
         if os.path.isfile(path):
             load_ctf(prog, path)
-            return prog
+            return prog, True
     except ModuleNotFoundError:
         pass
 
@@ -311,7 +314,11 @@ def _check_module_debuginfo(
 ) -> Tuple[
     List[Tuple[CorelensModule, argparse.Namespace]], List[str], List[str]
 ]:
-    summary = get_module_load_summary(prog)
+    # When running with CTF debuginfo, there's no need to check which modules
+    # have debuginfo: CTF contains info for every module. Thus, skip the module
+    # load summary, which may not be cheap.
+    if not ctf:
+        summary = get_module_load_summary(prog)
 
     # Now we check whether module requirements are satisfied. Some kmods may not
     # be present in the kernel at all, whereas others are present, but with no
@@ -319,39 +326,56 @@ def _check_module_debuginfo(
     # the kmod is present but with no debuginfo, log an error but continue to
     # run the remainder.
     all_kmod_names = set(km.name for km in KernelModule.all(prog))
-    loaded_kmods = set(km.name for km in summary.loaded_mods)
-    missing_kmods = set(km.name for km in summary.missing_mods)
+    if not ctf:
+        loaded_kmods = set(km.name for km in summary.loaded_mods)
+        missing_kmods = set(km.name for km in summary.missing_mods)
 
     modules_to_run = []
     errors = []
     warnings = []
     for mod, args in candidate_modules:
+        # Corelens modules which don't support live kernels are skipped
+        # immediately
         if (prog.flags & ProgramFlags.IS_LIVE) and not mod.live_ok:
             warnings.append(
                 f"{mod.name} skipped because it does not support live kernels"
             )
             continue
+
+        # Corelens modules requiring DWARF can't be run when using CTF
         if mod.need_dwarf and ctf:
             warnings.append(
                 f"{mod.name} skipped because it requires DWARF debuginfo, but "
                 "CTF is loaded instead"
             )
             continue
-        if mod.skip_unless_have_kmod is not None:
-            # Skip, it is not present in the kernel
-            if mod.skip_unless_have_kmod not in all_kmod_names:
-                warnings.append(
-                    f"{mod.name} skipped because '{mod.skip_unless_have_kmod}'"
-                    " was not loaded in the kernel"
-                )
-                continue
-            # Error, it is present but not loaded
-            if mod.skip_unless_have_kmod not in loaded_kmods:
-                errors.append(
-                    f"{mod.name} skipped because '{mod.skip_unless_have_kmod}'"
-                    " did not have debuginfo loaded"
-                )
-                continue
+
+        # Corelens modules that depend on a particular subsystem module being
+        # present, should should be skipped if it is not present.
+        if mod.skip_unless_have_kmod is not None and (
+            mod.skip_unless_have_kmod not in all_kmod_names
+        ):
+            warnings.append(
+                f"{mod.name} skipped because '{mod.skip_unless_have_kmod}'"
+                " was not loaded in the kernel"
+            )
+            continue
+
+        # At this point, all that's remaining to do is check whether the
+        # necessary DWARF debuginfo files are loaded for this Corelens module.
+        # If we're using CTF, we can skip this and move on.
+        if ctf:
+            modules_to_run.append((mod, args))
+            continue
+
+        if mod.skip_unless_have_kmod is not None and (
+            mod.skip_unless_have_kmod not in loaded_kmods
+        ):
+            errors.append(
+                f"{mod.name} skipped because '{mod.skip_unless_have_kmod}'"
+                " did not have debuginfo loaded"
+            )
+            continue
         skip = False
         for missing_dbinfo in missing_kmods:
             for pattern in mod.debuginfo_kmods:
@@ -517,9 +541,9 @@ def main() -> None:
         parser.print_usage()
         sys.exit("error: specify a vmcore or /proc/kcore, or a help option")
 
-    prog = _load_prog_and_debuginfo(args)
+    prog, ctf = _load_prog_and_debuginfo(args)
     modules_to_run, errors, warnings = _check_module_debuginfo(
-        candidate_modules_to_run, prog
+        candidate_modules_to_run, prog, ctf=ctf
     )
 
     out_dir: Optional[Path] = None
