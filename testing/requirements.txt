@@ -1,5 +1,5 @@
 #dataclasses  # backport for <3.8
-oci>=2.23.2  # upload manager thread safety
+oci>=2.23.2,<2.118.1  # upload manager thread safety, temporary pin due to python-pkcs11 build failure
 oci-cli
 paramiko
 rich
