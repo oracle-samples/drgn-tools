@@ -6,6 +6,39 @@ Unreleased
 
 Changes which are committed to git, but not yet released, may appear here.
 
+0.7.0 - Tue, Jan 9, 2023
+------------------------
+
+This is another intermediate release prior to the anticipated 1.0.0. It contains
+new corelens modules and an improved Corelens CLI, along with some bug and
+performance fixes.
+
+### Added
+
+- Corelens modules & helpers added:
+  - `runq` corelens module
+  - `lsmod` corelens module
+  - `blockinfo` corelens module
+  - `scsiinfo` corelens module
+  - `filecache` corelens module
+
+### Changed
+
+- The `ps` corelens module now supports regular output fields
+- The Corelens CLI has the following changes:
+  - When run without args, shows a usage summary
+  - When run without specifying modules, shows the `sys` output
+  - The `-a` and `-A` arguments are used to run all modules
+  - CTF is loaded automatically when DWARF is unavailable
+- Corelens modules may now be skipped if they don't support live kernels
+
+### Fixed
+
+- Performance issues related to `have_debuginfo()` is greatly reduced, especially
+  when using CTF.
+- Several block & NVME helpers are updated to work with RHCK 9.
+
+
 0.6.0 - Tue, Dec 5, 2023
 ------------------------
 
