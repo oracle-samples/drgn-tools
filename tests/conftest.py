@@ -1,5 +1,6 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import os
 import sys
 from fnmatch import fnmatch
 from pathlib import Path
@@ -24,8 +25,12 @@ def prog() -> drgn.Program:
     p = drgn.Program()
     if VMCORE:
         p.set_core_dump(VMCORE)
-    else:
+    elif os.geteuid() == 0:
         p.set_kernel()
+    else:
+        from drgn.internal.sudohelper import open_via_sudo
+
+        p.set_core_dump(open_via_sudo("/proc/kcore", os.O_RDONLY))
     if CTF:
         try:
             from drgn.helpers.linux.ctf import load_ctf
