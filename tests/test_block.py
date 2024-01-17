@@ -1,6 +1,7 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -13,6 +14,8 @@ from drgn_tools import block
 
 @pytest.fixture(scope="module")
 def fio(prog_type):
+    if not shutil.which("fio"):
+        pytest.skip("fio is not available")
     if "DRGNTOOLS_BLOCK_TEST_DIR" in os.environ:
         path = Path(os.environ["DRGNTOOLS_BLOCK_TEST_DIR"])
     else:
