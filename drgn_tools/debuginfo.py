@@ -17,6 +17,7 @@ drgn or drgn-tools or third-party modules.
 """
 import abc
 import argparse
+import enum
 import itertools
 import os
 import re
@@ -615,6 +616,69 @@ def extract_rpm(
         for module in extracted
     }
     return result
+
+
+class CtfCompatibility(enum.Enum):
+    YES = "YES"
+    """CTF is fully compatible: symbol lookup, types, and stack traces"""
+    LIMITED_PROC = "LIMITED_PROC"
+    """Only compatible for live kernels as root using /proc/kallsyms"""
+    LIMITED_STACK = "LIMITED_STACK"
+    """Limited compatibility - stack tracing not currently supported"""
+    NO = "NO"
+    """Functionality is not available"""
+
+    @classmethod
+    def get(cls, kver: KernelVersion, host_ol: int) -> "CtfCompatibility":
+        # At this point, only UEK kernels have CTF debuginfo.
+        if not kver.is_uek or kver.uek_version is None:
+            return cls.NO
+
+        # Prior to UEK4, it is untested and will not be tested.
+        if kver.uek_version < 4:
+            return cls.NO
+
+        # The OL7 libctf version does not support CTF generated for kernels on
+        # later OL versions.
+        if host_ol == 7 and kver.ol_version > 7:
+            return cls.NO
+
+        # For OL8, UEK6, the CTF generation process produced buggy data. The
+        # data was fixed starting in 5.4.17-2136.323.1: all prior versions are
+        # fully broken.
+        if (
+            kver.ol_version == 8
+            and kver.uek_version == 6
+            and kver.release_tuple < (2136, 323, 1)
+        ):
+            return cls.NO
+
+        # Kernel commit f09bddbd8661 ("vmcoreinfo: add kallsyms_num_syms
+        # symbol") and its dependent commits are required in order to read
+        # kallsyms data directly out of the vmcore. Prior to that, only live
+        # /proc/kallsyms was supported. The commit was merged in 6.0 and
+        # backported to UEK5. The following releases are minimally required:
+        kallsyms_backport = {
+            5: (2047, 518, 0),
+            6: (2136, 312, 2),
+            7: (3, 60, 2),
+        }
+        if kver.uek_version == 4:
+            return cls.LIMITED_PROC
+        elif (
+            kver.uek_version < 8
+            and kver.release_tuple < kallsyms_backport[kver.uek_version]
+        ):
+            return cls.LIMITED_PROC
+
+        # The ORC unwinder is configured for UEK7 and later. Drgn contains
+        # support for unwinding using ORC as a backup format, but currently, the
+        # CTF implementation can't make use of that. Therefore, UEK7 and later
+        # with x86_64 have no stack trace support.
+        if kver.uek_version >= 7 and kver.arch == "x86_64":
+            return cls.LIMITED_STACK
+
+        return cls.YES
 
 
 _epilog = """

@@ -13,13 +13,31 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import Dict
 from typing import List
+
+from drgn_tools.debuginfo import CtfCompatibility
+from drgn_tools.debuginfo import KernelVersion
 
 
 CORE_DIR = Path.cwd() / "testdata/vmcores"
 
 
-def vmcore_test(vmcore: str, ctf: bool = False, coverage: bool = False) -> str:
+def vmcore_test(
+    vmcore: str, ctf: bool = False, coverage: bool = False, host_ol: int = 9
+) -> str:
+    uname = CORE_DIR / vmcore / "UTS_RELEASE"
+    with uname.open() as f:
+        release = f.read().strip()
+
+    kver = KernelVersion.parse(release)
+    compat = CtfCompatibility.get(kver, host_ol)
+    if ctf and compat not in (
+        CtfCompatibility.YES,
+        CtfCompatibility.LIMITED_STACK,
+    ):
+        return "skip (CTF not compatible)"
+
     ctf_path = CORE_DIR / vmcore / "vmlinux.ctfa"
     if ctf and not ctf_path.exists():
         return "skip (CTF not available)"
@@ -63,9 +81,21 @@ def do_test(
         return "pass"
 
 
-def live_test(ctf: bool = False, coverage: bool = False) -> str:
+def live_test(
+    ctf: bool = False, coverage: bool = False, host_ol: int = 9
+) -> str:
     release = os.uname().release
     kind = "CTF" if ctf else "DWARF"
+    kver = KernelVersion.parse(release)
+    compat = CtfCompatibility.get(kver, host_ol)
+
+    # We can run when CTF is compatible
+    if ctf and compat == CtfCompatibility.NO:
+        return "skip (CTF not compatible)"
+    elif ctf and compat == CtfCompatibility.LIMITED_PROC and os.geteuid() != 0:
+        return "skip (CTF requires /proc/kallsyms)"
+    # YES and LIMITED_STACK will work for testing
+
     if ctf:
         path = f"/lib/modules/{release}/kernel/vmlinux.ctfa"
     else:
@@ -73,6 +103,18 @@ def live_test(ctf: bool = False, coverage: bool = False) -> str:
     if not os.path.exists(path):
         return f"skip ({kind} not available)"
     return do_test("LIVE", [], ctf=ctf, coverage=coverage)
+
+
+def osrelease() -> Dict[str, str]:
+    res = {}
+    with open("/etc/os-release") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                key, qval = line.split("=", 1)
+                # Remove double quotes. Doesn't handle escape sequences, oh well.
+                res[key] = qval[1:-1]
+    return res
 
 
 def main() -> None:
@@ -126,6 +168,14 @@ def main() -> None:
         if p.is_dir() and (p / "vmcore").is_file()
     ]
 
+    rel = osrelease()
+    ol_ver = 9  # pretend unless we know better
+    if "Oracle" in rel["NAME"]:
+        ol_ver = int(rel["VERSION"].split(".", 1)[0])
+        print(f"Detected host OL version: {ol_ver}")
+    else:
+        print("Assuming OL 9")
+
     def should_run_vmcore(name: str) -> bool:
         if not args.cores:
             return True
@@ -147,24 +197,26 @@ def main() -> None:
     results = defaultdict(list)
     for core in cores:
         if args.dwarf:
-            res = vmcore_test(core, coverage=args.coverage)
+            res = vmcore_test(core, coverage=args.coverage, host_ol=ol_ver)
             results[res].append(f"{core} (DWARF)")
             if "fail" in res or "error" in res:
                 fail = True
 
         if args.ctf:
-            res = vmcore_test(core, ctf=True, coverage=args.coverage)
+            res = vmcore_test(
+                core, ctf=True, coverage=args.coverage, host_ol=ol_ver
+            )
             results[res].append(f"{core} (CTF)")
             if "fail" in res or "error" in res:
                 fail = True
 
     if args.live:
-        res = live_test(coverage=args.coverage)
+        res = live_test(coverage=args.coverage, host_ol=ol_ver)
         results[res].append("live (DWARF)")
         if "fail" in res or "error" in res:
             fail = True
 
-        res = live_test(ctf=True, coverage=args.coverage)
+        res = live_test(ctf=True, coverage=args.coverage, host_ol=ol_ver)
         results[res].append("live (CTF)")
         if "fail" in res or "error" in res:
             fail = True
