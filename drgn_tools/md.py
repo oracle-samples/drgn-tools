@@ -239,8 +239,14 @@ def show_raid1_info(prog: Program, mddev: Object) -> None:
     )
     print("%-10s: %d" % ("pending-io", raid1_nr_value(conf.nr_pending)))
     pending_count = conf.pending_count
-    max_queued_requests = prog["max_queued_requests"]
-    congested = True if pending_count >= max_queued_requests else False
+    max_queued_requests = None
+    try:
+        max_queued_requests = prog["max_queued_requests"]
+        congested = pending_count >= max_queued_requests
+    except KeyError:
+        # 9a3abe191fd6 ("md: drop queue limitation for RAID1 and RAID10")
+        # removes this variable, only report if it exists
+        congested = False
     if congested:
         msg = (
             "%-10s: Yes, processes will be stuck when issuing write io."
@@ -253,10 +259,11 @@ def show_raid1_info(prog: Program, mddev: Object) -> None:
         "%-10s: %d writes queued for raid1 thread to handle"
         % (" ", pending_count)
     )
-    print(
-        "%-10s: max allowed queued requests are %d"
-        % (" ", max_queued_requests)
-    )
+    if max_queued_requests is not None:
+        print(
+            "%-10s: max allowed queued requests are %d"
+            % (" ", max_queued_requests)
+        )
 
 
 def show_md(prog: Program) -> None:
