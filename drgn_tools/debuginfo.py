@@ -33,6 +33,7 @@ from typing import List
 from typing import Mapping
 from typing import NamedTuple
 from typing import Optional
+from typing import Tuple
 from typing import TYPE_CHECKING
 from typing import Union
 from urllib.error import HTTPError
@@ -426,6 +427,20 @@ def find_debuginfo(
     return _find_debuginfo(paths, mod)
 
 
+# Mapping of kernel version (without release) to the UEK major version. The
+# kernel version 3-tuple never changes throughout a UEK release.
+_UEK_VER = {
+    "2.6.32": 1,
+    "2.6.39": 2,
+    "3.8.13": 3,
+    "4.1.12": 4,
+    "4.14.35": 5,
+    "5.4.17": 6,
+    "5.15.0": 7,
+    "6.6.0": 8,
+}
+
+
 class KernelVersion(NamedTuple):
     version: str
     """
@@ -436,6 +451,8 @@ class KernelVersion(NamedTuple):
     """
     release: str
     """The packaging release version (the stuff after the hyphen)."""
+    release_tuple: Tuple[int, ...]
+    """The release version, split into integer groups for easy comparison."""
     ol_version: int
     """The Oracle Linux distribution version"""
     ol_update: Optional[int]
@@ -457,6 +474,8 @@ class KernelVersion(NamedTuple):
 
     is_uek: bool
     """Whether the kernel is a UEK kernel."""
+    uek_version: Optional[int]
+    """The major version of the UEK release, if applicable."""
 
     @classmethod
     def parse(cls, original: str) -> "KernelVersion":
@@ -481,12 +500,19 @@ class KernelVersion(NamedTuple):
             raise ValueError(
                 "Could not understand kernel version string: " + original
             )
+        release_tuple = tuple(
+            int(g) for g in re.split("[.-]", match["release"])
+        )
         update = None
         if match["update"]:
             update = int(match["update"])
+        uek_ver = None
+        if match["extra"].startswith("uek"):
+            uek_ver = _UEK_VER.get(match["version"])
         return cls(
             match["version"],
             match["release"],
+            release_tuple,
             int(match.group("ol_version")),
             update,
             match["arch"],
@@ -494,6 +520,7 @@ class KernelVersion(NamedTuple):
             match["extraversion1"] or "",
             match["extraversion2"] or "",
             match["extra"].startswith("uek"),
+            uek_ver,
         )
 
     def oraclelinux_debuginfo_rpm(self) -> str:
