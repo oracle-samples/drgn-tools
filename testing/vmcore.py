@@ -210,7 +210,11 @@ def upload_all(client: ObjectStorageClient, core: str) -> None:
     vmcore_path = core_path / "vmcore"
     if not vmlinux_path.exists() or not vmcore_path.exists():
         sys.exit("error: missing vmcore or vmlinux file")
-    uploads = [vmlinux_path, vmcore_path] + list(core_path.glob("*.ko.debug"))
+    uname = core_path / "UTS_RELEASE"
+    if not uname.exists():
+        sys.exit("error: missing UTS_RELEASE file")
+    uploads = [vmlinux_path, vmcore_path, uname]
+    uploads += list(core_path.glob("*.ko.debug"))
     uploads += list(core_path.glob("vmlinux.ctfa*"))
     object_to_size = {obj.name: obj.size for obj in all_objects(client)}
     with progress, ThreadPoolExecutor(max_workers=4) as pool:
