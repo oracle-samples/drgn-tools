@@ -38,7 +38,10 @@ def frame_name(prog: drgn.Program, frame: drgn.StackFrame) -> str:
     # Check whether the address is kernel text, and if so, don't do the module
     # lookup.
     mod = None
-    kind = AddrKind.categorize(prog, frame.pc)
+    try:
+        kind = AddrKind.categorize(prog, frame.pc)
+    except LookupError:
+        return "???"  # LookupError: program counter is not known
     if kind not in (AddrKind.TEXT, AddrKind.INITTEXT):
         mod = KernelModule.lookup_address(prog, frame.pc)
 
@@ -263,9 +266,13 @@ def print_frames(
     for i, frame in enumerate(trace):
         sp = frame.sp  # drgn 0.0.22
         intr = "!" if frame.interrupted else " "
+        try:
+            pc = hex(frame.pc)
+        except LookupError:
+            pc = "???"
         name = frame_name(prog, frame)
         idx = start_idx + i
-        out_line = f"{intr}#{idx:2d} [{sp:x}] {name} at {frame.pc:x}"
+        out_line = f"{intr}#{idx:2d} [{sp:x}] {name} at {pc}"
         try:
             file_, line, col = frame.source()
             out_line += f" {file_}:{line}:{col}"
