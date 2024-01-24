@@ -89,6 +89,14 @@ drgn\_tools.dentry module
    :undoc-members:
    :show-inheritance:
 
+drgn\_tools.dm module
+---------------------
+
+.. automodule:: drgn_tools.dm
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 drgn\_tools.ext4\_dirlock module
 --------------------------------
 
@@ -141,6 +149,14 @@ drgn\_tools.logging module
 --------------------------
 
 .. automodule:: drgn_tools.logging
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.lsmod module
+------------------------
+
+.. automodule:: drgn_tools.lsmod
    :members:
    :undoc-members:
    :show-inheritance:
@@ -209,6 +225,14 @@ drgn\_tools.nvme module
    :undoc-members:
    :show-inheritance:
 
+drgn\_tools.partition module
+----------------------------
+
+.. automodule:: drgn_tools.partition
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 drgn\_tools.printk module
 -------------------------
 
@@ -221,6 +245,30 @@ drgn\_tools.rds module
 ----------------------
 
 .. automodule:: drgn_tools.rds
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.runq module
+-----------------------
+
+.. automodule:: drgn_tools.runq
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.scsi module
+-----------------------
+
+.. automodule:: drgn_tools.scsi
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+drgn\_tools.slabinfo module
+---------------------------
+
+.. automodule:: drgn_tools.slabinfo
    :members:
    :undoc-members:
    :show-inheritance:
