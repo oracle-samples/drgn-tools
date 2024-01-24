@@ -1,4 +1,4 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 Helper to view slabinfo data
@@ -6,6 +6,7 @@ Helper to view slabinfo data
 import argparse
 from typing import NamedTuple
 from typing import Set
+from typing import Tuple
 
 from drgn import cast
 from drgn import NULL
@@ -41,15 +42,18 @@ class SlabCacheInfo(NamedTuple):
     """Name of the slab cache"""
 
 
-def kmem_cache_pernode(cache: Object, nodeid: int) -> tuple:
+def kmem_cache_pernode(
+    cache: Object, nodeid: int
+) -> Tuple[int, int, int, int, int]:
     """
     Get number of slabs, objects and partial object per node
     traverse though the partial list of node
     and count the number of partial objects
 
-    :param cache: `struct kmem_cache` drgn object
+    :param cache: ``struct kmem_cache`` drgn object
     :param nodeid: node index
-    "returns: a tuple with node information
+    :returns: per-node counts of (all slabs, all objects, partial slabs, in-use
+      objects, free objects)
     """
     nr_slabs = 0
     nr_total_objs = 0
@@ -85,7 +89,7 @@ def kmem_cache_percpu(cache: Object) -> int:
     """
     Count the number of cpu_slab pages for all nodes.
 
-    :param: `struct kmem_cache` drgn object
+    :param: ``struct kmem_cache`` drgn object
     """
 
     cpu_per_node = 0
@@ -103,12 +107,13 @@ def kmem_cache_percpu(cache: Object) -> int:
     return cpu_per_node
 
 
-def collect_node_info(cache: Object) -> tuple:
+def collect_node_info(cache: Object) -> Tuple[int, int, int, int, int]:
     """
     Parse through each node to collect per-node slab data
 
-    :param: `struct kmem_cache` drgn object
-    :returns: a tuple containing per-node slab data
+    :param: ``struct kmem_cache`` drgn object
+    :returns: a tuple containing counts of (all slabs, all objects, partial
+      slabs, in-use objects, free objects)
     """
     nr_slabs = 0
     nr_total_objs = 0
@@ -137,8 +142,8 @@ def slub_get_cpu_freelist_cnt(
     """
     Get number of elements in percpu freelist
 
-    :param slab_cache: `struct kmem_cache` drgn object
-    :param cpu_freelist: `void**` pointer to next available object
+    :param slab_cache: ``struct kmem_cache`` drgn object
+    :param cpu_freelist: ``void**`` pointer to next available object
     :param slub_helper: slab cache helper object
     :returns: the count of per cpu free objects
     """
@@ -152,8 +157,8 @@ def slub_per_cpu_partial_free(cpu_partial: Object) -> int:
     """
     Get the partial free from percpu partial list
 
-    :param cpu_partial: `struct page` drgn object
-        of kmem_cache->cpu_slab->partial list
+    :param cpu_partial: ``struct page`` drgn object
+        of ``kmem_cache->cpu_slab->partial`` list
     :returns: free objects from partial list
     """
 
@@ -170,12 +175,12 @@ def slub_per_cpu_partial_free(cpu_partial: Object) -> int:
     return partial_free
 
 
-def kmem_cache_slub_info(cache: Object) -> tuple:
+def kmem_cache_slub_info(cache: Object) -> Tuple[int, int]:
     """
     For given kmem_cache object, parse through each cpu
-    and get number of total slabs and  free objects
+    and get number of total slabs and free objects
 
-    :param: `struct kmem_cache` drgn object
+    :param: ``struct kmem_cache`` drgn object
     :returns: total slabs, free objects
     """
     prog = cache.prog_
@@ -214,9 +219,8 @@ def get_kmem_cache_slub_info(cache: Object) -> SlabCacheInfo:
     """
     Get slab information for given slab cache
 
-    :param cache: `struct kmem_cache` drgn object
-    :returns: a namedtuple SlabCacheInfo that describes
-        summary info about a slab cache
+    :param cache: ``struct kmem_cache`` drgn object
+    :returns: a :class:`SlabCacheInfo` with statistics about the cache
     """
     total_slabs, free_objects = kmem_cache_slub_info(cache)
     (
@@ -247,9 +251,7 @@ def get_kmem_cache_slub_info(cache: Object) -> SlabCacheInfo:
 
 
 def print_slab_info(prog: Program) -> None:
-    """
-    Helper to print slab information
-    """
+    """Helper to print slab information"""
     output = [
         ["CACHE", "OBJSIZE", "ALLOCATED", "TOTAL", "SLABS", "SSIZE", "NAME"]
     ]
@@ -270,9 +272,7 @@ def print_slab_info(prog: Program) -> None:
 
 
 class SlabInfo(CorelensModule):
-    """
-    Corelens Module for slabinfo
-    """
+    """Print info about each slab cache"""
 
     name = "slabinfo"
 
