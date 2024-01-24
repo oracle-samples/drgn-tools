@@ -34,20 +34,22 @@ from drgn_tools.taint import Taint
 
 
 __all__ = (
-    "ensure_debuginfo",
-    "load_module_debuginfo",
+    "KernelModule",
     "ModuleLayout",
+    "ParamInfo",
+    "address_to_module",
+    "ensure_debuginfo",
+    "find_module",
+    "for_each_module",
+    "load_module_debuginfo",
     "module_address_region",
+    "module_build_id",
+    "module_exports",
     "module_init_region",
+    "module_params",
     "module_percpu_region",
     "module_symbols",
-    "module_exports",
     "module_unified_symbols",
-    "for_each_module",
-    "find_module",
-    "address_to_module",
-    "KernelModule",
-    "module_build_id",
 )
 
 
@@ -282,9 +284,13 @@ class ParamInfo(NamedTuple):
     """Contains information about a kernel module parameter"""
 
     name: str
+    """Name of the parameter"""
     kernel_param: Object
+    """The ``struct kernel_param *`` of this parameter"""
     type_name: str
+    """Type name (e.g. byte, short, uint)"""
     value: Optional[Object]
+    """If possible, the parameter's decoded value"""
 
 
 _MOD_PARAM_TYPES = {
