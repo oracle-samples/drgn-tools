@@ -17,7 +17,7 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.itertools import count
 from drgn_tools.itertools import take
-from drgn_tools.table import print_row
+from drgn_tools.table import FixedTable
 from drgn_tools.util import kernel_version
 
 
@@ -222,37 +222,41 @@ def print_dentry_table(
 
     :param dentries: Any iterable of ``struct dentry *``
     """
+
     if refcount:
-        col_widths = [16] * 3 + [5, 4, 0]
-        print_row(
-            ["DENTRY", "SUPER_BLOCK", "INODE", "REFCOUNT", "TYPE", "PATH"],
-            col_widths,
+        table = FixedTable(
+            [
+                "DENTRY:016x",
+                "SUPER_BLOCK:016x",
+                "INODE:016x",
+                "CNT:>",
+                "TYPE",
+                "PATH",
+            ]
         )
     else:
-        col_widths = [16] * 3 + [4, 0]
-        print_row(
-            ["DENTRY", "SUPER_BLOCK", "INODE", "TYPE", "PATH"], col_widths
+        table = FixedTable(
+            ["DENTRY:016x", "SUPER_BLOCK:016x", "INODE:016x", "TYPE", "PATH"]
         )
     for d in dentries:
         file_type = __file_type(int(d.d_inode.i_mode)) if d.d_inode else "NONE"
         if refcount:
-            row = [
-                f"{d.value_():016x}",
-                f"{d.d_sb.value_():016x}",
-                f"{d.d_inode.value_():016x}",
-                str(int(d_count(d))),
+            table.row(
+                d.value_(),
+                d.d_sb.value_(),
+                d.d_inode.value_(),
+                int(d_count(d)),
                 file_type,
                 dentry_path_any_mount(d).decode(),
-            ]
+            )
         else:
-            row = [
-                f"{d.value_():016x}",
-                f"{d.d_sb.value_():016x}",
-                f"{d.d_inode.value_():016x}",
+            table.row(
+                d.value_(),
+                d.d_sb.value_(),
+                d.d_inode.value_(),
                 file_type,
                 dentry_path_any_mount(d).decode(),
-            ]
-        print_row(row, col_widths)
+            )
 
 
 def dentry_is_used(dentry: Object) -> bool:
