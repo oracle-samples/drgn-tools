@@ -20,7 +20,7 @@ from drgn.helpers.linux.slab import _get_slab_cache_helper
 from drgn.helpers.linux.slab import for_each_slab_cache
 
 from drgn_tools.corelens import CorelensModule
-from drgn_tools.table import print_table
+from drgn_tools.table import FixedTable
 
 
 class SlabCacheInfo(NamedTuple):
@@ -252,23 +252,29 @@ def get_kmem_cache_slub_info(cache: Object) -> SlabCacheInfo:
 
 def print_slab_info(prog: Program) -> None:
     """Helper to print slab information"""
-    output = [
-        ["CACHE", "OBJSIZE", "ALLOCATED", "TOTAL", "SLABS", "SSIZE", "NAME"]
-    ]
+    table = FixedTable(
+        [
+            "CACHE:016x",
+            "OBJSIZE:>",
+            "ALLOCATED:>",
+            "TOTAL:>",
+            "SLABS:>",
+            "SSIZE:>",
+            "NAME",
+        ]
+    )
     for cache in for_each_slab_cache(prog):
         slabinfo = get_kmem_cache_slub_info(cache)
-        output.append(
-            [
-                hex(slabinfo.cache.value_()),
-                str(slabinfo.objsize),
-                str(slabinfo.allocated),
-                str(slabinfo.total),
-                str(slabinfo.nr_slabs),
-                f"{int(slabinfo.ssize / 1024)}k",
-                slabinfo.name,
-            ]
+        table.row(
+            slabinfo.cache.value_(),
+            slabinfo.objsize,
+            slabinfo.allocated,
+            slabinfo.total,
+            slabinfo.nr_slabs,
+            f"{int(slabinfo.ssize / 1024)}k",
+            slabinfo.name,
         )
-    print_table(output)
+    table.write()
 
 
 class SlabInfo(CorelensModule):
