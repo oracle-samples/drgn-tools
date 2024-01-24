@@ -18,7 +18,7 @@ def for_each_module_use(source_list_addr: Object) -> Iterable[Object]:
     """
     Provide the list of ``struct module_use`` as an iterable object
 
-    :param source_list_addr: ``struct module_use.source_list `` Object.
+    :param source_list_addr: ``struct module_use.source_list`` Object.
     :returns: A list of ``struct module.source_list`` as an iterable object
     """
     return list_for_each_entry(
