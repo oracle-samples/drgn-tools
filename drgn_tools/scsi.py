@@ -6,6 +6,7 @@ Helper to print scsi hosts
 import argparse
 from typing import Iterator
 
+import drgn
 from drgn import container_of
 from drgn import Object
 from drgn import Program
@@ -13,6 +14,7 @@ from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_table
+from drgn_tools.util import has_member
 
 
 def for_each_scsi_host(prog: Program) -> Iterator[Object]:
@@ -40,13 +42,45 @@ def for_each_scsi_host(prog: Program) -> Iterator[Object]:
             yield container_of(dev, "struct Scsi_Host", "shost_dev")
 
 
+def host_module_name(shost: Object) -> str:
+    """
+    Fetch the module name associated with the scsi host.
+    returns: the module name string.
+    """
+    try:
+        name = shost.hostt.module.name.string_().decode()
+    except drgn.FaultError:
+        name = "unknown"
+    return name
+
+
 def print_scsi_hosts(prog: Program) -> None:
     """
     Prints scsi host information
     """
-    output = [["HOST", "NAME"]]
-    for x in for_each_scsi_host(prog):
-        output.append([hex(x.value_()), f"host{x.host_no.value_()}"])
+    output = [
+        ["SCSI_HOST", "NAME", "DRIVER", "Busy", "Blocked", "Fail", "State"]
+    ]
+    for shost in for_each_scsi_host(prog):
+        """
+        Since 6eb045e092ef ("scsi: core: avoid host-wide host_busy counter for scsi_mq"),
+        host_busy is no longer a member of struct Scsi_Host.
+        """
+        if has_member(shost, "host_busy"):
+            host_busy = shost.host_busy.counter.value_()
+        else:
+            host_busy = "n/a"
+        output.append(
+            [
+                hex(shost.value_()),
+                f"host{shost.host_no.value_()}",
+                host_module_name(shost),
+                host_busy,
+                shost.host_blocked.counter.value_(),
+                shost.host_failed.value_(),
+                shost.shost_state.format_(type_name=False),
+            ]
+        )
     print_table(output)
 
 
