@@ -9,9 +9,9 @@ from typing import Set
 from typing import Tuple
 
 from drgn import cast
-from drgn import NULL
 from drgn import Object
 from drgn import Program
+from drgn import Type
 from drgn.helpers.linux.cpumask import for_each_present_cpu
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.nodemask import for_each_online_node
@@ -42,6 +42,27 @@ class SlabCacheInfo(NamedTuple):
     """Name of the slab cache"""
 
 
+def _slab_type(prog: Program) -> Type:
+    # Since commit bb192ed9aa71 ("mm/slub: Convert most struct page to struct
+    # slab by spatch"), merged in 5.17, we use "struct slab" rather than "struct
+    # page" throughout the slab subsystem. This helper, and _has_struct_slab()
+    # below, help us to make that change mostly invisible.
+    try:
+        return prog.type("struct slab *")
+    except LookupError:
+        return prog.type("struct page *")
+
+
+def _has_struct_slab(prog: Program) -> bool:
+    if "has_struct_slab" not in prog.cache:
+        try:
+            prog.type("struct slab")
+            prog.cache["has_struct_slab"] = True
+        except LookupError:
+            prog.cache["has_struct_slab"] = False
+    return prog.cache["has_struct_slab"]
+
+
 def kmem_cache_pernode(
     cache: Object, nodeid: int
 ) -> Tuple[int, int, int, int, int]:
@@ -70,11 +91,15 @@ def kmem_cache_pernode(
     nr_total_objs = kmem_cache_node.total_objects.counter.value_()
     nr_partial = kmem_cache_node.nr_partial.value_()
 
-    page = Object(prog, "struct page", address=0x0)
-    partial_slab_list = "slab_list" if hasattr(page, "slab_list") else "lru"
+    # Either struct page, or struct slab
+    slab_type = _slab_type(prog).type
+    if slab_type.has_member("slab_list"):
+        partial_slab_list = "slab_list"
+    else:
+        partial_slab_list = "lru"
 
     for page in list_for_each_entry(
-        "struct page", kmem_cache_node.partial.address_of_(), partial_slab_list
+        slab_type, kmem_cache_node.partial.address_of_(), partial_slab_list
     ):
         nrobj = page.objects.value_()
         nrinuse = page.inuse.value_()
@@ -94,11 +119,14 @@ def kmem_cache_percpu(cache: Object) -> int:
 
     cpu_per_node = 0
     prog = cache.prog_
-    cpu_slab_ptr = NULL
+    use_slab = _has_struct_slab(prog)
 
     for cpuid in for_each_present_cpu(prog):
         per_cpu_slab = per_cpu_ptr(cache.cpu_slab, cpuid)
-        cpu_slab_ptr = per_cpu_slab.page
+        if use_slab:
+            cpu_slab_ptr = per_cpu_slab.slab
+        else:
+            cpu_slab_ptr = per_cpu_slab.page
 
         if not cpu_slab_ptr:
             continue
@@ -157,15 +185,16 @@ def slub_per_cpu_partial_free(cpu_partial: Object) -> int:
     """
     Get the partial free from percpu partial list
 
-    :param cpu_partial: ``struct page`` drgn object
+    :param cpu_partial: ``struct page *`` or ``struct slab *`` drgn object
         of ``kmem_cache->cpu_slab->partial`` list
     :returns: free objects from partial list
     """
 
     partial_free = partial_objects = partial_inuse = 0
+    type_ = _slab_type(cpu_partial.prog_)
 
     while cpu_partial:
-        page = cast("struct page *", cpu_partial)
+        page = cast(type_, cpu_partial)
 
         partial_objects = page.objects.value_()
         partial_inuse = page.inuse.value_()
@@ -184,6 +213,7 @@ def kmem_cache_slub_info(cache: Object) -> Tuple[int, int]:
     :returns: total slabs, free objects
     """
     prog = cache.prog_
+    use_slab = _has_struct_slab(prog)
 
     total_slabs = objects = free_objects = 0
     slub_helper = _get_slab_cache_helper(cache)
@@ -191,7 +221,10 @@ def kmem_cache_slub_info(cache: Object) -> Tuple[int, int]:
     for cpuid in for_each_present_cpu(prog):
         per_cpu_slab = per_cpu_ptr(cache.cpu_slab, cpuid)
         cpu_freelist = per_cpu_slab.freelist
-        cpu_slab_ptr = per_cpu_slab.page
+        if use_slab:
+            cpu_slab_ptr = per_cpu_slab.slab
+        else:
+            cpu_slab_ptr = per_cpu_slab.page
         cpu_partial = per_cpu_slab.partial
 
         if not cpu_slab_ptr:
