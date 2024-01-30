@@ -155,13 +155,12 @@ class FixedTable(Table):
 
     This is a variant of the :class:`Table` class, and it is designed to be
     nearly a drop-in replacement. Unlike :class:`Table`, the column widths are
-    fixed  Unlike :class:`Table`, the column widths are "fixed"; that is they
-    are set up during initialization. This means that each row can be printed
-    immediately, which is great for letting users know that progress is being
-    made. The trade-off is that if any row contains a column value which is too
-    wide, the row will become unaligned. This is makes output less visually
-    appealing, but frequently it can be avoided by designing the table
-    carefully.
+    "fixed"; that is they are set up during initialization. This means that each
+    row can be printed immediately, which is great for letting users know that
+    progress is being made. The trade-off is that if any row contains a column
+    value which is too wide, the row will become unaligned. This is makes output
+    less visually appealing, but frequently it can be avoided by designing the
+    table carefully.
 
     The column widths can be specified in one of two ways. First, you may
     specify a list of widths to this constructor. In that case, the table header
