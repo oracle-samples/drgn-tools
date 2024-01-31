@@ -411,14 +411,19 @@ def bt(
       other functions in this module, which do not print the frames.
     """
     task = _bt_user_friendly_arg(task_or_prog, cpu=cpu, pid=pid)
-    traces = expand_traces(task.prog_.stack_trace(task))
     # We call this "task", but it's legal to provide a struct pt_regs. This
     # function should work fine, but not print the header, in that case.
     if task.type_.type_name() in (
         "struct task_struct",
         "struct task_struct *",
     ):
+        state = task_state_to_char(task)
         print_task_header(task)
+        if state in ("Z", "X"):
+            print(f"Task is in state: {state} - cannot unwind")
+            return []
+
+    traces = expand_traces(task.prog_.stack_trace(task))
     print_traces(traces, show_vars=show_vars, show_absent=show_absent)
     frames = None
     if retframes:
