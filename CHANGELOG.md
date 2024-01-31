@@ -6,6 +6,32 @@ Unreleased
 
 Changes which are committed to git, but not yet released, may appear here.
 
+0.8.0 - Wed, Jan 31, 2023
+-------------------------
+
+Another intermediate release prior to 1.0.0. We have a few new corelens modules,
+and some fixes and general improvements.
+
+### Added
+
+- `slabinfo` corelens module
+- `partitioninfo` corelens module
+- `CtfCompatibility` to automatically detect which UEK kernels are compatible
+  with CTF debuginfo
+
+### Fixed
+
+- `bt` corelens module is more resilient to unwind errors
+- `md` helpers now support kernels containing a92ce0feffee ("md: drop queue
+  limitation for RAID1 and RAID10"), from 5.17
+
+### Changed
+
+- `bt()` function now outputs the task state in `[]` brackets as part of the
+  header
+- `scsiinfo` now outputs more useful fields
+- Several minor improvements to testing infrastructure
+
 0.7.0 - Tue, Jan 9, 2023
 ------------------------
 

@@ -9,7 +9,7 @@ from setuptools import setup
 
 long_description = "drgn helper script repository"
 
-RELEASE_VERSION = "0.7.0"
+RELEASE_VERSION = "0.8.0"
 
 
 def get_version():
