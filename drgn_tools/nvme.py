@@ -296,12 +296,14 @@ class NvmeModule(CorelensModule):
     debuginfo_kmods = ["nvme", "nvme_core"]
 
     default_args = [
-        "--firmware",
-        "--ctrl",
-        "--queue",
-        "--namespace",
-        "--queuemap",
-        "--msimask",
+        [
+            "--firmware",
+            "--ctrl",
+            "--queue",
+            "--namespace",
+            "--queuemap",
+            "--msimask",
+        ]
     ]
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:

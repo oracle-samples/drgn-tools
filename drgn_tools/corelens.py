@@ -132,11 +132,42 @@ class CorelensModule(abc.ABC):
         return False
 
     @property
-    def default_args(self) -> List[str]:
+    def default_args(self) -> List[List[str]]:
         """
-        When specified, this sets the default command line arguments
+        When specified, this list contains arguments to be passed by default to
+        the module, when corelens is run in report mode (-a).
+
+        Since corelens supports executing the same module multiple times, it may
+        be desirable to run the same module multiple times in different
+        configurations. Thus, each element of this list is a sub-list containing
+        command line arguments. For example, suppose module "mod" should be run
+        as below during a report:
+
+            corelens /proc/kcore -M mod --arg one -M mod --arg two
+
+        Then you could specify these arguments as:
+
+            default_args = [["--arg", "one"], ["--arg", "two"]]
+
+        In the more common case, where a module should be run just once with
+        specified arguments, you would use:
+
+            default_args = [["--specified", "arguments"]]
+
+        As a special case, when this is omitted, it is set to the empty list
+        ``[]``, which is a short-hand for ``[[]]``, meaning to run module once
+        with no additional arguments.
         """
         return []
+
+    @property
+    def verbose_args(self) -> List[List[str]]:
+        """
+        When specified, this sets the default command line argument for verbose
+        reports. If left unspecified, this returns the same as default_args.
+        See default_args for more details.
+        """
+        return self.default_args
 
     @property
     def live_ok(self) -> bool:
@@ -158,7 +189,7 @@ class CorelensModule(abc.ABC):
 
     def _parse_args(
         self,
-        args: Optional[List[str]] = None,
+        args: List[str],
         exit_on_error: bool = True,
     ) -> argparse.Namespace:
         """
@@ -183,9 +214,17 @@ class CorelensModule(abc.ABC):
             parser.exit = exit  # type: ignore
 
         self.add_args(parser)
-        if args is None:
-            args = self.default_args
         return parser.parse_args(args)
+
+    def _default_args(self, verbose: bool = False) -> List[argparse.Namespace]:
+        args_sets = self.verbose_args if verbose else self.default_args
+        if not args_sets:
+            return [self._parse_args([], exit_on_error=False)]
+        else:
+            return [
+                self._parse_args(args, exit_on_error=False)
+                for args in args_sets
+            ]
 
 
 def all_corelens_modules() -> Dict[str, CorelensModule]:
@@ -211,6 +250,28 @@ def all_corelens_modules() -> Dict[str, CorelensModule]:
     return {m.name: m for m in result}
 
 
+def default_corelens_modules(
+    verbose: bool = False,
+) -> List[Tuple[CorelensModule, argparse.Namespace]]:
+    """
+    Return the default corelens modules to run for reports
+
+    :param verbose: select the more verbose report preset (-A)
+    """
+    all_modules = all_corelens_modules()
+    if verbose:
+        mods = [mod for mod in all_modules.values() if mod.run_when != "never"]
+    else:
+        mods = [
+            mod for mod in all_modules.values() if mod.run_when == "always"
+        ]
+    result = []
+    for mod in mods:
+        for args in mod._default_args(verbose):
+            result.append((mod, args))
+    return result
+
+
 def _load_candidate_modules(
     module_args: List[List[str]],
     run_all: bool,
@@ -227,22 +288,13 @@ def _load_candidate_modules(
     :param args: The arguments to main()
     :returns: A list of (corelens) modules to run and their arguments
     """
+    if run_all or run_all_verbose:
+        return default_corelens_modules(verbose=run_all_verbose)
+
     all_modules = all_corelens_modules()
-    if run_all_verbose:
-        return [
-            (mod, mod._parse_args())
-            for mod in all_modules.values()
-            if mod.run_when != "never"
-        ]
-    elif run_all:
-        return [
-            (mod, mod._parse_args())
-            for mod in all_modules.values()
-            if mod.run_when == "always"
-        ]
     if not module_args:
         sys_mod = all_modules["sys"]
-        return [(sys_mod, sys_mod._parse_args())]
+        return [(sys_mod, sys_mod._parse_args([]))]
     candidate_modules_to_run = []
     for arglist in module_args:
         mod_name = arglist[0]
@@ -554,7 +606,7 @@ def main() -> None:
     for mod, mod_args in modules_to_run:
         if out_dir:
             out_file = out_dir / mod.name
-            with redirect_stdout(str(out_file)):
+            with redirect_stdout(str(out_file), append=True):
                 _run_module(mod, prog, mod_args, errors)
         else:
             _run_module(mod, prog, mod_args, errors, to_stdout=True)
