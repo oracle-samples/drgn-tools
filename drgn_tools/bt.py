@@ -5,6 +5,7 @@ import typing as t
 
 import drgn
 from drgn import FaultError
+from drgn import Object
 from drgn import Program
 from drgn import ProgramFlags
 from drgn import TypeKind
@@ -12,6 +13,7 @@ from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.sched import cpu_curr
+from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.mm import AddrKind
@@ -242,8 +244,15 @@ def print_task_header(task: drgn.Object) -> None:
     cpu = task_cpu(task)
     taskp = task.value_()
     pid = task.pid.value_()
-    comm = task.comm.string_().decode()
-    print(f'PID: {pid:<7d}  TASK: {taskp:x}  CPU: {cpu}  COMMAND: "{comm}"')
+    comm = escape_ascii_string(task.comm.string_())
+    st = task_state_to_char(task)
+    cpu_note = ""
+    if cpu_curr(task.prog_, cpu) == task:
+        cpu_note = "!"
+    print(
+        f"PID: {pid:<7d}  TASK: {taskp:x} [{st}] CPU: {cpu}{cpu_note}"
+        f'  COMMAND: "{comm}"'
+    )
 
 
 def print_frames(
@@ -463,42 +472,129 @@ def bt_has(
     return frame_list
 
 
-def print_all_bt(prog: Program) -> None:
+def print_online_bt(prog: Program, **kwargs: t.Any) -> None:
+    """
+    Prints the stack trace of all on-CPU tasks
+
+    :kwargs: passed to bt() to control backtrace format
+    """
+    for cpu in for_each_online_cpu(prog):
+        bt(prog, cpu=cpu, **kwargs)
+        print()
+
+
+def print_all_bt(
+    prog: Program, states: t.Optional[t.Container[str]] = None, **kwargs: t.Any
+) -> None:
     """
     Prints the stack trace of all tasks
+
+    :param states: when provided (and non-empty), filter the output to only
+      contain tasks in the given states (like the single-character codes
+      reported by ps(1)).
+    :param kwargs: passed to bt() to control backtrace format
     """
-    online_tasks = set()
-
-    if not prog.flags & ProgramFlags.IS_LIVE:
-        print("On-CPU Tasks:")
-
-        for cpu in for_each_online_cpu(prog):
-            task = cpu_curr(prog, cpu)
-            online_tasks.add(task.pid.value_())
-            bt(task)
-            print()
-
-        print("\nOff-CPU Tasks:")
-
     for task in for_each_task(prog):
-        if task.pid.value_() not in online_tasks:
-            try:
-                bt(task)
-            except ValueError as e:
-                # Catch ValueError for unwinding running tasks on live
-                # systems. Print the task & comm but don't unwind.
-                pid = task.pid.value_()
-                comm = escape_ascii_string(task.comm.string_())
-                print(f"PID: {pid}  COMM: {comm}\nerror: {str(e)}")
-            print()
+        st = task_state_to_char(task)
+
+        if states and st not in states:
+            continue
+
+        try:
+            bt(task, **kwargs)
+        except (ValueError, FaultError) as e:
+            # Catch ValueError for unwinding running tasks on live
+            # systems. Print the task & comm but don't unwind.
+            print_task_header(task)
+            print(f"Unwind error: {str(e)}")
+        print()
 
 
 class Bt(CorelensModule):
     """
-    Module to print stack trace of all tasks
+    Print a stack trace for a task, CPU, or set of tasks
     """
 
     name = "bt"
 
+    # For normal reports, output on-CPU tasks, then D-state tasks
+    default_args = [["-a"], ["-s", "D"]]
+
+    # For verbose reports, output on-CPU tasks, followed by all tasks
+    verbose_args = [["-a"], ["-A"]]
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        fmt = parser.add_argument_group(
+            description="Options controlling the format of the backtrace",
+        )
+        fmt.add_argument(
+            "--variables",
+            "-v",
+            action="store_true",
+            help="show variable values, where possible",
+        )
+        op = parser.add_mutually_exclusive_group()
+        op.add_argument(
+            "pid_or_task",
+            type=str,
+            nargs="?",
+            help="A PID, or address of a task_struct to unwind",
+        )
+        op.add_argument(
+            "-c",
+            "--cpu",
+            type=int,
+            help="Print a backtrace for CPU",
+        )
+        op.add_argument(
+            "-a",
+            "--all-on-cpu",
+            action="store_true",
+            help=(
+                "Print all tasks currently executing on CPU. Not supported "
+                "for live systems: ignored in that case."
+            ),
+        )
+        op.add_argument(
+            "--state",
+            "-s",
+            action="append",
+            help=("Print all tasks on the system which are in STATE."),
+        )
+        op.add_argument(
+            "--all-tasks",
+            "-A",
+            action="store_true",
+            help="Print all tasks on the system",
+        )
+
     def run(self, prog: Program, args: argparse.Namespace) -> None:
-        print_all_bt(prog)
+        kwargs = {
+            "show_vars": args.variables,
+        }
+        if args.cpu is not None:
+            if prog.flags & ProgramFlags.IS_LIVE:
+                print("On-CPU tasks are not supported for /proc/kcore")
+            else:
+                bt(prog, cpu=args.cpu, **kwargs)
+        elif args.pid_or_task is not None:
+            try:
+                task = prog.thread(int(args.pid_or_task, 10)).object
+            except ValueError:
+                task_ptr = int(args.pid_or_task, 16)
+                task = Object(prog, "struct task_struct *", value=task_ptr)
+            bt(task, **kwargs)
+        elif args.all_on_cpu:
+            if prog.flags & ProgramFlags.IS_LIVE:
+                print("On-CPU tasks not supported for /proc/kcore")
+            else:
+                print("On-CPU tasks:")
+                print_online_bt(prog, **kwargs)
+        elif args.state:
+            print(f"Tasks in states {', '.join(args.state)}: ")
+            print_all_bt(prog, states=args.state)
+        elif args.all_tasks:
+            print("All tasks:")
+            print_all_bt(prog)
+        else:
+            print("error: select a task or group of tasks to backtrace")
