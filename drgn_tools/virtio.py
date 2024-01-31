@@ -936,7 +936,7 @@ class Virtio(CorelensModule):
 
     name = "virtio"
     debuginfo_kmods = ["*virtio*"]
-    default_args = ["--show-vq"]
+    default_args = [["--show-vq"]]
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
