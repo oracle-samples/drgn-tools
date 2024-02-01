@@ -9,10 +9,12 @@ those many differences so your code will run on a variety of kernel versions
 and configurations.
 """
 import argparse
+from typing import Any
 from typing import Dict
 from typing import Iterable
 from typing import NamedTuple
 from typing import Optional
+from typing import Tuple
 
 import drgn
 from drgn import Object
@@ -21,6 +23,7 @@ from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
+from drgn.helpers.linux.pid import find_task
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.sched import cpu_curr
 from drgn.helpers.linux.sched import task_state_to_char
@@ -344,6 +347,52 @@ def show_taskinfo(prog: Program, tasks: Iterable[Object]) -> None:
     print_table(rows)
 
 
+def is_kthread(t: Object) -> bool:
+    """
+    Check if a task is kernel thread.
+    """
+    if not t.mm and not task_state_to_char(t) == "Z":
+        return True
+    return False
+
+
+def is_user(t: Object) -> bool:
+    """
+    Check if a task is user thread.
+    """
+    if t.mm:
+        return True
+    elif task_state_to_char(t) == "Z":
+        return True
+    return False
+
+
+def is_group_leader(t: Object) -> bool:
+    """
+    Check if a task is thread group leader.
+    """
+    if get_pid(t) == t.tgid.value_():
+        return True
+    return False
+
+
+def check_arg_type(arg: Optional[str]) -> Tuple[str, Any]:
+    """
+    Check the filter type of the argument
+    """
+    if arg is not None:
+        try:
+            return ("pid", int(arg, 10))
+        except ValueError:
+            pass
+        try:
+            return ("task", int(arg, 16))
+        except ValueError:
+            return ("comm", str(arg))
+    else:
+        return ("none", None)
+
+
 class Taskinfo(CorelensModule):
     """
     Corelens Module for ps
@@ -360,9 +409,56 @@ class Taskinfo(CorelensModule):
             action="store_true",
             help="show last run information",
         )
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument(
+            "-u",
+            dest="user",
+            action="store_true",
+            default=False,
+            help="display only user threads information",
+        )
+        group.add_argument(
+            "-k",
+            dest="kernel",
+            action="store_true",
+            default=False,
+            help="display only kernel threads information",
+        )
+        parser.add_argument(
+            "-G",
+            dest="group_leader",
+            action="store_true",
+            default=False,
+            help="display only the thread group leader in a thread group",
+        )
+
+        parser.add_argument(
+            "arg",
+            nargs="?",
+            type=check_arg_type,
+            metavar="pid | task | command",
+            help="pid is a process PID. task is hexadecimal task_struct pointer. command is a command name.",
+        )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         tasks = for_each_task(prog)
+        if args.arg is not None:
+            if args.arg[0] == "pid":
+                tasks = [find_task(prog, args.arg[1])]
+            elif args.arg[0] == "task":
+                tasks = [
+                    Object(prog, "struct task_struct *", value=args.arg[1])
+                ]
+            elif args.arg[0] == "comm":
+                tasks = (t for t in tasks if get_command(t) == args.arg[1])
+
+        if args.user:
+            tasks = filter(is_user, tasks)
+        elif args.kernel:
+            tasks = filter(is_kthread, tasks)
+        if args.group_leader:
+            tasks = filter(is_group_leader, tasks)
+
         if args.last_run:
             show_tasks_last_runtime(tasks)
         else:
