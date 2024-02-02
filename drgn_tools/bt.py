@@ -156,8 +156,8 @@ def expand_traces(trace: drgn.StackTrace) -> t.List[drgn.StackTrace]:
         ):
             break
         trace = prog.stack_trace(pt_regs)
-        traces.append(prog.stack_trace(pt_regs))
-        pt_regs = find_pt_regs(traces[-1])
+        traces.append(trace)
+        pt_regs = find_pt_regs(trace)
     return traces
 
 
