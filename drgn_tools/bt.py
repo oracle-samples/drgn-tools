@@ -1,6 +1,7 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import argparse
+import collections
 import typing as t
 
 import drgn
@@ -11,6 +12,7 @@ from drgn import ProgramFlags
 from drgn import TypeKind
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_online_cpu
+from drgn.helpers.linux.pid import find_task
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.sched import cpu_curr
 from drgn.helpers.linux.sched import task_state_to_char
@@ -442,6 +444,45 @@ def bt(
     return frames
 
 
+def _index_functions(prog: drgn.Program) -> t.Dict[str, t.Set[int]]:
+    # Running a backtrace on every task is a very expensive operation, and it's
+    # likely that we will want to find multiple functions. For example, corelens
+    # already has several uses of bt_has(). For vmcores, the stacks will never
+    # change, so we can create an index to speed up subsequent accesses. We do
+    # want to be careful about memory usage: rather than storing stack frames or
+    # task pointers (which are complex drgn Data structures), we just keep track
+    # of the PIDs for each function. Later, _indexed_bt_has() can find the task
+    # and stack frames again.
+    func_to_pids = collections.defaultdict(set)
+    for task in for_each_task(prog):
+        pid = task.pid.value_()
+        try:
+            frames = bt_frames(task)
+            for frame in frames:
+                func_to_pids[frame.name].add(pid)
+        except FaultError:
+            # FaultError: catch unusual unwinding issues
+            pass
+    return func_to_pids
+
+
+def _indexed_bt_has(
+    prog: drgn.Program, funcname: str
+) -> t.List[t.Tuple[drgn.Object, drgn.StackFrame]]:
+    index = prog.cache.get("drgn_tools.bt._index_functions")
+    if index is None:
+        index = _index_functions(prog)
+        prog.cache["drgn_tools.bt._index_functions"] = index
+
+    result = []
+    for pid in index[funcname]:
+        task = find_task(prog, pid)
+        for frame in bt_frames(task):
+            if frame.name == funcname:
+                result.append((task, frame))
+    return result
+
+
 def bt_has(
     prog: drgn.Program, funcname: str
 ) -> t.List[t.Tuple[drgn.Object, drgn.StackFrame]]:
@@ -453,10 +494,19 @@ def bt_has(
     return a tuple containing a pointer to the task, and the stack frame
     containing the function call.
 
+    This can be an expensive operation, since there may be many running tasks,
+    and unwinding all of them may take some time. As a result, when running
+    against a core dump, this function will cache information in order to
+    improve runtime.
+
     :param prog: drgn program
     :param funcname: function name
     :returns: a list of (``struct task_struct *``, drgn.StackFrame)
     """
+    # Use a cached function index for vmcores
+    if not (prog.flags & ProgramFlags.IS_LIVE):
+        return _indexed_bt_has(prog, funcname)
+
     frame_list = []
     for task in for_each_task(prog):
         try:
