@@ -456,13 +456,13 @@ def _run_module(
     prog: Program,
     args: argparse.Namespace,
     errors: List[str],
-    to_stdout: bool = False,
+    print_header: bool = False,
 ) -> None:
     """
     Execute a module return even on error. Update errors list with any failure
     """
     try:
-        if to_stdout:
+        if print_header:
             print(f"\n====== MODULE {mod.name} ======")
         mod.run(prog, args)
     except Exception:
@@ -603,13 +603,14 @@ def main() -> None:
         out_dir = Path(args.output_directory)
         out_dir.mkdir(exist_ok=True)
 
+    print_header = not out_dir and len(modules_to_run) > 1
     for mod, mod_args in modules_to_run:
         if out_dir:
             out_file = out_dir / mod.name
             with redirect_stdout(str(out_file), append=True):
-                _run_module(mod, prog, mod_args, errors)
+                _run_module(mod, prog, mod_args, errors, print_header)
         else:
-            _run_module(mod, prog, mod_args, errors, to_stdout=True)
+            _run_module(mod, prog, mod_args, errors, print_header)
 
     _report_errors(errors, warnings, out_dir)
     if errors:
