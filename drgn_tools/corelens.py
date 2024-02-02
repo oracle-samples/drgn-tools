@@ -13,6 +13,7 @@ import pkgutil
 import re
 import shlex
 import sys
+import time
 import traceback
 from fnmatch import fnmatch
 from pathlib import Path
@@ -457,10 +458,12 @@ def _run_module(
     args: argparse.Namespace,
     errors: List[str],
     print_header: bool = False,
-) -> None:
+) -> float:
     """
-    Execute a module return even on error. Update errors list with any failure
+    Execute a module return even on error. Update errors list with any failure.
+    Return runtime in seconds.
     """
+    start_time = time.time()
     try:
         if print_header:
             print(f"\n====== MODULE {mod.name} ======")
@@ -470,6 +473,7 @@ def _run_module(
         errors.append(
             f"Encountered exception in {mod.name}:\n" f"{formatted}\n"
         )
+    return time.time() - start_time
 
 
 def _report_errors(
@@ -516,6 +520,7 @@ def _print_module_listing() -> None:
 
 
 def main() -> None:
+    corelens_begin_time = time.time()
     parser = argparse.ArgumentParser(
         description="Kernel core dump analysis tool",
         prog="corelens",
@@ -593,10 +598,14 @@ def main() -> None:
         parser.print_usage()
         sys.exit("error: specify a vmcore or /proc/kcore, or a help option")
 
+    start_time = time.time()
     prog, ctf = _load_prog_and_debuginfo(args)
     modules_to_run, errors, warnings = _check_module_debuginfo(
         candidate_modules_to_run, prog, ctf=ctf
     )
+    load_time = time.time() - start_time
+    if args.output_directory:
+        print(f"Loaded debuginfo in in {load_time:.03f}s")
 
     out_dir: Optional[Path] = None
     if args.output_directory:
@@ -607,12 +616,19 @@ def main() -> None:
     for mod, mod_args in modules_to_run:
         if out_dir:
             out_file = out_dir / mod.name
+            print(f"Running module {mod.name}... ", end="", flush=True)
             with redirect_stdout(str(out_file), append=True):
-                _run_module(mod, prog, mod_args, errors, print_header)
+                runtime = _run_module(
+                    mod, prog, mod_args, errors, print_header
+                )
+            print(f"completed in {runtime:.3f}s")
         else:
             _run_module(mod, prog, mod_args, errors, print_header)
 
     _report_errors(errors, warnings, out_dir)
+    corelens_total_time = time.time() - corelens_begin_time
+    if out_dir:
+        print(f"corelens total runtime: {corelens_total_time:.3f}s")
     if errors:
         sys.exit(1)
 
