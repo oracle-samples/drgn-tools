@@ -521,7 +521,7 @@ def main() -> None:
         prog="corelens",
         usage=(
             "corelens [-o OUT] vmcore [-M MODULE [options] [-M MODULE ...]]\n"
-            "       corelens [-o OUT] vmcore [-a|-A]\n"
+            "       corelens [-o OUT] vmcore [-a | -A]\n"
             "       corelens -h           (for help)\n"
             "       corelens -L           (to list modules)\n"
             "       corelens -M MODULE -h (for module-specific help)"
