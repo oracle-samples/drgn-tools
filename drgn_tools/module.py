@@ -12,6 +12,7 @@ from typing import Tuple
 from typing import Union
 
 from drgn import cast
+from drgn import FaultError
 from drgn import IntegerLike
 from drgn import Object
 from drgn import Program
@@ -342,7 +343,21 @@ def decode_param(kp: Object) -> ParamInfo:
         obj = cast("char *", kp.arg)
         param_type = "string"
     elif param_type == "param_array_get":
-        length = int(kp.arr.num[0] if kp.arr.num else kp.arr.max)
+        # The "kp.arr.num" is a pointer into the module, at an integer variable
+        # which stores the number of elements of the array. If the array itself
+        # is initdata, then it's likely that this integer is also initdata, so
+        # we need to be prepared to handle this FaultError. There is a "max"
+        # field we could substitute with.
+        length = None
+        if kp.arr.num:
+            try:
+                length = int(kp.arr.num[0])
+            except FaultError:
+                pass
+        if length is None:
+            length = int(kp.arr.max)
+        # Be cautious and ensure no accidantal negative number was used
+        length = max(0, length)
         try:
             elem_type = prog.symbol(kp.arr.ops.get).name
         except LookupError:
