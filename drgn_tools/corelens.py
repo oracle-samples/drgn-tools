@@ -364,6 +364,7 @@ def _check_module_debuginfo(
     candidate_modules: List[Tuple[CorelensModule, argparse.Namespace]],
     prog: Program,
     ctf: bool = False,
+    warn_not_present: bool = True,
 ) -> Tuple[
     List[Tuple[CorelensModule, argparse.Namespace]], List[str], List[str]
 ]:
@@ -387,6 +388,18 @@ def _check_module_debuginfo(
     errors = []
     warnings = []
     for mod, args in candidate_modules:
+        # Corelens modules that depend on a particular subsystem module being
+        # present, should should be skipped if it is not present.
+        if mod.skip_unless_have_kmod is not None and (
+            mod.skip_unless_have_kmod not in all_kmod_names
+        ):
+            if warn_not_present:
+                warnings.append(
+                    f"{mod.name} skipped because '{mod.skip_unless_have_kmod}'"
+                    " was not loaded in the kernel"
+                )
+            continue
+
         # Corelens modules which don't support live kernels are skipped
         # immediately
         if (prog.flags & ProgramFlags.IS_LIVE) and not mod.live_ok:
@@ -400,17 +413,6 @@ def _check_module_debuginfo(
             warnings.append(
                 f"{mod.name} skipped because it requires DWARF debuginfo, but "
                 "CTF is loaded instead"
-            )
-            continue
-
-        # Corelens modules that depend on a particular subsystem module being
-        # present, should should be skipped if it is not present.
-        if mod.skip_unless_have_kmod is not None and (
-            mod.skip_unless_have_kmod not in all_kmod_names
-        ):
-            warnings.append(
-                f"{mod.name} skipped because '{mod.skip_unless_have_kmod}'"
-                " was not loaded in the kernel"
             )
             continue
 
@@ -601,7 +603,16 @@ def main() -> None:
     start_time = time.time()
     prog, ctf = _load_prog_and_debuginfo(args)
     modules_to_run, errors, warnings = _check_module_debuginfo(
-        candidate_modules_to_run, prog, ctf=ctf
+        candidate_modules_to_run,
+        prog,
+        ctf=ctf,
+        # "warning: A skipped because A was not loaded in the kernel"
+        # messages are useful when the user explicitly requested module A to
+        # run, but it's not applicable. However, when we run the report mode (-a
+        # or -A), the user never requisted these specific modules: they just
+        # expect that relevant modules will run. Suppress the warning for those
+        # modes.
+        warn_not_present=not (args.run_all or args.run_all_verbose),
     )
     load_time = time.time() - start_time
     if args.output_directory:
