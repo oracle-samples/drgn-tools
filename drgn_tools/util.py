@@ -483,3 +483,22 @@ def type_lookup_conflict(
     raise LookupError(
         f"Could not find type {name} in module {module} or files {filenames}"
     )
+
+
+def per_cpu_owner(name: str, val: Object) -> int:
+    """
+    Given a per-cpu variable/pointer, return CPU to which this per-cpu
+    variable/pointer belongs.
+
+    :param name: name of the per-cpu variable/pointer
+    :param val: per-cpu variable/pointer
+    :returns: cpu number to which per-cpu variable/pointer belongs.
+              If cpu can't be found return -1
+    """
+
+    prog = val.prog_
+    for cpu in for_each_possible_cpu(prog):
+        if per_cpu(prog[name], cpu).value_() == val.value_():
+            return cpu
+
+    return -1
