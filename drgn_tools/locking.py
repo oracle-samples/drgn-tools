@@ -10,6 +10,7 @@ from drgn import cast
 from drgn import NULL
 from drgn import Object
 from drgn import Program
+from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.sched import task_cpu
@@ -228,3 +229,231 @@ def for_each_mutex_waiter(prog: Program, mutex: Object) -> Iterable[Object]:
         prog.type("struct mutex_waiter"), mutex.wait_list.address_of_(), "list"
     ):
         yield waiter.task
+
+
+######################################
+# rwsem
+######################################
+
+# Masks for rwsem.count
+_RWSEM_WRITER_LOCKED = 1 << 0
+_RWSEM_FLAG_WAITERS = 1 << 1
+_RWSEM_FLAG_HANDOFF = 1 << 2
+# Bits 8-62(i.e. 55 bits of counter indicate number of current readers that hold the lock)
+_RWSEM_READER_MASK = 0x7FFFFFFFFFFFFF00  # Bits 8-62 - 55-bit reader count
+_RWSEM_WRITER_MASK = 1 << 0
+_RWSEM_READER_SHIFT = 8
+
+# Masks for rwsem.owner
+_RWSEM_READER_OWNED = 1 << 0
+_RWSEM_ANONYMOUSLY_OWNED = 1 << 0  # For old kernels
+_RWSEM_RD_NONSPINNABLE = 1 << 1
+_RWSEM_WR_NONSPINNABLE = 1 << 2
+
+# Linux kernel commit 617f3ef95177840c77f59c2aec1029d27d5547d6 ("locking/rwsem:
+# Remove reader optimistic spinning") (in v5.11) removed optimistic spinning for
+# readers and hence left one bit to check for spinnable
+_RWSEM_NONSPINNABLE = 1 << 1
+
+
+def rwsem_has_spinner(rwsem: Object) -> bool:
+    """
+    Check if rwsem has optimistic spinners or not
+
+    :param rwsem: ``struct rw_semaphore *``
+    :returns: True if rwsem has optimistic spinners, False otherwise.
+    """
+    return osq_is_locked(rwsem.osq.address_of_())
+
+
+def for_each_rwsem_waiter_entity(rwsem: Object) -> Iterable[Object]:
+    """
+    Find rwsem_waiter(s) for given rwsem
+
+    :param rwsem: ``struct rw_semaphore *``
+    :returns: Iterator of ``struct rwsem_waiter``
+    """
+
+    for waiter in list_for_each_entry(
+        "struct rwsem_waiter", rwsem.wait_list.address_of_(), "list"
+    ):
+        yield waiter
+
+
+def get_rwsem_owner(rwsem: Object) -> Object:
+    """
+    Find owner of  given rwsem
+
+    :param rwsem: ``struct rw_semaphore *``
+    :returns: ``struct task_struct *`` if owner can be found, NULL otherwise
+    """
+    prog = rwsem.prog_
+    if not rwsem.count.counter.value_():
+        print("rwsem is free.")
+        return NULL(prog, "struct task_struct *")
+
+    if is_rwsem_writer_owned(rwsem):
+        if (rwsem.owner.type_.type_name() != "atomic_long_t") and (
+            rwsem.owner.value_() & _RWSEM_ANONYMOUSLY_OWNED
+        ):
+            print("rwsem is owned by anonymous writer")
+            return NULL(prog, "struct task_struct *")
+        else:
+            owner = cast("struct task_struct *", rwsem.owner.counter)
+            return owner
+
+
+def get_rwsem_waiter_type(rwsem_waiter: Object) -> str:
+    """
+    Find type of an rwsem waiter
+
+    :param rwsem_waiter: ``struct rwsem_waiter``
+    :returns: str indicating type of rwsem waiter
+    """
+
+    prog = rwsem_waiter.prog_
+    if rwsem_waiter.type.value_() == prog["RWSEM_WAITING_FOR_WRITE"].value_():
+        waiter_type = "down_write"
+    elif rwsem_waiter.type.value_() == prog["RWSEM_WAITING_FOR_READ"].value_():
+        waiter_type = "down_read"
+    else:
+        waiter_type = "waiter type unknown"
+
+    return waiter_type
+
+
+def get_rwsem_waiters_info(rwsem: Object) -> None:
+    """
+    Get a summary of rwsem waiters.
+    The summary consists of ``struct task_struct *``, pid and type of waiters
+
+    :param rwsem: ``struct rw_semaphore *``
+    """
+
+    waiter_type = "none"
+    print("The waiters of rwsem are as follows: ")
+    for waiter in for_each_rwsem_waiter_entity(rwsem):
+        waiter_type = get_rwsem_waiter_type(waiter)
+        task = waiter.task
+        print(
+            f"({task.type_.type_name()})0x{task.value_():x}: (pid){task.pid.value_()}: {waiter_type}"
+        )
+
+
+def is_rwsem_reader_owned(rwsem: Object) -> bool:
+    """
+    Check if rwsem is reader owned or not
+
+    :param rwsem: ``struct rw_semaphore *``
+    :returns: True if rwsem is reader owned, False otherwise (including the
+              case when type of owner could not be determined or when rwsem
+              is free.)
+    """
+    if not rwsem.count.counter.value_():  # rwsem is free
+        return False
+    if rwsem.owner.type_.type_name() == "atomic_long_t":
+        owner_is_writer = rwsem.count.counter.value_() & _RWSEM_WRITER_LOCKED
+        owner_is_reader = (
+            (rwsem.count.counter.value_() & _RWSEM_READER_MASK)
+            and (rwsem.owner.counter.value_() & _RWSEM_READER_OWNED)
+            and (owner_is_writer == 0)
+        )
+
+        return bool(owner_is_reader)
+    else:
+        if not rwsem.owner.value_():
+            print(
+                "rwsem is being acquired but owner info has not yet been set."
+            )
+            return False
+        owner_is_reader = rwsem.owner.value_() == _RWSEM_READER_OWNED
+        return owner_is_reader
+
+
+def is_rwsem_writer_owned(rwsem: Object) -> bool:
+    """
+    Check if rwsem is writer owned or not
+
+    :param rwsem: ``struct rw_semaphore *``
+    :returns: True if rwsem is writer owned, False otherwise (including the
+              case when type of owner could not be determined or when rwsem
+              was free.)
+    """
+    if not rwsem.count.counter.value_():  # rwsem is free
+        return False
+
+    if rwsem.owner.type_.type_name() == "atomic_long_t":
+        owner_is_writer = rwsem.count.counter.value_() & _RWSEM_WRITER_LOCKED
+        return bool(owner_is_writer)
+    else:
+        if not rwsem.owner.value_():
+            print(
+                "rwsem is being acquired but owner info has not yet been set."
+            )
+            return False
+
+        owner_is_reader = rwsem.owner.value_() == _RWSEM_READER_OWNED
+        return not owner_is_reader
+
+
+def get_rwsem_info(rwsem: Object) -> None:
+    """
+    Get information about given rwsem.
+    This consists of type of owner, ``struct task_struct *``, pid(s) and type
+    of waiter(s)
+
+    :param rwsem: ``struct rw_semaphore *``
+    """
+
+    # This helper supports LTS versions since v4.14. It may work with
+    # other versions too but has not been tested with other versions.
+    # Now from v4.14 to v5.2 ->owner is of type task_struct * and ->count
+    # is adjusted/interpreted according different BIAS(es) like
+    # ACTIVE_BIAS, WRITE_BIAS etc.
+    # Linux kernel commit 94a9717b3c40 ('locking/rwsem: Make rwsem->owner
+    # an atomic_long_t') (since v5.3.1) changed ->owner type and Linux kernel
+    # commit 64489e78004c ('locking/rwsem: Implement a new locking scheme')
+    # (also since v5.3.1) removed usage of different BIAS(es) and re-defined
+    # usage and interpretation of ->count bits.
+    # So although type change of ->owner and re-definition of ->count bits
+    # happened in 2 different commits, both of these changes are available
+    # since v5.3.1.
+    # So we can use ->owner type to distinguish between new and old usage
+    # of rwsem ->count and ->owner bits.
+    if not rwsem.count.counter.value_():
+        print("rwsem is free.")
+        return
+
+    prog = rwsem.prog_
+    owner_is_writer = is_rwsem_writer_owned(rwsem)
+    owner_is_reader = is_rwsem_reader_owned(rwsem)
+
+    if owner_is_writer:
+        if (rwsem.owner.type_.type_name() != "atomic_long_t") and (
+            rwsem.owner.value_() & _RWSEM_ANONYMOUSLY_OWNED
+        ):
+            print("rwsem is owned by anonymous writer")
+        else:
+            owner_task = Object(
+                prog,
+                "struct task_struct",
+                address=cast("unsigned long", rwsem.owner.counter),
+            ).address_of_()
+            print(
+                f"Writer owner ({owner_task.type_.type_name()})0x{owner_task.value_():x}: (pid){owner_task.pid.value_()}"
+            )
+    elif owner_is_reader:
+        if rwsem.owner.type_.type_name() == "atomic_long_t":
+            num_readers = (
+                rwsem.count.counter.value_() & _RWSEM_READER_MASK
+            ) >> _RWSEM_READER_SHIFT
+            print(f"Owned by {num_readers} reader(s)")
+        else:
+            print("rwsem is owned by one or more readers")
+    else:
+        print("Can't determine type of owner.")
+
+    if list_empty(rwsem.wait_list.address_of_()):
+        print("There are no waiters")
+    else:
+        get_rwsem_waiters_info(rwsem)
