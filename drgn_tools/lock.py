@@ -127,6 +127,18 @@ def scan_sem_lock(prog: Program, stack: bool) -> None:
     if frame_list:
         show_sem_lock(prog, frame_list, seen_sems, stack)
 
+    frame_list = bt_has(prog, "__down_interruptible")
+    if frame_list:
+        show_sem_lock(prog, frame_list, seen_sems, stack)
+
+    frame_list = bt_has(prog, "__down_killable")
+    if frame_list:
+        show_sem_lock(prog, frame_list, seen_sems, stack)
+
+    frame_list = bt_has(prog, "__down_timeout")
+    if frame_list:
+        show_sem_lock(prog, frame_list, seen_sems, stack)
+
 
 def scan_lock(prog: Program, stack: bool) -> None:
     """Scan tasks for Mutex and Semaphore"""
