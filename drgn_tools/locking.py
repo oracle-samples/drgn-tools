@@ -322,7 +322,7 @@ def get_rwsem_waiter_type(rwsem_waiter: Object) -> str:
     return waiter_type
 
 
-def get_rwsem_waiters_info(rwsem: Object) -> None:
+def get_rwsem_waiters_info(rwsem: Object, callstack: int = 0) -> None:
     """
     Get a summary of rwsem waiters.
     The summary consists of ``struct task_struct *``, pid and type of waiters
@@ -336,8 +336,11 @@ def get_rwsem_waiters_info(rwsem: Object) -> None:
         waiter_type = get_rwsem_waiter_type(waiter)
         task = waiter.task
         print(
-            f"({task.type_.type_name()})0x{task.value_():x}: (pid){task.pid.value_()}: {waiter_type}"
+            f"  ({task.type_.type_name()})0x{task.value_():x}  (pid){task.pid.value_():<8}  (waiter_type){waiter_type:<16}  (cpu){task_cpu(task):<4}  (state){task_state_to_char(task):<4} (wait_time){timestamp_str(task_lastrun2now(task))}"
         )
+        if callstack:
+            print("call stack of waiter:\n ")
+            bt(task)
 
 
 def is_rwsem_reader_owned(rwsem: Object) -> bool:
@@ -396,13 +399,15 @@ def is_rwsem_writer_owned(rwsem: Object) -> bool:
         return not owner_is_reader
 
 
-def get_rwsem_info(rwsem: Object) -> None:
+def get_rwsem_info(rwsem: Object, callstack: int = 0) -> None:
     """
     Get information about given rwsem.
     This consists of type of owner, ``struct task_struct *``, pid(s) and type
     of waiter(s)
 
     :param rwsem: ``struct rw_semaphore *``
+    :param callstack: bool. False by default. True if call stack of waiters are
+                      needed.
     """
 
     # This helper supports LTS versions since v4.14. It may work with
@@ -420,6 +425,8 @@ def get_rwsem_info(rwsem: Object) -> None:
     # since v5.3.1.
     # So we can use ->owner type to distinguish between new and old usage
     # of rwsem ->count and ->owner bits.
+
+    print(f"({rwsem.type_.type_name()})0x{rwsem.value_():x}")
     if not rwsem.count.counter.value_():
         print("rwsem is free.")
         return
@@ -456,4 +463,4 @@ def get_rwsem_info(rwsem: Object) -> None:
     if list_empty(rwsem.wait_list.address_of_()):
         print("There are no waiters")
     else:
-        get_rwsem_waiters_info(rwsem)
+        get_rwsem_waiters_info(rwsem, callstack)
