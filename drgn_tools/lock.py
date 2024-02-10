@@ -39,6 +39,7 @@ from drgn_tools.bt import bt_has_any
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
+from drgn_tools.locking import get_rwsem_info
 from drgn_tools.locking import mutex_owner
 from drgn_tools.locking import show_lock_waiter
 from drgn_tools.locking import tail_osq_node_to_spinners
@@ -176,6 +177,33 @@ def show_sem_lock(prog: Program, frame_list, seen_sems, stack: bool) -> None:
         print("")
 
 
+def show_rwsem_lock(
+    prog: Program, frame_list, seen_rwsems, stack: bool
+) -> None:
+    """Show rw_semaphore details"""
+    warned_absent = False
+    for task, frame in frame_list:
+        try:
+            rwsem = frame["sem"]
+            rwsemaddr = rwsem.value_()
+        except drgn.ObjectAbsentError:
+            if not warned_absent:
+                print(
+                    "warning: failed to get rwsemaphore from stack frame"
+                    "- information is incomplete"
+                )
+                warned_absent = True
+            continue
+
+        if rwsemaddr in seen_rwsems:
+            continue
+        seen_rwsems.add(rwsemaddr)
+
+        get_rwsem_info(rwsem, stack)
+
+        print("")
+
+
 def scan_sem_lock(prog: Program, stack: bool) -> None:
     """Scan for semphores"""
     seen_sems: Set[int] = set()
@@ -191,6 +219,26 @@ def scan_sem_lock(prog: Program, stack: bool) -> None:
         show_sem_lock(prog, frame_list, seen_sems, stack)
 
 
+def scan_rwsem_lock(prog: Program, stack: bool) -> None:
+    """Scan for read-write(rw) semphores"""
+    seen_rwsems: Set[int] = set()
+    frame_list = bt_has(prog, "__rwsem_down_write_failed_common")
+    if frame_list:
+        show_rwsem_lock(prog, frame_list, seen_rwsems, stack)
+
+    frame_list = bt_has(prog, "__rwsem_down_read_failed_common")
+    if frame_list:
+        show_rwsem_lock(prog, frame_list, seen_rwsems, stack)
+
+    frame_list = bt_has(prog, "rwsem_down_write_slowpath")
+    if frame_list:
+        show_rwsem_lock(prog, frame_list, seen_rwsems, stack)
+
+    frame_list = bt_has(prog, "rwsem_down_read_slowpath")
+    if frame_list:
+        show_rwsem_lock(prog, frame_list, seen_rwsems, stack)
+
+
 def scan_lock(prog: Program, stack: bool) -> None:
     """Scan tasks for Mutex and Semaphore"""
     print("Scanning Mutexes ...")
@@ -200,6 +248,10 @@ def scan_lock(prog: Program, stack: bool) -> None:
     print("Scanning Semaphores...")
     print("")
     scan_sem_lock(prog, stack)
+
+    print("Scanning RWSemaphores...")
+    print("")
+    scan_rwsem_lock(prog, stack)
 
 
 class Locking(CorelensModule):
