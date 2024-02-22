@@ -4,6 +4,7 @@
 Describes the "heavy" images used for running tests
 """
 import dataclasses
+from typing import List
 
 
 @dataclasses.dataclass
@@ -13,6 +14,7 @@ class ImageInfo:
     uek: int
     arch: str
     iso_url: str
+    rpms: List[str]
 
     @property
     def iso_name(self) -> str:
@@ -39,6 +41,7 @@ CONFIGURATIONS = [
         7,
         "x86_64",
         "https://yum.oracle.com/ISOS/OracleLinux/OL9/u1/x86_64/OracleLinux-R9-U1-x86_64-boot-uek.iso",  # noqa
+        [],
     ),
     # OL8: UEK 6-7
     ImageInfo(
@@ -47,6 +50,7 @@ CONFIGURATIONS = [
         7,
         "x86_64",
         "https://yum.oracle.com/ISOS/OracleLinux/OL8/u7/x86_64/x86_64-boot-uek.iso",  # noqa
+        [],
     ),
     ImageInfo(
         8,
@@ -54,6 +58,7 @@ CONFIGURATIONS = [
         6,
         "x86_64",
         "https://yum.oracle.com/ISOS/OracleLinux/OL8/u7/x86_64/x86_64-boot-uek.iso",  # noqa
+        [],
     ),
     # OL7: UEK 4-6
     ImageInfo(
@@ -62,6 +67,7 @@ CONFIGURATIONS = [
         6,
         "x86_64",
         "https://yum.oracle.com/ISOS/OracleLinux/OL7/u9/x86_64/x86_64-boot-uek.iso",  # noqa
+        ["drgn-0.0.25-1.0.2.el7.x86_64.rpm"],
     ),
     ImageInfo(
         7,
@@ -69,6 +75,7 @@ CONFIGURATIONS = [
         5,
         "x86_64",
         "https://yum.oracle.com/ISOS/OracleLinux/OL7/u9/x86_64/x86_64-boot-uek.iso",  # noqa
+        ["drgn-0.0.25-1.0.2.el7.x86_64.rpm"],
     ),
     ImageInfo(
         7,
@@ -76,6 +83,7 @@ CONFIGURATIONS = [
         4,
         "x86_64",
         "https://yum.oracle.com/ISOS/OracleLinux/OL7/u9/x86_64/x86_64-boot-uek.iso",  # noqa
+        ["drgn-0.0.25-1.0.2.el7.x86_64.rpm"],
     ),
 ]
 NAME_TO_CONFIGURATION = {i.name: i for i in CONFIGURATIONS}

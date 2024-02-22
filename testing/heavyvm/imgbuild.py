@@ -34,6 +34,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import wait
 from pathlib import Path
@@ -62,6 +63,7 @@ class Context:
     image_dir: Path
     ks_dir: Path
     ks_url: str
+    ks_srv: "KickstartServer"
     tmp_dir: Path
     overwrite: bool
     interactive: bool
@@ -176,16 +178,17 @@ def make_empty_image(ctx: Context) -> None:
 
 
 class KickstartServer:
-    def __init__(self, port=8325) -> None:
+    def __init__(self, host: str, port: int = 8325) -> None:
         self.port = port
+        self.host = host
         self.server = socketserver.TCPServer(
             ("", port), http.server.SimpleHTTPRequestHandler
         )
         self.thread = threading.Thread(target=self.run)
 
-    def url_for(self, host: str, path: Path) -> str:
+    def url_for(self, path: Path) -> str:
         rel = str(path.relative_to(Path.cwd()))
-        return f"http://{host}:{self.port}/{rel}"
+        return f"http://{self.host}:{self.port}/{rel}"
 
     def run(self) -> None:
         with self.server:
@@ -261,7 +264,10 @@ def run_post_install(ctx: Context) -> None:
     # install dependent packages
     if ctx.image_info.ol > 7:
         ser.cmd(
-            f"yum-config-manager --enable ol{ctx.image_info.ol}_appstream".encode()
+            f"dnf config-manager --enable ol{ctx.image_info.ol}_appstream".encode()
+        )
+        ser.cmd(
+            f"dnf config-manager --enable ol{ctx.image_info.ol}_addons".encode()
         )
 
     install_packages = [
@@ -271,15 +277,20 @@ def run_post_install(ctx: Context) -> None:
     if ctx.image_info.ol >= 9:
         # Starting in OL9, it looks like fio engines are packaged separately
         install_packages.append("fio-engine-libaio")
+
+    # Install drgn either from Yum repo (OL8+, or from RPMs hosted on kickstart
+    # server)
+    if ctx.image_info.ol >= 8:
+        install_packages.append("drgn")
+    for filename in ctx.image_info.rpms:
+        install_packages.append(ctx.ks_srv.url_for(Path(filename).absolute()))
+
     ser.cmd(
         b"yum install -y " + b" ".join(s.encode() for s in install_packages)
     )
 
-    # Install drgn
-    ser.cmd(b"python3 -m venv /opt/drgn")
-    ser.cmd(b"/opt/drgn/bin/python3 -m pip install --upgrade pip")
-    ser.cmd(b"/opt/drgn/bin/python3 -m pip install drgn")
-    ser.cmd(b"ln -s /opt/drgn/bin/drgn /usr/bin/drgn")
+    # Install the pytest dependency
+    ser.cmd(b"python3 -m pip install 'pytest<7.1'")
 
     # OL9 disables root login fia SSH. That's probably good for most cases but
     # not here!
@@ -316,6 +327,21 @@ def do_imgbuild(ctx: Context) -> None:
     make_empty_image(ctx)
     run_installer(ctx, cmdline)
     run_post_install(ctx)
+
+
+def validate_rpms(images: List[ImageInfo]) -> None:
+    missing = defaultdict(list)
+    for image in images:
+        for rpm in image.rpms:
+            if not os.path.exists(rpm):
+                missing[rpm].append(image)
+
+    if missing:
+        print("error: missing RPM files required for build:")
+        for fn, imgs in missing.items():
+            names = ", ".join(i.name for i in imgs)
+            print(f"  {fn}: required for {names}")
+        sys.exit(1)
 
 
 def main() -> None:
@@ -381,7 +407,9 @@ def main() -> None:
         print("over serial port. Limited to one task at a time.")
         args.num_workers = 1
 
-    srv = KickstartServer()
+    validate_rpms(info)
+
+    srv = KickstartServer("10.0.2.2")
     srv.start()
     logging.basicConfig(level=logging.INFO)
     ret = 0
@@ -394,13 +422,14 @@ def main() -> None:
             tmp_sub_dir = tmp_dir / image_info.name
             tmp_sub_dir.mkdir()
             log.info("Launching with tmpdir: %s", tmp_sub_dir)
-            ks_url = srv.url_for("10.0.2.2", args.ks_dir / image_info.ks_name)
+            ks_url = srv.url_for(args.ks_dir / image_info.ks_name)
             ctx = Context(
                 image_info,
                 args.iso_dir,
                 args.image_dir,
                 args.ks_dir,
                 ks_url,
+                srv,
                 tmp_sub_dir,
                 args.overwrite,
                 args.interactive,
