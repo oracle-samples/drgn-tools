@@ -25,6 +25,8 @@ from drgn_tools.task import task_cpu
 __all__ = (
     "bt",
     "bt_frames",
+    "bt_has",
+    "bt_has_any",
     "expand_frames",
     "expand_traces",
     "find_pt_regs",
@@ -466,8 +468,9 @@ def _index_functions(prog: drgn.Program) -> t.Dict[str, t.Set[int]]:
     return func_to_pids
 
 
-def _indexed_bt_has(
-    prog: drgn.Program, funcname: str
+def _indexed_bt_has_any(
+    prog: drgn.Program,
+    funcs: t.List[str],
 ) -> t.List[t.Tuple[drgn.Object, drgn.StackFrame]]:
     index = prog.cache.get("drgn_tools.bt._index_functions")
     if index is None:
@@ -475,22 +478,26 @@ def _indexed_bt_has(
         prog.cache["drgn_tools.bt._index_functions"] = index
 
     result = []
-    for pid in index[funcname]:
+    pids = set()
+    for funcname in funcs:
+        pids.update(index[funcname])
+    for pid in pids:
         task = find_task(prog, pid)
         for frame in bt_frames(task):
-            if frame.name == funcname:
+            if frame.name in funcs:
                 result.append((task, frame))
     return result
 
 
-def bt_has(
-    prog: drgn.Program, funcname: str
+def bt_has_any(
+    prog: drgn.Program,
+    funcs: t.List[str],
 ) -> t.List[t.Tuple[drgn.Object, drgn.StackFrame]]:
     """
-    Search for tasks whose stack contains a given function
+    Search for tasks whose stack contains the given functions
 
     For each task on the system, examine their stack trace and search for a
-    given function. For each task containing this function on the stack,
+    list of functions. For each task containing such a function on the stack,
     return a tuple containing a pointer to the task, and the stack frame
     containing the function call.
 
@@ -505,14 +512,14 @@ def bt_has(
     """
     # Use a cached function index for vmcores
     if not (prog.flags & ProgramFlags.IS_LIVE):
-        return _indexed_bt_has(prog, funcname)
+        return _indexed_bt_has_any(prog, funcs)
 
     frame_list = []
     for task in for_each_task(prog):
         try:
             frames = bt_frames(task)
             for frame in frames:
-                if frame.name == funcname:
+                if frame.name in funcs:
                     frame_list.append((task, frame))
         except (FaultError, ValueError):
             # FaultError: catch unusual unwinding issues
@@ -520,6 +527,19 @@ def bt_has(
             pass
 
     return frame_list
+
+
+def bt_has(
+    prog: drgn.Program,
+    funcname: str,
+) -> t.List[t.Tuple[drgn.Object, drgn.StackFrame]]:
+    """
+    Search for tasks whose stack contains a single function
+
+    This function is identical to bt_has_any(), but takes only one
+    function argument.
+    """
+    return bt_has_any(prog, [funcname])
 
 
 def print_online_bt(prog: Program, **kwargs: t.Any) -> None:
