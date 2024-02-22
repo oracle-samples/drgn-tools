@@ -278,10 +278,8 @@ def test(
                 cmd += ["-e", env]
             cmd += [
                 "--",
-                "--vmcore",
-                core_name,
-                "--vmcore-dir",
-                str(CORE_DIR),
+                f"--vmcore={core_name}",
+                f"--vmcore-dir={str(CORE_DIR)}",
                 "--junitxml=test.xml",
                 "-o",
                 "junit_logging=all",
