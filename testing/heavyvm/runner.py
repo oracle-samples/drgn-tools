@@ -314,15 +314,7 @@ def main():
     )
     with r:
         r.copy_extract_files(args.tarball)
-        r.run_cmd(
-            "/opt/drgn/bin/python -m pip install -r "
-            "/root/test/requirements-dev.txt"
-        )
-        sys.exit(
-            r.run_test(
-                "cd /root/test && /opt/drgn/bin/python -m pytest -rP tests"
-            )
-        )
+        sys.exit(r.run_test("cd /root/test && python3 -m pytest -rP tests"))
 
 
 if __name__ == "__main__":

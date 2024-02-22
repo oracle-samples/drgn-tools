@@ -122,6 +122,10 @@ Requirements:
 - `wget`
 - `7z` from the `p7zip-plugins` package
 - Quite a bit of time to build the VMs, and disk space to store them
+- In order to build OL7, you'll need the `drgn` RPM stored locally. See the
+  `testing/heavyvm/images.py` configurations for the exact filenames, or you can
+  comment out the OL7 definitions and use the OL8 and OL9 VMs only (which fetch
+  the drgn RPMs from the public yum repositories).
 
 Test data:
 
