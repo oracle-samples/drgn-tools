@@ -31,7 +31,7 @@ import drgn
 from drgn import Program
 
 from drgn_tools.bt import bt
-from drgn_tools.bt import bt_has
+from drgn_tools.bt import bt_has_any
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
@@ -42,7 +42,7 @@ from drgn_tools.locking import show_lock_waiter
 def scan_mutex_lock(prog: Program, stack: bool) -> None:
     """Scan for mutex and show deitals"""
 
-    frame_list = bt_has(prog, "__mutex_lock")
+    frame_list = bt_has_any(prog, ["__mutex_lock"])
     if not frame_list:
         return
 
@@ -119,23 +119,14 @@ def show_sem_lock(prog: Program, frame_list, seen_sems, stack: bool) -> None:
 def scan_sem_lock(prog: Program, stack: bool) -> None:
     """Scan for semphores"""
     seen_sems: Set[int] = set()
-    frame_list = bt_has(prog, "__down")
-    if frame_list:
-        show_sem_lock(prog, frame_list, seen_sems, stack)
-
-    frame_list = bt_has(prog, "__down_common")
-    if frame_list:
-        show_sem_lock(prog, frame_list, seen_sems, stack)
-
-    frame_list = bt_has(prog, "__down_interruptible")
-    if frame_list:
-        show_sem_lock(prog, frame_list, seen_sems, stack)
-
-    frame_list = bt_has(prog, "__down_killable")
-    if frame_list:
-        show_sem_lock(prog, frame_list, seen_sems, stack)
-
-    frame_list = bt_has(prog, "__down_timeout")
+    functions = [
+        "__down",
+        "__down_common",
+        "__down_interruptible",
+        "__down_killable",
+        "__down_timeout",
+    ]
+    frame_list = bt_has_any(prog, functions)
     if frame_list:
         show_sem_lock(prog, frame_list, seen_sems, stack)
 
