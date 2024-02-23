@@ -18,10 +18,7 @@ def get_platform_arch(prog: Program) -> str:
     """
     dump_stack_arch_desc = prog["dump_stack_arch_desc_str"]
     str_dump_stack_arch_desc = dump_stack_arch_desc.string_().decode("utf-8")
-    if "QEMU Standard PC" in str_dump_stack_arch_desc:
-        return "QEMU"
-
-    return "BareMetal"
+    return str_dump_stack_arch_desc
 
 
 def get_platform_hypervisor(prog: Program) -> str:
@@ -29,52 +26,38 @@ def get_platform_hypervisor(prog: Program) -> str:
     Returns hypervisor type
     Note: This is x86 specific
     """
-    str_hyper_type = ""
     try:
-        hyper_type = prog["x86_hyper_type"]
-        str_hyper_type = str(hyper_type).split(")")[1]
+        return prog["x86_hyper_type"].format_(type_name=False)
     except KeyError:
         print("Platform not supported.")
+    return ""
 
-    return str_hyper_type
 
-
-def get_cpuhp_state(prog, cpu: int) -> str:
+def get_cpuhp_state(prog: Program, cpu: int) -> str:
     cpuhp_state = per_cpu(prog["cpuhp_state"], cpu).state
-    index = cpuhp_state.value_()
-    enums = cpuhp_state.type_.enumerators
-    cpuhp_state_str = ""
-    for e in enums:
-        if e.value == index:
-            cpuhp_state_str = e.name
-            break
-    return cpuhp_state_str
+    return cpuhp_state.format_(type_name=False)
 
 
-def show_cpuhp_state(prog) -> None:
+def show_cpuhp_state(prog: Program) -> None:
     for cpu in for_each_possible_cpu(prog):
         state = get_cpuhp_state(prog, cpu)
-        cpu_state_str = "CPU [" + str(cpu) + "] : " + state
-        print(cpu_state_str)
+        print(f"CPU [{cpu:3d}]: {state}")
 
 
-def show_platform(prog: Program) -> None:
+def show_platform(prog: Program) -> str:
     """
     Prints the kernel command line
     """
     str_platform = (
-        "Platform : "
-        + get_platform_arch(prog)
-        + " "
-        + get_platform_hypervisor(prog)
+        get_platform_arch(prog) + " " + get_platform_hypervisor(prog)
     )
-    print(str_platform)
+    return str_platform
 
 
 class VirtUtil(CorelensModule):
-    """Display the kernel command line"""
+    """"""
 
     name = "virtutil"
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
-        show_platform(prog)
+        return
