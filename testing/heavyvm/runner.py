@@ -9,6 +9,7 @@ import time
 import typing as t
 from pathlib import Path
 
+from junitparser import JUnitXml
 from paramiko.client import AutoAddPolicy
 from paramiko.client import SSHClient
 
@@ -247,8 +248,18 @@ class TestRunner:
             print("Result:\n" + result)
         self._section_end("run_cmd")
 
+    def _get_result_xml(self, info: VmInfo) -> JUnitXml:
+        ssh_client = self._get_ssh(info)
+        sftp = ssh_client.open_sftp()
+        # This XML contains an encoding declaration, and if we decode it, that
+        # will trigger an error in the xml module. Leave it as bytes, even
+        # though the JUnitXml.fromstring() function insists it takes a str.
+        xmldata = sftp.file("/root/test/test.xml").read()
+        return JUnitXml.fromstring(xmldata)
+
     def run_test(self, cmd: str) -> int:
         fail_list = []
+        xml = JUnitXml()
         for vm in self.vms.values():
             slug = f"ol{vm.ol_version[0]}uek{vm.uek_version}"
             self._section_start(
@@ -262,6 +273,7 @@ class TestRunner:
             else:
                 print("Failed.")
                 fail_list.append(vm.name)
+            xml += self._get_result_xml(vm)
             self._section_end(f"test_{slug}")
         if fail_list:
             print(
@@ -271,6 +283,10 @@ class TestRunner:
             )
         else:
             print("All tests passed, nice!")
+        output = Path("heavyvm.xml")
+        if output.exists():
+            output.unlink()
+        xml.write(str(output))
         return len(fail_list)
 
 
@@ -314,7 +330,11 @@ def main():
     )
     with r:
         r.copy_extract_files(args.tarball)
-        sys.exit(r.run_test("cd /root/test && python3 -m pytest -rP tests"))
+        sys.exit(
+            r.run_test(
+                "cd /root/test && python3 -m pytest --junitxml=test.xml -o junit_logging=all tests"
+            )
+        )
 
 
 if __name__ == "__main__":
