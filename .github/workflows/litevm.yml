@@ -59,6 +59,7 @@ jobs:
         # detecting Python 3.6 and running tests on it.
         run: |
           python3.12 -m pip install --user --break-system-packages 'virtualenv<20.22.0' 'tox<4.5.0'
+          sed -i 's/sitepackages = true/sitepackages = false/' tox.ini
           tox list
           tox --notest
           tox -e runner --notest
