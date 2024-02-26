@@ -132,6 +132,7 @@ def pytest_configure(config):
         CORE_DIR = Path(core_dir)
     vmcore = config.getoption("vmcore")
     CTF = config.getoption("ctf")
+    debuginfo_kind = "DWARF"
     if vmcore:
         VMCORE_NAME = vmcore
         vmcore_dir = CORE_DIR / vmcore
@@ -150,6 +151,7 @@ def pytest_configure(config):
                     returncode=1,
                 )
             CTF_FILE = str(ctf_file)
+            debuginfo_kind = "CTF"
         else:
             vmlinux_file = vmcore_dir / "vmlinux"
             if not vmcore_file.is_file() or not vmlinux_file.is_file():
@@ -161,11 +163,12 @@ def pytest_configure(config):
             for module in vmcore_dir.glob("*.ko.debug"):
                 DEBUGINFO.append(module)
 
-    config.inicfg["junit_suite_name"] = "Python {}.{}.{} - {}".format(
+    config.inicfg["junit_suite_name"] = "Python {}.{}.{} - {} ({})".format(
         sys.version_info.major,
         sys.version_info.minor,
         sys.version_info.micro,
         f"vmcore {vmcore}" if vmcore else "live",
+        debuginfo_kind,
     )
     if CTF:
         print("TESTING WITH CTF")
