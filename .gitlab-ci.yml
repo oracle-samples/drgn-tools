@@ -16,11 +16,23 @@ vmtest:
     reports:
       junit: heavyvm.xml
 
-vmcore:
+vmcore DWARF:
   script:
     - rm -rf .tox
     - tox -e runner --notest
-    - tox -e runner -- python -m testing.vmcore test -e py39 --core-directory /var/drgn-tools/vmcores
+    - tox -e runner -- python -m testing.vmcore test -e py39 -j 4 --core-directory /var/drgn-tools/vmcores
+  artifacts:
+    when: always
+    paths:
+      - vmcore.xml
+    reports:
+      junit: vmcore.xml
+
+vmcore CTF:
+  script:
+    - rm -rf .tox
+    - tox -e runner --notest
+    - tox -e runner -- python -m testing.vmcore test -e py39 -j 4 --ctf --core-directory /var/drgn-tools/vmcores
   artifacts:
     when: always
     paths:
