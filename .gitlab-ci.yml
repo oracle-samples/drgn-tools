@@ -1,11 +1,26 @@
 vmtest:
+  # Virtual machine tests run in parallel and take a fair bit of memory. Use
+  # resource_group to limit the concurrency of these tests so only one runs at a
+  # time.
+  resource_group: VM
   script:
     - rm -rf .tox
     - git archive HEAD -o archive.tar.gz
     - tox -e runner --notest
-    - tox -e runner -- python -m testing.vmcore test -e py39 --core-directory /var/drgn-tools/vmcores
     - mkdir -p tmp/overlays tmp/info
     - tox -e runner -- python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz
+  artifacts:
+    when: always
+    paths:
+      - heavyvm.xml
+    reports:
+      junit: heavyvm.xml
+
+vmcore:
+  script:
+    - rm -rf .tox
+    - tox -e runner --notest
+    - tox -e runner -- python -m testing.vmcore test -e py39 --core-directory /var/drgn-tools/vmcores
   artifacts:
     when: always
     paths:
