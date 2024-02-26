@@ -9,9 +9,12 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from threading import Event
 from typing import Any
 from typing import List
@@ -32,7 +35,8 @@ from rich.progress import TextColumn
 from rich.progress import TimeRemainingColumn
 from rich.progress import TransferSpeedColumn
 
-from testing.util import ci_section
+from drgn_tools.debuginfo import CtfCompatibility
+from drgn_tools.debuginfo import KernelVersion
 
 CORE_DIR = Path.cwd() / "testdata/vmcores"
 
@@ -245,8 +249,43 @@ def upload_all(client: ObjectStorageClient, core: str) -> None:
             future.result()
 
 
+def _test_job(
+    core_name: str, cmd: List[str], xml: str
+) -> Tuple[str, bool, JUnitXml]:
+    # Runs the test silently, but prints the stdout/stderr on failure.
+    with NamedTemporaryFile("w+t") as f:
+        print(f"Begin testing {core_name}")
+        start = time.time()
+        res = subprocess.run(cmd, stdout=f, stderr=f)
+        if res.returncode != 0:
+            print(f"=== FAILURE: {core_name} ===")
+            f.seek(0)
+            sys.stdout.write(f.read())
+        runtime = time.time() - start
+        print(f"Completed testing {core_name} in {runtime:.1f}")
+        run_data = JUnitXml.fromfile(xml)
+    return (core_name, res.returncode == 0, run_data)
+
+
+def _skip_ctf(ctf: bool, uname: str) -> bool:
+    if ctf:
+        host_ol = 9  # OL8 or 9 work here, tests aren't supported for OL7
+        kver = KernelVersion.parse(uname)
+        compat = CtfCompatibility.get(kver, host_ol)
+        # Skip test when CTF is fully unsupported, or when it would require a
+        # /proc/kallsyms.
+        return compat in (
+            CtfCompatibility.NO,
+            CtfCompatibility.LIMITED_PROC,
+        )
+    return False  # don't skip when non-CTF
+
+
 def test(
-    vmcore_list: List[str], env: Optional[str] = None, ctf: bool = False
+    vmcore_list: List[str],
+    env: Optional[str] = None,
+    ctf: bool = False,
+    parallel: int = 1,
 ) -> None:
     def should_run_vmcore(name: str) -> bool:
         if not vmcore_list:
@@ -260,27 +299,34 @@ def test(
     passed = []
     skipped = []
     xml = JUnitXml()
-    xml_run = Path("test.xml")
 
-    for path in CORE_DIR.iterdir():
-        core_name = path.name
-        if not should_run_vmcore(core_name):
-            continue
-        with ci_section(
-            f"vmcore-{core_name}",
-            f"Running tests on vmcore {core_name}",
-            collapsed=True,
-        ):
-            if xml_run.exists():
-                xml_run.unlink()
-            cmd = ["tox"]
-            if env:
-                cmd += ["-e", env]
-            cmd += [
+    tox_cmd = ["tox"]
+    if env:
+        tox_cmd += ["-e", env]
+    # Initialize the virtualenv once, and then tell tox not to do it again.
+    subprocess.run(tox_cmd + ["--notest"])
+    tox_cmd.append("--skip-pkg-install")
+
+    with ExitStack() as es:
+        pool = es.enter_context(ThreadPoolExecutor(max_workers=parallel))
+        futures = []
+        for path in CORE_DIR.iterdir():
+            core_name = path.name
+            if not should_run_vmcore(core_name):
+                continue
+            uname = (path / "UTS_RELEASE").read_text().strip()
+            if _skip_ctf(ctf, uname):
+                skipped.append(core_name)
+                continue
+            xml_run = es.enter_context(
+                NamedTemporaryFile("w", suffix=".xml", delete=False)
+            )
+            xml_run.close()  # not deleted until context is ended
+            cmd = tox_cmd + [
                 "--",
                 f"--vmcore={core_name}",
                 f"--vmcore-dir={str(CORE_DIR)}",
-                "--junitxml=test.xml",
+                f"--junitxml={xml_run.name}",
                 "-o",
                 "junit_logging=all",
             ]
@@ -289,16 +335,18 @@ def test(
                     skipped.append(core_name)
                     continue
                 cmd.append("--ctf")
-            res = subprocess.run(cmd)
-            run_data = JUnitXml.fromfile(str(xml_run))
-            xml += run_data
-            if res.returncode != 0:
-                failed.append(core_name)
-            else:
-                passed.append(core_name)
+            futures.append(
+                pool.submit(_test_job, core_name, cmd, xml_run.name)
+            )
 
-    if xml_run.exists():
-        xml_run.unlink()
+        for future in futures:
+            core_name, test_passed, run_data = future.result()
+            xml += run_data
+            if test_passed:
+                passed.append(core_name)
+            else:
+                failed.append(core_name)
+
     xml.write("vmcore.xml")
     print("Complete test logs: vmcore.xml")
     print("Vmcore Test Summary -- Passed:")
@@ -366,6 +414,13 @@ def main():
         help="Use CTF debuginfo for tests rather than DWARF (skips vmcores "
         "without a vmlinux.ctfa file)",
     )
+    parser.add_argument(
+        "--parallel",
+        "-j",
+        type=int,
+        default=1,
+        help="Run the tests in parallel with the given number of threads",
+    )
     args = parser.parse_args()
     if args.core_directory:
         CORE_DIR = args.core_directory.absolute()
@@ -379,7 +434,12 @@ def main():
             sys.exit("error: --upload-core is required for upload operation")
         upload_all(get_client(), args.upload_core)
     elif args.action == "test":
-        test(args.vmcore, env=args.tox_env, ctf=args.ctf)
+        test(
+            args.vmcore,
+            env=args.tox_env,
+            ctf=args.ctf,
+            parallel=args.parallel,
+        )
 
 
 if __name__ == "__main__":
