@@ -137,7 +137,7 @@ def show_md_pv(prog: Program, mddev: Object) -> None:
             % (
                 prefix,
                 md_pv_name(rdev),
-                1 if blkdev_ro(rdev.bdev) else 0,
+                blkdev_ro(rdev.bdev),
                 pending,
                 enum_flags_str(prog, "enum flag_bits", rdev.flags),
                 rdev.data_offset.value_(),
