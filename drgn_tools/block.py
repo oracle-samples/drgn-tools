@@ -48,16 +48,30 @@ def for_each_badblocks(bb: Object) -> Iterable[Object]:
         yield (offset, length, ack)
 
 
-def blkdev_ro(bdev: Object) -> bool:
+def blkdev_ro(bdev: Object) -> int:
     """
     Check whether ``struct block_device *`` is read only
 
     :param bdev: ``struct block_device *``
-    :returns: True if readonly
+    :returns: 1 if readonly, 0 if readwrite, -1 if unknown
     """
     if has_member(bdev, "bd_read_only"):
         return bool(bdev.bd_read_only.value_())
-    return bdev.bd_part.policy != 0
+    # "bd_part" is NULL if bdev was not opened yet.
+    if bdev.bd_part:
+        return bdev.bd_part.policy != 0
+    else:
+        return -1
+
+
+def blkdev_size(bdev: Object) -> int:
+    """
+    Return block device size
+
+    :param bdev: ``struct block_device *``
+    :returns: device size
+    """
+    return int(bdev.bd_inode.i_size)
 
 
 def blkdev_name(bdev: Object) -> str:
