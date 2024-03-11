@@ -25,10 +25,12 @@ functions as: ``__down_common`` and ``__down`` depending upon releases. So
 trapping these two function is sufficient to check the semaphore waiters.
 """
 import argparse
+from typing import Optional
 from typing import Set
 
 import drgn
 from drgn import Program
+from drgn.helpers.linux.pid import find_task
 
 from drgn_tools.bt import bt
 from drgn_tools.bt import bt_has_any
@@ -37,10 +39,19 @@ from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
 from drgn_tools.locking import mutex_owner
 from drgn_tools.locking import show_lock_waiter
+from drgn_tools.task import task_lastrun2now
 
 
-def scan_mutex_lock(prog: Program, stack: bool) -> None:
-    """Scan for mutex and show deitals"""
+def scan_mutex_lock(
+    prog: Program,
+    stack: bool,
+    time: Optional[int] = None,
+    pid: Optional[int] = None,
+) -> None:
+    """Scan for mutex and show details"""
+    wtask = None
+    if pid is not None:
+        wtask = find_task(prog, pid)
 
     frame_list = bt_has_any(prog, ["__mutex_lock"])
     if not frame_list:
@@ -68,25 +79,55 @@ def scan_mutex_lock(prog: Program, stack: bool) -> None:
             continue
         seen_mutexes.add(mutex_addr)
 
-        index = 1
+        index = 0
         print(f"Mutex: 0x{mutex_addr:x}")
-        print("Mutex OWNER:", struct_owner.comm.string_().decode("utf-8"))
+        print(
+            "Mutex OWNER:",
+            struct_owner.comm.string_().decode("utf-8"),
+            "PID :",
+            struct_owner.pid.value_(),
+        )
         print("")
         if stack:
             bt(struct_owner.pid)
-            print("")
+        print("")
+
         print(
             "Mutex WAITERS (Index, cpu, comm, pid, state, wait time (d hr:min:sec:ms)):"
         )
-        for waiter in for_each_mutex_waiter(prog, mutex):
-            show_lock_waiter(prog, waiter, index, stacktrace=stack)
-            index = index + 1
+        if pid is None:
+            if time is None:
+                time = 0
+            for waiter in for_each_mutex_waiter(prog, mutex):
+                waittime = task_lastrun2now(waiter)
+                timens = time * 1000000000
+                index = index + 1
+
+                if waittime > timens or timens == 0:
+                    show_lock_waiter(prog, waiter, index, stacktrace=stack)
+                else:
+                    continue
+        else:
+            show_lock_waiter(prog, wtask, index, stacktrace=stack)
+
         print("")
 
 
-def show_sem_lock(prog: Program, frame_list, seen_sems, stack: bool) -> None:
+def show_sem_lock(
+    prog: Program,
+    frame_list,
+    seen_sems,
+    stack: bool,
+    time: Optional[int] = None,
+    pid: Optional[int] = None,
+) -> None:
     """Show semaphore details"""
     warned_absent = False
+    wtask = None
+
+    if pid is not None:
+        wtask = find_task(prog, pid)
+
     for task, frame in frame_list:
         try:
             sem = frame["sem"]
@@ -104,20 +145,40 @@ def show_sem_lock(prog: Program, frame_list, seen_sems, stack: bool) -> None:
             continue
         seen_sems.add(semaddr)
 
-        index = 1
+        index = 0
         print(f"Semaphore: 0x{semaddr:x}")
         print(
             "Semaphore WAITERS (Index, cpu, comm, pid, state, wait time (d hr:min:sec:ms)):"
         )
-        for waiter in for_each_rwsem_waiter(prog, sem):
-            show_lock_waiter(prog, waiter, index, stacktrace=stack)
-            index = index + 1
+        if pid is None:
+            if time is None:
+                time = 0
+            for waiter in for_each_rwsem_waiter(prog, sem):
+                waittime = task_lastrun2now(waiter)
+                timens = time * 1000000000
+                index = index + 1
+
+                if waittime > timens or timens == 0:
+                    show_lock_waiter(prog, waiter, index, stacktrace=stack)
+                else:
+                    continue
+        else:
+            show_lock_waiter(prog, wtask, index, stacktrace=stack)
 
         print("")
 
 
-def scan_sem_lock(prog: Program, stack: bool) -> None:
-    """Scan for semphores"""
+def scan_sem_lock(
+    prog: Program,
+    stack: bool,
+    time: Optional[int] = None,
+    pid: Optional[int] = None,
+) -> None:
+    """Scan for semaphores"""
+    wtask = None
+    if pid is not None:
+        wtask = find_task(prog, pid)
+
     seen_sems: Set[int] = set()
     functions = [
         "__down",
@@ -126,20 +187,25 @@ def scan_sem_lock(prog: Program, stack: bool) -> None:
         "__down_killable",
         "__down_timeout",
     ]
-    frame_list = bt_has_any(prog, functions)
+    frame_list = bt_has_any(prog, functions, wtask)
     if frame_list:
-        show_sem_lock(prog, frame_list, seen_sems, stack)
+        show_sem_lock(prog, frame_list, seen_sems, stack, time, pid)
 
 
-def scan_lock(prog: Program, stack: bool) -> None:
+def scan_lock(
+    prog: Program,
+    stack: bool,
+    time: Optional[int] = None,
+    pid: Optional[int] = None,
+) -> None:
     """Scan tasks for Mutex and Semaphore"""
-    print("Scanning Mutexes ...")
+    print("Scanning Mutexes...")
     print("")
-    scan_mutex_lock(prog, stack)
+    scan_mutex_lock(prog, stack, time, pid)
 
     print("Scanning Semaphores...")
     print("")
-    scan_sem_lock(prog, stack)
+    scan_sem_lock(prog, stack, time, pid)
 
 
 class Locking(CorelensModule):
@@ -152,6 +218,31 @@ class Locking(CorelensModule):
         parser.add_argument(
             "--stack", action="store_true", help="Print the stack."
         )
+        parser.add_argument(
+            "--time",
+            nargs="?",
+            const=0,
+            type=int,
+            default=None,
+            help="Show process with wait time more than the specified time in sec",
+        )
+        parser.add_argument(
+            "--pid",
+            nargs="?",
+            const=0,
+            type=int,
+            default=None,
+            help="Filter with process id",
+        )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
-        scan_lock(prog, args.stack)
+        if args.time is not None and args.time < 0:
+            print("Wait time is less than Zero")
+            return
+        if args.pid is not None and args.pid < 0:
+            print("pid is less than zero, Error")
+            return
+        if args.pid is not None and args.time is not None:
+            print("Dont filter with both time and PID")
+            return
+        scan_lock(prog, args.stack, args.time, args.pid)
