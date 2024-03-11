@@ -497,8 +497,9 @@ def per_cpu_owner(name: str, val: Object) -> int:
     """
 
     prog = val.prog_
+    var_name = prog[name]
     for cpu in for_each_possible_cpu(prog):
-        if per_cpu(prog[name], cpu).value_() == val.value_():
+        if per_cpu(var_name, cpu).value_() == val.value_():
             return cpu
 
     return -1

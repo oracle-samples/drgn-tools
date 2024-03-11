@@ -26,12 +26,16 @@ trapping these two function is sufficient to check the semaphore waiters.
 """
 import argparse
 from collections import defaultdict
+from typing import DefaultDict
+from typing import List
 from typing import Optional
 from typing import Set
+from typing import Tuple
 
 import drgn
 from drgn import Object
 from drgn import Program
+from drgn import StackFrame
 from drgn.helpers.linux.cpumask import for_each_present_cpu
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import find_task
@@ -50,7 +54,7 @@ from drgn_tools.task import nanosecs_to_secs
 from drgn_tools.task import task_lastrun2now
 
 
-def scan_osq_node(prog: Program, verbosity=0) -> None:
+def scan_osq_node(prog: Program, verbosity: int = 0) -> None:
     """
     Show CPUs spinning to grab sleeping lock(s).
 
@@ -62,18 +66,14 @@ def scan_osq_node(prog: Program, verbosity=0) -> None:
                          till the point of spin
     """
 
-    osq_spinners: defaultdict = defaultdict(list)
+    osq_spinners: DefaultDict[int, List[int]] = defaultdict(list)
     for cpu in for_each_present_cpu(prog):
         osq_node = per_cpu(prog["osq_node"], cpu)
         if not osq_node.next.value_():
             continue
 
         while osq_node.next.value_():
-            osq_node = Object(
-                prog,
-                "struct optimistic_spin_node",
-                address=osq_node.next.value_(),
-            )
+            osq_node = osq_node.next[0]
 
         if osq_node.address_ in osq_spinners.keys():
             continue
@@ -83,24 +83,25 @@ def scan_osq_node(prog: Program, verbosity=0) -> None:
 
     if not len(osq_spinners):
         print("There are no spinners on any osq_lock")
-    else:
-        print("There are spinners on one or more osq_lock")
-        for key in osq_spinners.keys():
-            print(f"CPU(s): {osq_spinners[key]} are spinning on same osq_lock")
-            if verbosity >= 1:
-                cpu_list = osq_spinners[key]
-                for cpu in cpu_list:
-                    run_time_ns = get_current_run_time(prog, cpu)
-                    run_time_s = nanosecs_to_secs(run_time_ns)
-                    print(
-                        f"CPU: {cpu} has been spinning for {run_time_s} seconds."
-                    )
+        return
 
-                    if (
-                        verbosity == 2
-                    ):  # for max verbosity dump call stack of spinners
-                        print("\nCall stack at cpu: ", cpu)
-                        bt(prog, cpu=cpu)
+    print("There are spinners on one or more osq_lock")
+    for key in osq_spinners.keys():
+        print(f"CPU(s): {osq_spinners[key]} are spinning on same osq_lock")
+        if verbosity >= 1:
+            cpu_list = osq_spinners[key]
+            for cpu in cpu_list:
+                run_time_ns = get_current_run_time(prog, cpu)
+                run_time_s = nanosecs_to_secs(run_time_ns)
+                print(
+                    f"CPU: {cpu} has been spinning for {run_time_s} secs, since it last got on CPU."
+                )
+
+                if (
+                    verbosity == 2
+                ):  # for max verbosity dump call stack of spinners
+                    print("\nCall stack at cpu: ", cpu)
+                    bt(prog, cpu=cpu)
 
 
 def scan_mutex_lock(
@@ -230,7 +231,10 @@ def show_sem_lock(
 
 
 def show_rwsem_lock(
-    prog: Program, frame_list, seen_rwsems, stack: bool
+    prog: Program,
+    frame_list: List[Tuple[Object, StackFrame]],
+    seen_rwsems: Set[int],
+    stack: bool,
 ) -> None:
     """Show rw_semaphore details"""
     warned_absent = False

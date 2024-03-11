@@ -13,10 +13,13 @@ from drgn import Program
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
+from drgn.helpers.linux.sched import cpu_curr
 from drgn.helpers.linux.sched import task_cpu
 from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.bt import bt
+from drgn_tools.table import FixedTable
+from drgn_tools.task import get_current_run_time
 from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import per_cpu_owner
 from drgn_tools.util import timestamp_str
@@ -56,9 +59,7 @@ def get_osq_owner_cpu(osq: Object) -> int:
         return tail - 1
 
     while osq_node.prev and osq_node.prev.next == osq_node.address_of_():
-        osq_node = Object(
-            prog, "struct optimistic_spin_node", address=osq_node.prev.value_()
-        )
+        osq_node = osq_node.prev[0]
 
     return per_cpu_owner("osq_node", osq_node)
 
@@ -76,18 +77,13 @@ def tail_osq_node_to_spinners(osq_node: Object) -> Iterable[int]:
     :returns: Iterator of spinning CPUs
     """
 
-    prog = osq_node.prog_
     tail_osq_node = osq_node
     while (
         tail_osq_node.prev
         and tail_osq_node.prev.next == tail_osq_node.address_of_()
     ):
         yield per_cpu_owner("osq_node", tail_osq_node)
-        tail_osq_node = Object(
-            prog,
-            "struct optimistic_spin_node",
-            address=tail_osq_node.prev.value_(),
-        )
+        tail_osq_node = tail_osq_node.prev[0]
 
     yield per_cpu_owner("osq_node", tail_osq_node)
 
@@ -111,9 +107,6 @@ def for_osq_owner_and_each_spinner(osq: Object) -> Iterable[int]:
     tail = osq.tail.counter.value_()
     tail_cpu = tail - 1
     tail_osq_node = per_cpu(prog["osq_node"], tail_cpu)
-
-    if not tail_osq_node.prev.value_():
-        return -1
 
     for cpu in tail_osq_node_to_spinners(tail_osq_node):
         yield cpu
@@ -293,14 +286,20 @@ def get_rwsem_owner(rwsem: Object) -> Object:
         return NULL(prog, "struct task_struct *")
 
     if is_rwsem_writer_owned(rwsem):
-        if (rwsem.owner.type_.type_name() != "atomic_long_t") and (
-            rwsem.owner.value_() & _RWSEM_ANONYMOUSLY_OWNED
-        ):
-            print("rwsem is owned by anonymous writer")
-            return NULL(prog, "struct task_struct *")
+        if rwsem.owner.type_.type_name() != "atomic_long_t":
+            if rwsem.owner.value_() & _RWSEM_ANONYMOUSLY_OWNED:
+                print("rwsem is owned by anonymous writer")
+                return NULL(prog, "struct task_struct *")
+            else:
+                return rwsem.owner
         else:
             owner = cast("struct task_struct *", rwsem.owner.counter)
             return owner
+    else:
+        # If rwsem is owned by one or more readers or other cases
+        # when owner field is not reliable
+        print("Could not reliably determine rwsem owner")
+        return NULL(prog, "struct task_struct *")
 
 
 def get_rwsem_waiter_type(rwsem_waiter: Object) -> str:
@@ -312,9 +311,15 @@ def get_rwsem_waiter_type(rwsem_waiter: Object) -> str:
     """
 
     prog = rwsem_waiter.prog_
-    if rwsem_waiter.type.value_() == prog["RWSEM_WAITING_FOR_WRITE"].value_():
+    if (
+        rwsem_waiter.type.value_()
+        == prog.constant("RWSEM_WAITING_FOR_WRITE").value_()
+    ):
         waiter_type = "down_write"
-    elif rwsem_waiter.type.value_() == prog["RWSEM_WAITING_FOR_READ"].value_():
+    elif (
+        rwsem_waiter.type.value_()
+        == prog.constant("RWSEM_WAITING_FOR_READ").value_()
+    ):
         waiter_type = "down_read"
     else:
         waiter_type = "waiter type unknown"
@@ -332,15 +337,51 @@ def get_rwsem_waiters_info(rwsem: Object, callstack: int = 0) -> None:
 
     waiter_type = "none"
     print("The waiters of rwsem are as follows: ")
+    tbl = FixedTable(["TASK:>x", "PID:>", "TYPE:16s", "CPU:>", "ST", "WAIT:>"])
     for waiter in for_each_rwsem_waiter_entity(rwsem):
         waiter_type = get_rwsem_waiter_type(waiter)
         task = waiter.task
-        print(
-            f"  ({task.type_.type_name()})0x{task.value_():x}  (pid){task.pid.value_():<8}  (waiter_type){waiter_type:<16}  (cpu){task_cpu(task):<4}  (state){task_state_to_char(task):<4} (wait_time){timestamp_str(task_lastrun2now(task))}"
+        tbl.row(
+            task.value_(),
+            task.pid.value_(),
+            waiter_type,
+            task_cpu(task),
+            task_state_to_char(task),
+            timestamp_str(task_lastrun2now(task)),
         )
         if callstack:
             print("call stack of waiter:\n ")
             bt(task)
+    tbl.write()
+
+
+def get_rwsem_spinners_info(rwsem: Object, callstack: int = 0) -> None:
+    """
+    Get a summary of rwsem spinners.
+    The summary consists of ``struct task_struct *``, pid, CPU, state
+    and spin time
+
+    :param rwsem: ``struct rw_semaphore *``
+    """
+
+    prog = rwsem.prog_
+    spinner_list = [
+        cpu for cpu in for_osq_owner_and_each_spinner(rwsem.osq.address_of_())
+    ]
+    print(f"rwsem has {len(spinner_list)} spinners, which are as follows: ")
+    tbl = FixedTable(["TASK:>x", "PID:>", "CPU:>", "CURRENT SPINTIME:>"])
+    for cpu in spinner_list:
+        task = cpu_curr(prog, cpu)
+        tbl.row(
+            task.value_(),
+            task.pid.value_(),
+            task_cpu(task),
+            timestamp_str(get_current_run_time(prog, cpu)),
+        )
+        if callstack:
+            print("call stack of spinner:\n ")
+            bt(task)
+    tbl.write()
 
 
 def is_rwsem_reader_owned(rwsem: Object) -> bool:
@@ -431,21 +472,17 @@ def get_rwsem_info(rwsem: Object, callstack: int = 0) -> None:
         print("rwsem is free.")
         return
 
-    prog = rwsem.prog_
+    if rwsem_has_spinner(rwsem):
+        get_rwsem_spinners_info(rwsem, callstack)
+    else:
+        print("rwsem has no spinners.")
+
     owner_is_writer = is_rwsem_writer_owned(rwsem)
     owner_is_reader = is_rwsem_reader_owned(rwsem)
 
     if owner_is_writer:
-        if (rwsem.owner.type_.type_name() != "atomic_long_t") and (
-            rwsem.owner.value_() & _RWSEM_ANONYMOUSLY_OWNED
-        ):
-            print("rwsem is owned by anonymous writer")
-        else:
-            owner_task = Object(
-                prog,
-                "struct task_struct",
-                address=cast("unsigned long", rwsem.owner.counter),
-            ).address_of_()
+        owner_task = get_rwsem_owner(rwsem)
+        if owner_task:
             print(
                 f"Writer owner ({owner_task.type_.type_name()})0x{owner_task.value_():x}: (pid){owner_task.pid.value_()}"
             )
