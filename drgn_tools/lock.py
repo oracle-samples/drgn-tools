@@ -287,19 +287,13 @@ def scan_sem_lock(
 def scan_rwsem_lock(prog: Program, stack: bool) -> None:
     """Scan for read-write(rw) semphores"""
     seen_rwsems: Set[int] = set()
-    frame_list = bt_has(prog, "__rwsem_down_write_failed_common")
-    if frame_list:
-        show_rwsem_lock(prog, frame_list, seen_rwsems, stack)
-
-    frame_list = bt_has(prog, "__rwsem_down_read_failed_common")
-    if frame_list:
-        show_rwsem_lock(prog, frame_list, seen_rwsems, stack)
-
-    frame_list = bt_has(prog, "rwsem_down_write_slowpath")
-    if frame_list:
-        show_rwsem_lock(prog, frame_list, seen_rwsems, stack)
-
-    frame_list = bt_has(prog, "rwsem_down_read_slowpath")
+    functions = [
+        "__rwsem_down_write_failed_common",
+        "__rwsem_down_read_failed_common",
+        "rwsem_down_write_slowpath",
+        "rwsem_down_read_slowpath",
+    ]
+    frame_list = bt_has_any(prog, functions)
     if frame_list:
         show_rwsem_lock(prog, frame_list, seen_rwsems, stack)
 
