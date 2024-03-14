@@ -25,11 +25,15 @@ functions as: ``__down_common`` and ``__down`` depending upon releases. So
 trapping these two function is sufficient to check the semaphore waiters.
 """
 import argparse
+from collections import defaultdict
 from typing import Optional
 from typing import Set
 
 import drgn
+from drgn import Object
 from drgn import Program
+from drgn.helpers.linux.cpumask import for_each_present_cpu
+from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import find_task
 
 from drgn_tools.bt import bt
@@ -39,7 +43,63 @@ from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
 from drgn_tools.locking import mutex_owner
 from drgn_tools.locking import show_lock_waiter
+from drgn_tools.locking import tail_osq_node_to_spinners
+from drgn_tools.task import get_current_run_time
+from drgn_tools.task import nanosecs_to_secs
 from drgn_tools.task import task_lastrun2now
+
+
+def scan_osq_node(prog: Program, verbosity=0) -> None:
+    """
+    Show CPUs spinning to grab sleeping lock(s).
+
+    :param prog: drgn.Program
+    :param verbosity: specify verbosity of report as follows:
+                      0: Show which CPUs are spinning
+                      1: Show which CPUs are spinning and for how long
+                      2: Show spinning CPUs, their spin duration and call stack
+                         till the point of spin
+    """
+
+    osq_spinners: defaultdict = defaultdict(list)
+    for cpu in for_each_present_cpu(prog):
+        osq_node = per_cpu(prog["osq_node"], cpu)
+        if not osq_node.next.value_():
+            continue
+
+        while osq_node.next.value_():
+            osq_node = Object(
+                prog,
+                "struct optimistic_spin_node",
+                address=osq_node.next.value_(),
+            )
+
+        if osq_node.address_ in osq_spinners.keys():
+            continue
+
+        for spinner_cpu in tail_osq_node_to_spinners(osq_node):
+            osq_spinners[osq_node.address_].append(spinner_cpu)
+
+    if not len(osq_spinners):
+        print("There are no spinners on any osq_lock")
+    else:
+        print("There are spinners on one or more osq_lock")
+        for key in osq_spinners.keys():
+            print(f"CPU(s): {osq_spinners[key]} are spinning on same osq_lock")
+            if verbosity >= 1:
+                cpu_list = osq_spinners[key]
+                for cpu in cpu_list:
+                    run_time_ns = get_current_run_time(prog, cpu)
+                    run_time_s = nanosecs_to_secs(run_time_ns)
+                    print(
+                        f"CPU: {cpu} has been spinning for {run_time_s} seconds."
+                    )
+
+                    if (
+                        verbosity == 2
+                    ):  # for max verbosity dump call stack of spinners
+                        print("\nCall stack at cpu: ", cpu)
+                        bt(prog, cpu=cpu)
 
 
 def scan_mutex_lock(
