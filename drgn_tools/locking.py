@@ -101,7 +101,7 @@ def for_osq_owner_and_each_spinner(osq: Object) -> Iterable[int]:
     :returns: Iterator of spinning CPUs
     """
     if not osq_is_locked(osq):
-        return -1
+        return []
 
     prog = osq.prog_
     tail = osq.tail.counter.value_()
