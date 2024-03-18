@@ -6,6 +6,7 @@ Helper to view cpuinfo data
 import argparse
 from typing import Any
 from typing import Dict
+from typing import List
 
 from drgn import Architecture
 from drgn import Object
@@ -17,6 +18,7 @@ from drgn.helpers.linux.percpu import per_cpu
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_dictionary
+from drgn_tools.util import cpumask_to_cpulist
 
 
 # Constants
@@ -50,6 +52,23 @@ AARCH64_MIDR_IMPLEMENTOR_SHIFT = 24
 AARCH64_MIDR_IMPLEMENTOR_MASK = 0xFF << AARCH64_MIDR_IMPLEMENTOR_SHIFT
 
 
+def x86_get_per_node_cpulist(prog: Program) -> List[str]:
+    """
+    Parse per-node cpumask and return human readable representation of it.
+    The output is a list of cpulist; each cpulist is a list of CPUs with
+    ranges. For example, ["0-31", "32-63"].
+
+    :returns: a list of cpulist string
+    """
+    per_node_cpulist = []
+    node_to_cpumask_map = prog["node_to_cpumask_map"].read_()
+    for cpu_mask in node_to_cpumask_map:
+        if not cpu_mask:
+            continue
+        per_node_cpulist.append(cpumask_to_cpulist(cpu_mask))
+    return per_node_cpulist
+
+
 def x86_get_cpu_info(prog: Program) -> Dict[str, Any]:
     """
     Helper to get cpuinfo data for x86
@@ -70,7 +89,7 @@ def x86_get_cpu_info(prog: Program) -> Dict[str, Any]:
     cpu_vendor = cpuinfo_struct.x86_vendor_id.string_().decode("utf-8").strip()
     model_name = cpuinfo_struct.x86_model_id.string_().decode("utf-8").strip()
     cpu_family = int(cpuinfo_struct.x86)
-    cpus_numa0 = "0-" + str(cpus - 1)
+    per_node_cpulist = x86_get_per_node_cpulist(prog)
     microcode = hex(cpuinfo_struct.microcode)
     cstates = int(prog["max_cstate"])
 
@@ -89,17 +108,23 @@ def x86_get_cpu_info(prog: Program) -> Dict[str, Any]:
                 bug_flags[nr - len(cap_flags)].string_().decode("utf-8")
             )
 
-    return {
+    output = {
         "CPU VENDOR": cpu_vendor,
         "MODEL NAME": model_name,
         "CPU FAMILY": cpu_family,
         "CPUS": cpus,
-        "CPUS NUMA0": cpus_numa0,
-        "MICROCODE": microcode,
-        "CSTATES": cstates,
-        "CPU FLAGS": " ".join(cpu_flags_list),
-        "BUG FLAGS": " ".join(bug_flags_list),
     }
+    for i, cpulist in enumerate(per_node_cpulist):
+        output.update({f"CPUS NUMA{i}": cpulist})
+    output.update(
+        {
+            "MICROCODE": microcode,
+            "CSTATES": cstates,
+            "CPU FLAGS": " ".join(cpu_flags_list),
+            "BUG FLAGS": " ".join(bug_flags_list),
+        }
+    )
+    return output
 
 
 def aarch64_get_cpu_info(prog: Program) -> Dict[str, Any]:
