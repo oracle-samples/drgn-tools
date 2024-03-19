@@ -492,6 +492,7 @@ def _indexed_bt_has_any(
 def bt_has_any(
     prog: drgn.Program,
     funcs: t.List[str],
+    task: t.Optional[drgn.Object] = None,
 ) -> t.List[t.Tuple[drgn.Object, drgn.StackFrame]]:
     """
     Search for tasks whose stack contains the given functions
@@ -515,6 +516,20 @@ def bt_has_any(
         return _indexed_bt_has_any(prog, funcs)
 
     frame_list = []
+    if task is not None:
+        try:
+            frames = bt_frames(task)
+            for frame in frames:
+                if frame.name in funcs:
+                    frame_list.append((task, frame))
+
+            return frame_list
+
+        except (FaultError, ValueError):
+            # FaultError: catch unusual unwinding issues
+            # ValueError: catch "cannot unwind stack of running task"
+            pass
+
     for task in for_each_task(prog):
         try:
             frames = bt_frames(task)
@@ -532,6 +547,7 @@ def bt_has_any(
 def bt_has(
     prog: drgn.Program,
     funcname: str,
+    task: t.Optional[drgn.Object] = None,
 ) -> t.List[t.Tuple[drgn.Object, drgn.StackFrame]]:
     """
     Search for tasks whose stack contains a single function
@@ -539,7 +555,7 @@ def bt_has(
     This function is identical to bt_has_any(), but takes only one
     function argument.
     """
-    return bt_has_any(prog, [funcname])
+    return bt_has_any(prog, [funcname], task)
 
 
 def print_online_bt(prog: Program, **kwargs: t.Any) -> None:
