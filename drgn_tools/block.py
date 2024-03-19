@@ -215,7 +215,19 @@ def for_each_tag_pending_rq(tags: Object) -> Iterable[Object]:
         addr = tags.rqs[tag + reserved].value_()
         if addr == 0:
             continue
-        yield Object(prog, "struct request *", value=addr)
+        # Since commit 568f27006577("blk-mq: centralise related handling
+        # into blk_mq_get_driver_tag") was merged in v5.10, for requests
+        # that are not yet dispatched, like those in the plug list, we
+        # should get from "tags.static_rqs", otherwise we may get a wrong
+        # request. To resolve this, first check request from "tags.rqs"
+        # is valid or not, if not get it from "tags.static_rqs".
+        rq = Object(prog, "struct request *", value=addr)
+        if rq.tag == -1:
+            addr = tags.static_rqs[tag + reserved].value_()
+            if addr == 0:
+                continue
+            rq = Object(prog, "struct request *", value=addr)
+        yield rq
 
 
 def for_each_hwq_pending_rq(hwq: Object) -> Iterable[Object]:
