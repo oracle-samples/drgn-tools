@@ -441,7 +441,14 @@ def request_target(rq: Object) -> Object:
     if has_member(rq, "rq_disk"):
         return rq.rq_disk
     else:
-        return rq.part.bd_disk
+        # rq.part not null only when doing IO statistics.
+        if rq.part.value_():
+            return rq.part.bd_disk
+        else:
+            for _ in for_each_disk(rq.prog_):
+                if _.queue.value_() == rq.q.value_():
+                    return _.queue
+            return None
 
 
 def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
