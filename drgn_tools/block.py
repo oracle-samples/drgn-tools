@@ -278,9 +278,9 @@ def rq_op_ef295ecf(rq: Object) -> str:
     # rq.cmf_flags: 8 bits for encoding the operation, and the remaining 24 for flags
     REQ_OP_BITS = 8
     op_mask = (1 << REQ_OP_BITS) - 1
-    req_opf = {
-        value: name for (name, value) in prog.type("enum req_opf").enumerators
-    }
+    # commit ff07a02e9e8e6("treewide: Rename enum req_opf into enum req_op")
+    opf = "enum req_op" if type_exists(prog, "enum req_op") else "enum req_opf"
+    req_opf = {value: name for (name, value) in prog.type(opf).enumerators}
     cmd_flags = rq.cmd_flags.value_()
     key = cmd_flags & op_mask
     op = req_opf[key] if key in req_opf.keys() else "%s-%d" % ("UNKOP", key)
@@ -318,12 +318,12 @@ def rq_op(rq: Object) -> str:
     :returns: combined request operation enum name as str
     """
     prog = rq.prog_
-    if type_exists(prog, "enum req_opf"):
+    if type_exists(prog, "enum req_opf") or type_exists(prog, "enum req_op"):
         return rq_op_ef295ecf(rq)
     elif type_exists(prog, "enum rq_flag_bits"):
         return rq_op_old(rq)
     else:
-        return "-"
+        return bin(rq.cmd_flags)
 
 
 def rq_flags(rq: Object) -> str:
