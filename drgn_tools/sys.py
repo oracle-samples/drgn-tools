@@ -22,7 +22,7 @@ from drgn_tools.cpuinfo import x86_get_cpu_info
 from drgn_tools.mm import totalram_pages
 from drgn_tools.table import print_dictionary
 from drgn_tools.util import human_bytes
-from drgn_tools.virtutil import show_platform
+from drgn_tools.virtutil import get_platform
 
 
 def loadavg_str(prog: Program) -> str:
@@ -92,7 +92,7 @@ def get_sysinfo(prog: Program) -> Dict[str, Any]:
     load_avg = loadavg_str(prog)
     memory = get_mem(prog)
     tasks = task_info(prog)
-    platform = show_platform(prog)
+    platform = get_platform(prog)
 
     return {
         "MODE": mode,
