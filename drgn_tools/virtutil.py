@@ -29,24 +29,29 @@ def get_platform_hypervisor(prog: Program) -> str:
     try:
         return prog["x86_hyper_type"].format_(type_name=False)
     except KeyError:
-        print("Platform not supported.")
-    return ""
+        return "Platform not supported."
 
 
 def get_cpuhp_state(prog: Program, cpu: int) -> str:
+    """
+    Return CPU state for a given CPU
+    """
     cpuhp_state = per_cpu(prog["cpuhp_state"], cpu).state
     return cpuhp_state.format_(type_name=False)
 
 
 def show_cpuhp_state(prog: Program) -> None:
+    """
+    Display cpu state for all possible CPUs
+    """
     for cpu in for_each_possible_cpu(prog):
         state = get_cpuhp_state(prog, cpu)
         print(f"CPU [{cpu:3d}]: {state}")
 
 
-def show_platform(prog: Program) -> str:
+def get_platform(prog: Program) -> str:
     """
-    Prints the kernel command line
+    Return platform type
     """
     str_platform = (
         get_platform_arch(prog) + " " + get_platform_hypervisor(prog)
@@ -54,10 +59,24 @@ def show_platform(prog: Program) -> str:
     return str_platform
 
 
-class VirtUtil(CorelensModule):
-    """"""
+def show_platform(prog: Program) -> None:
+    """
+    Prints platfrom type
+    """
+    platform = get_platform(prog)
+    print(platform)
 
-    name = "virtutil"
+
+class VirtUtil(CorelensModule):
+    """
+    This module contains helper regarding virtualization.
+    Current functionality are :
+    cpu hotplug state
+    platform type, which includes architecture and hypervisor type
+    """
+
+    name = "virt"
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
+        show_platform(prog)
         return
