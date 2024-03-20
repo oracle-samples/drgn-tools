@@ -12,6 +12,7 @@ from drgn import NULL
 from drgn import Object
 from drgn import Program
 from drgn import sizeof
+from drgn import Type
 from drgn.helpers.common.format import decode_enum_type_flags
 from drgn.helpers.linux.cpumask import for_each_cpu
 from drgn.helpers.linux.cpumask import for_each_possible_cpu
@@ -441,3 +442,44 @@ def timestamp_str(ns: int) -> str:
     hours = value % 24
     days = value // 24
     return "%d %02d:%02d:%02d.%03d" % (days, hours, mins, secs, ms)
+
+
+def type_lookup_conflict(
+    prog: Program, name: str, module: str, filenames: t.List[str]
+) -> Type:
+    """
+    Lookup a type which has conflicting definitions, with DWARF or CTF
+
+    Unfortunately, DWARF and CTF handle conflicting type definitions in
+    different ways, and drgn can't handle them uniformly. With DWARF, drgn
+    allows us to provide the filename which contains the definition of the
+    desired type. However, CTF doesn't contain filename information. It uses
+    module names to resolve these conflicts. This function smooths over those
+    problems.
+
+    :param prog: Program whose types we are looking up
+    :param name: the type name to look up
+    :param module: the name of the kernel module containing the definition
+    :param filenames: one or more lists of filenames containing the definition
+      (in case the filenames have changed over different kernel versions)
+    :returns: the Type associated with ``name``, or else raises ``LookupError``
+    """
+    # DWARF type finder raises LookupError when filename is not found.
+    # CTF type finder *does not* raise error when module is not found.
+    # So try CTF module first: a LookupError either means the type doesn't
+    # exist, or we're using DWARF debuginfo.
+    try:
+        return prog.type(name, module)
+    except LookupError:
+        pass
+
+    # Try DWARF filenames:
+    for filename in filenames:
+        try:
+            return prog.type(name, filename)
+        except LookupError:
+            pass
+
+    raise LookupError(
+        f"Could not find type {name} in module {module} or files {filenames}"
+    )

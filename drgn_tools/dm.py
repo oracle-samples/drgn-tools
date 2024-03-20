@@ -21,22 +21,22 @@ from drgn_tools.util import BitNumberFlags
 from drgn_tools.util import kernel_version
 
 
-def for_each_dm_hash(prog: Program) -> Iterable[Tuple[Object, str]]:
+def for_each_dm_hash(prog: Program) -> Iterable[Tuple[Object, str, str]]:
     for head in prog["_name_buckets"]:
         for hc in list_for_each_entry(
             "struct hash_cell", head.address_of_(), "name_list"
         ):
-            yield hc.md, hc.name.string_().decode()
+            yield hc.md, hc.name.string_().decode(), hc.uuid.string_().decode()
 
 
-def for_each_dm_rbtree(prog: Program) -> Iterable[Tuple[Object, str]]:
+def for_each_dm_rbtree(prog: Program) -> Iterable[Tuple[Object, str, str]]:
     for hc in rbtree_inorder_for_each_entry(
         "struct hash_cell", prog["name_rb_tree"], "name_node"
     ):
-        yield hc.md, hc.name.string_().decode()
+        yield hc.md, hc.name.string_().decode(), hc.uuid.string_().decode()
 
 
-def for_each_dm(prog: Program) -> Iterable[Tuple[Object, str]]:
+def for_each_dm(prog: Program) -> Iterable[Tuple[Object, str, str]]:
     if "_name_buckets" in prog:
         return for_each_dm_hash(prog)
     elif "name_rb_tree" in prog:
@@ -94,7 +94,7 @@ def show_dm(prog: Program) -> None:
         return
 
     output = [["NUMBER", "NAME", "MAPPED_DEVICE", "FLAGS"]]
-    for dm, name in for_each_dm(prog):
+    for dm, name, uuid in for_each_dm(prog):
         output.append(
             [
                 dm.disk.disk_name.string_().decode(),
@@ -155,7 +155,7 @@ dmtable_handler = {
 
 
 def show_dm_table(prog: Program) -> None:
-    for dm, name in for_each_dm(prog):
+    for dm, name, uuid in for_each_dm(prog):
         target_name = dm_target_name(dm)
         if target_name == "None":
             print("dm %s doesn't have a target" % hex(dm.value_()))
