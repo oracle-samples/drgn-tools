@@ -146,22 +146,22 @@ def print_net_devices(prog: Program) -> None:
     :returns: None.
     """
     rows = [["NET_DEVICE", "NAME", "IP ADDRESS(ES)"]]
-
     net_namespaces = network.for_each_net(prog)
+
     for net_namespace in net_namespaces:
         for name, dev in for_each_netdev(net_namespace):
             net_device_ptr = hex(dev.dev.platform_data)
+            net_device_name = dev.dev.kobj.name.string_().decode()
             ip_list = [str(a) for a in netdev_ipv4s(dev) + netdev_ipv6s(dev)]
             ips = ", ".join(ip_list)
             rows.append(
                 [
                     net_device_ptr,
-                    name,
+                    net_device_name,
                     ips,
                 ]
             )
     print_table(rows)
-
 
 def get_ipv4(prog: Program, ptr: Object) -> ipaddress.IPv4Address:
     """
@@ -218,7 +218,9 @@ def print_arp_cache(prog: Program) -> None:
         ip_bytes = prog.read(neigh.primary_key.address_of_(), 4)
         ip_addr = str(ipaddress.IPv4Address(ip_bytes))
 
-        mac_bytes = prog.read(neigh.ha.address_of_(), 6)
+        addr_len = neigh.dev.addr_len
+        
+        mac_bytes = prog.read(neigh.ha.address_of_(), addr_len)
         hw_addr = ":".join(f"{b:02x}" for b in mac_bytes)
         dev_name = neigh.dev.name.string_().decode()
 
@@ -348,7 +350,7 @@ def print_task_sockets(prog: Program, pid: int, print_full_data: bool) -> None:
         cnt = cnt + 1
         rows.append(
             [
-                str(cnt),
+                fd,
                 hex(socket.value_())[2:],
                 hex(socket.sk.value_())[2:],
                 sock_family + ":" + sock_type,
