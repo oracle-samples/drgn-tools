@@ -441,3 +441,23 @@ def timestamp_str(ns: int) -> str:
     hours = value % 24
     days = value // 24
     return "%d %02d:%02d:%02d.%03d" % (days, hours, mins, secs, ms)
+
+
+def per_cpu_owner(name: str, val: Object) -> int:
+    """
+    Given a per-cpu variable/pointer, return CPU to which this per-cpu
+    variable/pointer belongs.
+
+    :param name: name of the per-cpu variable/pointer
+    :param val: per-cpu variable/pointer
+    :returns: cpu number to which per-cpu variable/pointer belongs.
+              If cpu can't be found return -1
+    """
+
+    prog = val.prog_
+    var_name = prog[name]
+    for cpu in for_each_possible_cpu(prog):
+        if per_cpu(var_name, cpu).value_() == val.value_():
+            return cpu
+
+    return -1
