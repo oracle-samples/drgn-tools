@@ -3,7 +3,9 @@
 """
 Helper for linux kernel locking
 """
+import enum
 from typing import Iterable
+from typing import Tuple
 
 import drgn
 from drgn import cast
@@ -249,6 +251,19 @@ _RWSEM_WR_NONSPINNABLE = 1 << 2
 _RWSEM_NONSPINNABLE = 1 << 1
 
 
+class RwsemStateCode(enum.Enum):
+    UNLOCKED = "unlocked"
+    READER_OWNED = "reader owned"
+    WRITER_OWNED = "writer owned"
+    ANONYMOUSLY_OWNED = "anonymously owned (owned by reader(s) or writer owner has not yet set the owner field)"
+    # Even though we don't have (reliable) owner info for reader owned or anonymously
+    # owned rwsems, but in these cases at least rwsems's count and/or owner bits
+    # correspond to a known state set by kernel.
+    # Below is for (very unlikely) corner cases, where rwsem's count and/or owner bits
+    # could not match any of the above 4 states.
+    OWNER_TYPE_UNKNOWN = "owned by owner of unknown type"
+
+
 def rwsem_has_spinner(rwsem: Object) -> bool:
     """
     Check if rwsem has optimistic spinners or not
@@ -273,33 +288,36 @@ def for_each_rwsem_waiter_entity(rwsem: Object) -> Iterable[Object]:
         yield waiter
 
 
-def get_rwsem_owner(rwsem: Object) -> Object:
+def get_rwsem_owner(rwsem: Object) -> Tuple[Object, "RwsemStateCode"]:
     """
     Find owner of  given rwsem
 
     :param rwsem: ``struct rw_semaphore *``
-    :returns: ``struct task_struct *`` if owner can be found, NULL otherwise
+    :returns: type of owner and ``struct task_struct *`` if owner can be found, NULL otherwise
     """
     prog = rwsem.prog_
     if not rwsem.count.counter.value_():
-        print("rwsem is free.")
-        return NULL(prog, "struct task_struct *")
+        return NULL(prog, "struct task_struct *"), RwsemStateCode.UNLOCKED
 
     if is_rwsem_writer_owned(rwsem):
         if rwsem.owner.type_.type_name() != "atomic_long_t":
             if rwsem.owner.value_() & _RWSEM_ANONYMOUSLY_OWNED:
-                print("rwsem is owned by anonymous writer")
-                return NULL(prog, "struct task_struct *")
+                return (
+                    NULL(prog, "struct task_struct *"),
+                    RwsemStateCode.ANONYMOUSLY_OWNED,
+                )
             else:
-                return rwsem.owner
+                return rwsem.owner, RwsemStateCode.WRITER_OWNED
         else:
             owner = cast("struct task_struct *", rwsem.owner.counter)
-            return owner
+            return owner, RwsemStateCode.WRITER_OWNED
+    elif is_rwsem_reader_owned(rwsem):
+        return NULL(prog, "struct task_struct *"), RwsemStateCode.READER_OWNED
     else:
-        # If rwsem is owned by one or more readers or other cases
-        # when owner field is not reliable
-        print("Could not reliably determine rwsem owner")
-        return NULL(prog, "struct task_struct *")
+        return (
+            NULL(prog, "struct task_struct *"),
+            RwsemStateCode.OWNER_TYPE_UNKNOWN,
+        )
 
 
 def get_rwsem_waiter_type(rwsem_waiter: Object) -> str:
@@ -477,16 +495,16 @@ def get_rwsem_info(rwsem: Object, callstack: int = 0) -> None:
     else:
         print("rwsem has no spinners.")
 
-    owner_is_writer = is_rwsem_writer_owned(rwsem)
-    owner_is_reader = is_rwsem_reader_owned(rwsem)
+    owner_task, owner_type = get_rwsem_owner(rwsem)
 
-    if owner_is_writer:
-        owner_task = get_rwsem_owner(rwsem)
-        if owner_task:
-            print(
-                f"Writer owner ({owner_task.type_.type_name()})0x{owner_task.value_():x}: (pid){owner_task.pid.value_()}"
-            )
-    elif owner_is_reader:
+    if owner_task:
+        # Only for a writer owned rwsem, we get task_struct of owner
+        print(
+            f"Writer owner ({owner_task.type_.type_name()})0x{owner_task.value_():x}: (pid){owner_task.pid.value_()}"
+        )
+    elif owner_type == RwsemStateCode.READER_OWNED:
+        # For reader owned rwsems, we can get number of readers in newer kernels( >= v5.3.1).
+        # So try to retrieve that info.
         if rwsem.owner.type_.type_name() == "atomic_long_t":
             num_readers = (
                 rwsem.count.counter.value_() & _RWSEM_READER_MASK
@@ -495,7 +513,7 @@ def get_rwsem_info(rwsem: Object, callstack: int = 0) -> None:
         else:
             print("rwsem is owned by one or more readers")
     else:
-        print("Can't determine type of owner.")
+        print(f" rwsem is {owner_type.value}")
 
     if list_empty(rwsem.wait_list.address_of_()):
         print("There are no waiters")
