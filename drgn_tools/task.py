@@ -27,9 +27,6 @@ from drgn.helpers.linux.pid import find_task
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.sched import cpu_curr
 from drgn.helpers.linux.sched import task_state_to_char
-from drgn.helpers.linux.slab import find_slab_cache
-from drgn.helpers.linux.slab import slab_cache_for_each_allocated_object
-from drgn.helpers.linux.slab import slab_cache_is_merged
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.mm import totalram_pages
@@ -38,27 +35,104 @@ from drgn_tools.util import has_member
 
 ByteToKB = 1024
 
-# tsk->state values
-TASK_RUNNING = 0x0000
-TASK_INTERRUPTIBLE = 0x0001
-TASK_UNINTERRUPTIBLE = 0x0002
-__TASK_STOPPED = 0x0004
-__TASK_TRACED = 0x0008
-# Used in tsk->exit_state
-EXIT_DEAD = 0x0010
-EXIT_ZOMBIE = 0x0020
-# Used in tsk->state again
-TASK_PARKED = 0x0040
-TASK_DEAD = 0x0080
-TASK_WAKEKILL = 0x0100
-TASK_WAKING = 0x0200
-TASK_NOLOAD = 0x0400
-TASK_NEW = 0x0800
 
-TASK_KILLABLE = TASK_WAKEKILL | TASK_UNINTERRUPTIBLE
-TASK_STOPPED = TASK_WAKEKILL | __TASK_STOPPED
-TASK_TRACED = TASK_WAKEKILL | __TASK_TRACED
-TASK_IDLE = TASK_UNINTERRUPTIBLE | TASK_NOLOAD
+# Linux kernel commit 06eb61844d84("sched/debug: Add explicit
+# TASK_IDLE printing") (in v4.14) introduced printing of TASKs in idle
+# state and hence changed size of task_state_array. Further Linux kernel
+# commit 8ef9925b02c2("sched/debug: Add explicit TASK_PARKED printing)
+# (in v4.14) introduced printing of parked tasks and further changed
+# the size of task_state_array. This change also changed values of
+# some states.
+# Since size of task_state_array and value of some task states changed
+# in same (v4.14) kernel, we can also use length of task_state_array
+# to distnguish between old and new values of task states, whose values
+# changed.
+# Lastly since newer kernels add new task states without changing the
+# values of pre-existing task states, we can safely assume that the task
+# state values given below are valid for newer kernels as well, even though
+# the newer kernels may have added some task states of their own.
+
+
+# The following task states have same values in
+# all currently supported kernel versions.
+task_states_common = {
+    # tsk->state values
+    "TASK_RUNNING": 0x0000,
+    "TASK_INTERRUPTIBLE": 0x0001,
+    "TASK_UNINTERRUPTIBLE": 0x0002,
+    "__TASK_STOPPED": 0x0004,
+    "__TASK_TRACED": 0x0008,
+    # Used in tsk->exit_state
+    "EXIT_DEAD": 0x0010,
+    "EXIT_ZOMBIE": 0x0020,
+    # Used in tsk->state again
+    "TASK_NOLOAD": 0x0400,
+    "TASK_NEW": 0x0800,
+}
+
+# The following task states have different values in
+# older and newer supported kernel versions.
+task_states_old = {
+    "TASK_PARKED": 0x0200,
+    "TASK_DEAD": 0x0040,
+    "TASK_WAKEKILL": 0x0080,
+    "TASK_WAKING": 0x0100,
+}
+
+task_states_new = {
+    "TASK_PARKED": 0x0040,
+    "TASK_DEAD": 0x0080,
+    "TASK_WAKEKILL": 0x0100,
+    "TASK_WAKING": 0x0200,
+}
+
+
+def task_state_constants(prog: Program) -> Dict[str, int]:
+    task_states = {}
+
+    if len(prog["task_state_array"]) > 7:
+        try:
+            task_states = prog.cache["task_states_new"]
+        except KeyError:
+            task_states = {**task_states_common, **task_states_new}
+            task_states["TASK_KILLABLE"] = (
+                task_states["TASK_WAKEKILL"]
+                | task_states["TASK_UNINTERRUPTIBLE"]
+            )
+            task_states["TASK_STOPPED"] = (
+                task_states["TASK_WAKEKILL"] | task_states["__TASK_STOPPED"]
+            )
+            task_states["TASK_TRACED"] = (
+                task_states["TASK_WAKEKILL"] | task_states["__TASK_TRACED"]
+            )
+            task_states["TASK_IDLE"] = (
+                task_states["TASK_UNINTERRUPTIBLE"]
+                | task_states["TASK_NOLOAD"]
+            )
+            prog.cache["task_states_new"] = task_states
+    else:
+        try:
+            task_states = prog.cache["task_states_old"]
+        except KeyError:
+            task_states = {**task_states_common, **task_states_old}
+            # task_states = task_states_common.copy().update(task_states_legacy)
+            task_states["TASK_KILLABLE"] = (
+                task_states["TASK_WAKEKILL"]
+                | task_states["TASK_UNINTERRUPTIBLE"]
+            )
+            task_states["TASK_STOPPED"] = (
+                task_states["TASK_WAKEKILL"] | task_states["__TASK_STOPPED"]
+            )
+            task_states["TASK_TRACED"] = (
+                task_states["TASK_WAKEKILL"] | task_states["__TASK_TRACED"]
+            )
+            task_states["TASK_IDLE"] = (
+                task_states["TASK_UNINTERRUPTIBLE"]
+                | task_states["TASK_NOLOAD"]
+            )
+            prog.cache["task_states_old"] = task_states
+
+    return task_states
 
 
 def nanosecs_to_secs(nanosecs: int) -> float:
@@ -342,559 +416,56 @@ def show_tasks_last_runtime(tasks: Iterable[Object]) -> None:
     print_table(rows)
 
 
-def is_task_in_state(task: drgn.Object, state: int) -> bool:
+def task_state(task: drgn.Object) -> int:
     """
-    Check if a task is in a given state.
+    Get a task's state, which is combination of both its runnable and
+    exit states. Since runnable and exit states are exclusive and
+    occupy different bit positions, they will not interfere with
+    each other. But we don't want to miss out on corner cases or bugs.
 
     :param task: ``struct task_struct *``
-    :param state: specified state of task
-    :returns: True if task is in specified state, False otherwise.
+    :returns: task's state
     """
 
     # Linux kernel commit 2f064a59a11f ("sched: Change task_struct::state")
     # (in v5.14) renamed task_struct.state to task_struct.__state
     state_attr = "state" if hasattr(task, "state") else "__state"
     state_val = getattr(task, state_attr).read_()
-    return state_val == state
+    exit_state_val = task.exit_state.read_()
+    return state_val | exit_state_val
 
 
-def is_task_runnable(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_RUNNING`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_RUNNING`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_RUNNING)
-
-
-def is_task_interruptible(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_INTERRUPTIBLE`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_INTERRUPTIBLE`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_INTERRUPTIBLE)
-
-
-def is_task_uninterruptible(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_UNINTERRUPTIBLE`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_UNINTERRUPTIBLE`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_UNINTERRUPTIBLE)
-
-
-def is_task_stopped(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_STOPPED`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_STOPPED`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_STOPPED)
-
-
-def is_task_traced(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_TRACED`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_TRACED`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_TRACED)
-
-
-def is_task_exit_dead(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``EXIT_DEAD`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``EXIT_DEAD`` state, False otherwise.
-    """
-    return is_task_in_state(task, EXIT_DEAD)
-
-
-def is_task_exit_zombie(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``EXIT_ZOMBIE`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``EXIT_ZOMBIE`` state, False otherwise.
-    """
-    return is_task_in_state(task, EXIT_ZOMBIE)
-
-
-def is_task_parked(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_PARKED`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_PARKED`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_PARKED)
-
-
-def is_task_dead(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_DEAD`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_DEAD`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_DEAD)
-
-
-def is_task_wakekill(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_WAKEKILL`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_WAKEKILL`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_WAKEKILL)
-
-
-def is_task_waking(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_WAKING`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_WAKING`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_WAKING)
-
-
-def is_task_new(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_NEW`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_NEW`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_NEW)
-
-
-def is_task_noload(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_NOLOAD`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_NOLOAD`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_NOLOAD)
-
-
-def is_task_idle(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_IDLE`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_IDLE`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_IDLE)
-
-
-def is_task_killable(task: drgn.Object) -> bool:
-    """
-    Check if a task is in ``TASK_KILLABLE`` state.
-
-    :param task: ``struct task_struct *``
-    :returns: True if task is in ``TASK_KILLABLE`` state, False otherwise.
-    """
-    return is_task_in_state(task, TASK_KILLABLE)
-
-
-def is_task_struct_leaking(prog: drgn.Program) -> bool:
-    """
-    Check if task_struct is leaking due to mismanagement of
-    ref count.
-
-    :param prog: drgn program
-    :returns: True if task_struct objects are leaking, False
-              otherwise.
-    """
-
-    slab_cache = find_slab_cache(prog, "task_struct")
-    if slab_cache_is_merged(slab_cache):
-        print(
-            "Can't accurately get all task_struct objects, because task_struct slab cache is merged."
-        )
-        return False
-    task_struct_count = sum(
-        1
-        for _ in slab_cache_for_each_allocated_object(
-            slab_cache, "struct task_struct"
-        )
-    )
-    task_count = sum(1 for _ in for_each_task(prog))
-
-    return task_count != task_struct_count
-
-
-def for_each_task_in_state(prog: drgn.Program, state: int) -> Iterable[Object]:
+def for_each_task_in_state(prog: drgn.Program, state: str) -> Iterable[Object]:
     """
     Iterate over all tasks in a given state.
 
     :param prog: drgn program
-    :param state: specified state of task
+    :param state: specified state of task.
     :returns: Iterator of ``struct task_struct *`` objects.
     """
-    for task in for_each_task(prog):
-        if is_task_in_state(task, state):
-            yield task
+    state_val = task_state_constants(prog).get(state)
+    if state_val:
+        for task in for_each_task(prog):
+            if task_state(task) & state_val == state_val:
+                yield task
 
 
-def for_each_runnable_task(prog: drgn.Program) -> Iterable[Object]:
+def count_tasks_in_state(prog: drgn.Program, state: str) -> int:
     """
-    Iterate over all ``TASK_RUNNING`` tasks in a system.
+    Count all tasks in a given state.
 
     :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
+    :param state: specified state of task.
+    :returns: number of tasks in given state
     """
-    for task in for_each_task_in_state(prog, TASK_RUNNING):
-        yield task
-
-    # init_task is always runnable and its not allocated from task_struct slab cache
-    return prog["init_task"].address_of_()
-
-
-def for_each_interruptible_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_INTERRUPTIBLE`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_INTERRUPTIBLE):
-        yield task
-
-
-def for_each_uninterruptible_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_UNINTERRUPTIBLE`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_UNINTERRUPTIBLE):
-        yield task
-
-
-def for_each_stopped_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_STOPPED`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_STOPPED):
-        yield task
-
-
-def for_each_traced_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_TRACED`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_TRACED):
-        yield task
-
-
-def for_each_exit_dead_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``EXIT_DEAD`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, EXIT_DEAD):
-        yield task
-
-
-def for_each_exit_zombie_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``EXIT_ZOMBIE`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, EXIT_ZOMBIE):
-        yield task
-
-
-def for_each_parked_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_PARKED`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_PARKED):
-        yield task
-
-
-def for_each_dead_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_DEAD`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_DEAD):
-        yield task
-
-
-def for_each_wakekill_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_WAKEKILL`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_WAKEKILL):
-        yield task
-
-
-def for_each_waking_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_WAKING`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_WAKING):
-        yield task
-
-
-def for_each_noload_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_NOLOAD`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_NOLOAD):
-        yield task
-
-
-def for_each_new_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_NEW`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_NEW):
-        yield task
-
-
-def for_each_killable_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_KILLABLE`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_KILLABLE):
-        yield task
-
-
-def for_each_idle_task(prog: drgn.Program) -> Iterable[Object]:
-    """
-    Iterate over all ``TASK_IDLE`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: Iterator of ``struct task_struct *`` objects.
-    """
-    for task in for_each_task_in_state(prog, TASK_IDLE):
-        yield task
-
-
-def count_runnable_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_RUNNING`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_RUNNING`` state
-    """
-    count = sum(1 for _ in for_each_runnable_task(prog))
-
-    # add 1 to final count to account for init_task, which is always runnable
-    return count + 1
-
-
-def count_interruptible_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_INTERRUPTIBLE`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_INTERRUPTIBLE`` state
-    """
-    count = sum(1 for _ in for_each_interruptible_task(prog))
-
-    return count
-
-
-def count_uninterruptible_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_UNINTERRUPTIBLE`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_UNINTERRUPTIBLE`` state
-    """
-    count = sum(1 for _ in for_each_uninterruptible_task(prog))
-
-    return count
-
-
-def count_stopped_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_STOPPED`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_STOPPED`` state
-    """
-    count = sum(1 for _ in for_each_stopped_task(prog))
-
-    return count
-
-
-def count_traced_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_TRACED`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_TRACED`` state
-    """
-    count = sum(1 for _ in for_each_traced_task(prog))
-
-    return count
-
-
-def count_exit_dead_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``EXIT_DEAD`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``EXIT_DEAD`` state
-    """
-    count = sum(1 for _ in for_each_exit_dead_task(prog))
-
-    return count
-
-
-def count_exit_zombie_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``EXIT_ZOMBIE`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``EXIT_ZOMBIE`` state
-    """
-    count = sum(1 for _ in for_each_exit_zombie_task(prog))
-
-    return count
-
-
-def count_parked_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_PARKED`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_PARKED`` state
-    """
-    count = sum(1 for _ in for_each_parked_task(prog))
-
-    return count
-
-
-def count_dead_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_DEAD`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_DEAD`` state
-    """
-    count = sum(1 for _ in for_each_dead_task(prog))
-
-    return count
-
-
-def count_wakekill_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_WAKEKILL`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_WAKEKILL`` state
-    """
-
-    count = sum(1 for _ in for_each_wakekill_task(prog))
-    return count
-
-
-def count_waking_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_WAKING`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_WAKING`` state
-    """
-
-    count = sum(1 for _ in for_each_waking_task(prog))
-    return count
-
-
-def count_noload_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_NOLOAD`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_NOLOAD`` state
-    """
-
-    count = sum(1 for _ in for_each_noload_task(prog))
-    return count
-
-
-def count_new_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_NEW`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_NEW`` state
-    """
-
-    count = sum(1 for _ in for_each_new_task(prog))
-    return count
-
-
-def count_killable_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_KILLABLE`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_KILLABLE`` state
-    """
-
-    count = sum(1 for _ in for_each_killable_task(prog))
-    return count
-
-
-def count_idle_tasks(prog: drgn.Program) -> int:
-    """
-    Count all ``TASK_IDLE`` tasks in a system.
-
-    :param prog: drgn program
-    :returns: number of tasks in ``TASK_IDLE`` state
-    """
-    count = sum(1 for _ in for_each_idle_task(prog))
-
-    return count
+    count = sum(1 for _ in for_each_task_in_state(prog, state))
+
+    if not state:
+        # for runnable tasks, add 1 to final count to account for init_task,
+        # which is always runnable
+        return count + 1
+    else:
+        return count
 
 
 def show_taskinfo(prog: Program, tasks: Iterable[Object]) -> None:

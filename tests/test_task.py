@@ -26,56 +26,56 @@ def test_user_kernel_threads(prog):
 
 
 def test_count_interruptible_tasks(prog):
-    task.count_interruptible_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_INTERRUPTIBLE")
 
 
 def test_count_uninterruptible_tasks(prog):
-    task.count_uninterruptible_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_UNINTERRUPTIBLE")
 
 
 def test_count_stopped_tasks(prog):
-    task.count_stopped_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_STOPPED")
 
 
 def test_count_traced_tasks(prog):
-    task.count_traced_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_TRACED")
 
 
 def test_count_exit_dead_tasks(prog):
-    task.count_exit_dead_tasks(prog)
+    task.count_tasks_in_state(prog, "EXIT_DEAD")
 
 
 def test_count_exit_zombie_tasks(prog):
-    task.count_exit_zombie_tasks(prog)
+    task.count_tasks_in_state(prog, "EXIT_ZOMBIE")
 
 
 def test_count_parked_tasks(prog):
-    task.count_parked_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_PARKED")
 
 
 def test_count_dead_tasks(prog):
-    task.count_dead_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_DEAD")
 
 
 def test_count_wakekill_tasks(prog):
-    task.count_wakekill_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_WAKEKILL")
 
 
 def test_count_waking_tasks(prog):
-    task.count_waking_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_WAKING")
 
 
 def test_count_noload_tasks(prog):
-    task.count_noload_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_NOLOAD")
 
 
 def test_count_new_tasks(prog):
-    task.count_new_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_NEW")
 
 
 def test_count_killable_tasks(prog):
-    task.count_killable_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_KILLABLE")
 
 
 def test_count_idle_tasks(prog):
-    task.count_idle_tasks(prog)
+    task.count_tasks_in_state(prog, "TASK_IDLE")
