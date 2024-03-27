@@ -15,6 +15,7 @@ from drgn import Object
 from drgn import TypeKind
 from drgn.helpers.common.format import decode_enum_type_flags
 from drgn.helpers.linux.block import for_each_disk
+from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.xarray import xa_for_each
 
@@ -449,6 +450,26 @@ def request_target(rq: Object) -> Object:
             return None
 
 
+def show_rq_issued_cpu(rq: Object) -> str:
+    """
+    Get the cpu that request was issued from, if cpu is offline,
+    it will be marked in the output with "offline". For sq, "-"
+    will be returned.
+
+    :param rq: ``struct request *``
+    :returns: str combining cpu number and offline status for mq,
+              '-' for sq.
+    """
+    if has_member(rq, "mq_ctx") and rq.mq_ctx:
+        cpu = int(rq.mq_ctx.cpu)
+    else:
+        return "-"
+    if cpu not in for_each_online_cpu(rq.prog_):
+        return "%d(offline)" % cpu
+    else:
+        return str(cpu)
+
+
 def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
     """
     Dump all inflight io from all disks
@@ -457,11 +478,12 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
     :param diskname: name of some disk or "all" for all disks.
     """
     print(
-        "%-20s %-20s %-20s %-16s\n%-20s %-20s %-20s %-16s"
+        "%-20s %-20s %-20s %-16s %-16s\n%-20s %-20s %-20s %-16s"
         % (
             "device",
             "hwq",
             "request",
+            "cpu",
             "op",
             "flags",
             "offset",
@@ -494,11 +516,12 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
             ).value_() != disk.value_():
                 continue
             print(
-                "%-20s %-20lx %-20lx %-16s\n%-20s %-20d %-20d %-16s"
+                "%-20s %-20lx %-20lx %-16s %-16s\n%-20s %-20d %-20d %-16s"
                 % (
                     name,
                     hwq_ptr,
                     rq_ptr,
+                    show_rq_issued_cpu(rq),
                     rq_op(rq),
                     rq_flags(rq),
                     rq.__sector,
@@ -512,11 +535,12 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
         ]
         for rq_ptr, rq in sq_pending:
             print(
-                "%-20s %-20s %-20lx %-16s\n%-20s %-20d %-20d %-16s"
+                "%-20s %-20s %-20lx %-16s %-16s\n%-20s %-20d %-20d %-16s"
                 % (
                     name,
                     "-",
                     rq_ptr,
+                    "-",
                     rq_op(rq),
                     rq_flags(rq),
                     rq.__sector,
