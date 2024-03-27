@@ -8,6 +8,7 @@ from typing import Iterable
 
 from drgn import Object
 from drgn import Program
+from drgn import TypeKind
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.block import blkdev_ro
@@ -334,7 +335,15 @@ def show_md(prog: Program) -> None:
                 mddev.suspend_hi,
             )
         )
-        print("%-10s: %d processes" % ("IO-issuing", mddev.active_io.counter))
+        # commit 72adae23a72c("md: Change active_io to percpu")
+        if (
+            mddev.active_io.type_.kind == TypeKind.STRUCT
+            and mddev.active_io.type_.tag == "percpu_ref"
+        ):
+            count = percpu_ref_sum(prog, mddev.active_io)
+        else:
+            count = mddev.active_io.counter
+        print("%-10s: %d processes" % ("IO-issuing", count))
         print(
             "%10s: %-8s %-4s %-20s %-8s %-10s %-8s"
             % (

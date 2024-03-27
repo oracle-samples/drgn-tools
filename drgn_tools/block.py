@@ -15,6 +15,7 @@ from drgn import Object
 from drgn import TypeKind
 from drgn.helpers.common.format import decode_enum_type_flags
 from drgn.helpers.linux.block import for_each_disk
+from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.xarray import xa_for_each
 
@@ -215,7 +216,19 @@ def for_each_tag_pending_rq(tags: Object) -> Iterable[Object]:
         addr = tags.rqs[tag + reserved].value_()
         if addr == 0:
             continue
-        yield Object(prog, "struct request *", value=addr)
+        # Since commit 568f27006577("blk-mq: centralise related handling
+        # into blk_mq_get_driver_tag") was merged in v5.10, for requests
+        # that are not yet dispatched, like those in the plug list, we
+        # should get from "tags.static_rqs", otherwise we may get a wrong
+        # request. To resolve this, first check request from "tags.rqs"
+        # is valid or not, if not get it from "tags.static_rqs".
+        rq = Object(prog, "struct request *", value=addr)
+        if rq.tag == -1:
+            addr = tags.static_rqs[tag + reserved].value_()
+            if addr == 0:
+                continue
+            rq = Object(prog, "struct request *", value=addr)
+        yield rq
 
 
 def for_each_hwq_pending_rq(hwq: Object) -> Iterable[Object]:
@@ -278,9 +291,9 @@ def rq_op_ef295ecf(rq: Object) -> str:
     # rq.cmf_flags: 8 bits for encoding the operation, and the remaining 24 for flags
     REQ_OP_BITS = 8
     op_mask = (1 << REQ_OP_BITS) - 1
-    req_opf = {
-        value: name for (name, value) in prog.type("enum req_opf").enumerators
-    }
+    # commit ff07a02e9e8e6("treewide: Rename enum req_opf into enum req_op")
+    opf = "enum req_op" if type_exists(prog, "enum req_op") else "enum req_opf"
+    req_opf = {value: name for (name, value) in prog.type(opf).enumerators}
     cmd_flags = rq.cmd_flags.value_()
     key = cmd_flags & op_mask
     op = req_opf[key] if key in req_opf.keys() else "%s-%d" % ("UNKOP", key)
@@ -318,12 +331,12 @@ def rq_op(rq: Object) -> str:
     :returns: combined request operation enum name as str
     """
     prog = rq.prog_
-    if type_exists(prog, "enum req_opf"):
+    if type_exists(prog, "enum req_opf") or type_exists(prog, "enum req_op"):
         return rq_op_ef295ecf(rq)
     elif type_exists(prog, "enum rq_flag_bits"):
         return rq_op_old(rq)
     else:
-        return "-"
+        return bin(rq.cmd_flags)
 
 
 def rq_flags(rq: Object) -> str:
@@ -427,7 +440,34 @@ def request_target(rq: Object) -> Object:
     if has_member(rq, "rq_disk"):
         return rq.rq_disk
     else:
-        return rq.part.bd_disk
+        # rq.part not null only when doing IO statistics.
+        if rq.part.value_():
+            return rq.part.bd_disk
+        else:
+            for _ in for_each_disk(rq.prog_):
+                if _.queue.value_() == rq.q.value_():
+                    return _.queue
+            return None
+
+
+def show_rq_issued_cpu(rq: Object) -> str:
+    """
+    Get the cpu that request was issued from, if cpu is offline,
+    it will be marked in the output with "offline". For sq, "-"
+    will be returned.
+
+    :param rq: ``struct request *``
+    :returns: str combining cpu number and offline status for mq,
+              '-' for sq.
+    """
+    if has_member(rq, "mq_ctx") and rq.mq_ctx:
+        cpu = int(rq.mq_ctx.cpu)
+    else:
+        return "-"
+    if cpu not in for_each_online_cpu(rq.prog_):
+        return "%d(offline)" % cpu
+    else:
+        return str(cpu)
 
 
 def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
@@ -438,11 +478,12 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
     :param diskname: name of some disk or "all" for all disks.
     """
     print(
-        "%-20s %-20s %-20s %-16s\n%-20s %-20s %-20s %-16s"
+        "%-20s %-20s %-20s %-16s %-16s\n%-20s %-20s %-20s %-16s"
         % (
             "device",
             "hwq",
             "request",
+            "cpu",
             "op",
             "flags",
             "offset",
@@ -475,11 +516,12 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
             ).value_() != disk.value_():
                 continue
             print(
-                "%-20s %-20lx %-20lx %-16s\n%-20s %-20d %-20d %-16s"
+                "%-20s %-20lx %-20lx %-16s %-16s\n%-20s %-20d %-20d %-16s"
                 % (
                     name,
                     hwq_ptr,
                     rq_ptr,
+                    show_rq_issued_cpu(rq),
                     rq_op(rq),
                     rq_flags(rq),
                     rq.__sector,
@@ -493,11 +535,12 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
         ]
         for rq_ptr, rq in sq_pending:
             print(
-                "%-20s %-20s %-20lx %-16s\n%-20s %-20d %-20d %-16s"
+                "%-20s %-20s %-20lx %-16s %-16s\n%-20s %-20d %-20d %-16s"
                 % (
                     name,
                     "-",
                     rq_ptr,
+                    "-",
                     rq_op(rq),
                     rq_flags(rq),
                     rq.__sector,
