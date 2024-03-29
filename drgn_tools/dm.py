@@ -171,12 +171,12 @@ def show_dm_table(prog: Program) -> None:
     for dm, name, uuid in for_each_dm(prog):
         target_name = dm_target_name(dm)
         if target_name == "None":
-            print("dm %s doesn't have a target" % hex(dm.value_()))
+            print("%s %s doesn't have a target" % (name, hex(dm.value_())))
             continue
         elif target_name not in dmtable_handler.keys():
             print(
-                "dm %s used non-support target %s"
-                % (hex(dm.value_()), target_name)
+                "%s %s used non-support target %s"
+                % (name, hex(dm.value_()), target_name)
             )
             continue
         else:
