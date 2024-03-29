@@ -163,6 +163,11 @@ dmtable_handler = {
 
 
 def show_dm_table(prog: Program) -> None:
+    msg = ensure_debuginfo(prog, ["dm_mod"])
+    if msg:
+        print(msg)
+        return
+
     for dm, name, uuid in for_each_dm(prog):
         target_name = dm_target_name(dm)
         if target_name == "None":
