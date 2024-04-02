@@ -14,6 +14,7 @@ import drgn
 from drgn import Object
 from drgn import Program
 from drgn.helpers.linux import list_for_each_entry
+from drgn.helpers.linux.boot import pgtable_l5_enabled
 from drgn.helpers.linux.percpu import percpu_counter_sum
 
 from drgn_tools.corelens import CorelensModule
@@ -120,7 +121,7 @@ def get_mm_constants(prog: Program) -> Dict[str, int]:
             # arch/x86/include/asm/pgtable_64_types.h
             _pmd_shift = 21
             if "vmalloc_base" in prog:
-                _vmalloc_size_tb = 32
+                _vmalloc_size_tb = 12800 if pgtable_l5_enabled(prog) else 32
                 mm_consts["VMALLOC_START"] = prog["vmalloc_base"].value_()
                 mm_consts["VMALLOC_END"] = (
                     mm_consts["VMALLOC_START"] + (_vmalloc_size_tb << 40) - 1
