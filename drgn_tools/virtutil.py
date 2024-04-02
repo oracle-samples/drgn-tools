@@ -5,6 +5,7 @@ Utilities for virtualization
 """
 import argparse
 
+from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.cpumask import for_each_possible_cpu
 from drgn.helpers.linux.percpu import per_cpu
@@ -16,7 +17,16 @@ def get_platform_arch(prog: Program) -> str:
     """
     Returns platform architecture
     """
-    dump_stack_arch_desc = prog["dump_stack_arch_desc_str"]
+    try:
+        dump_stack_arch_desc = prog["dump_stack_arch_desc_str"]
+    except KeyError:
+        # For UEK6 kernels with CTF debuginfo, the "dump_stack_arch_desc_str"
+        # variable doesn't have type information, despite appearing in the
+        # symbol table. This is a CTF generation bug. Regardless, the variable
+        # is declared as char[128], so let's go ahead and use the available
+        # symbol and hard-code the type.
+        sym = prog.symbol("dump_stack_arch_desc_str")
+        dump_stack_arch_desc = Object(prog, "char[128]", address=sym.address)
     str_dump_stack_arch_desc = dump_stack_arch_desc.string_().decode("utf-8")
     return str_dump_stack_arch_desc
 
@@ -29,14 +39,20 @@ def get_platform_hypervisor(prog: Program) -> str:
     try:
         return prog["x86_hyper_type"].format_(type_name=False)
     except KeyError:
-        return "Platform not supported."
+        return "UNKNOWN Hypervisor (Platform not supported)"
 
 
 def get_cpuhp_state(prog: Program, cpu: int) -> str:
     """
     Return CPU state for a given CPU
     """
-    cpuhp_state = per_cpu(prog["cpuhp_state"], cpu).state
+    try:
+        cpuhp_state = per_cpu(prog["cpuhp_state"], cpu).state
+    except KeyError:
+        # Variable cpuhp_state is introduced in cff7d378d3fd ("cpu/hotplug:
+        # Convert to a state machine for the control processor"), so it is not
+        # present in UEK4. It is expected for this to fail there.
+        return "UNKNOWN (missing 'cpuhp_state' variable)"
     return cpuhp_state.format_(type_name=False)
 
 
