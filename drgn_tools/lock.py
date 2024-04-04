@@ -43,10 +43,15 @@ from drgn.helpers.linux.pid import find_task
 from drgn_tools.bt import bt
 from drgn_tools.bt import bt_has_any
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.locking import _RWSEM_READER_MASK
+from drgn_tools.locking import _RWSEM_READER_SHIFT
 from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
-from drgn_tools.locking import get_rwsem_info
+from drgn_tools.locking import get_rwsem_owner
+from drgn_tools.locking import get_rwsem_spinners_info
 from drgn_tools.locking import mutex_owner
+from drgn_tools.locking import rwsem_has_spinner
+from drgn_tools.locking import RwsemStateCode
 from drgn_tools.locking import show_lock_waiter
 from drgn_tools.locking import tail_osq_node_to_spinners
 from drgn_tools.task import get_current_run_time
@@ -235,9 +240,16 @@ def show_rwsem_lock(
     frame_list: List[Tuple[Object, StackFrame]],
     seen_rwsems: Set[int],
     stack: bool,
+    time: Optional[int] = None,
+    pid: Optional[int] = None,
 ) -> None:
     """Show rw_semaphore details"""
     warned_absent = False
+    wtask = None
+
+    if pid is not None:
+        wtask = find_task(prog, pid)
+
     for task, frame in frame_list:
         try:
             rwsem = frame["sem"]
@@ -255,7 +267,55 @@ def show_rwsem_lock(
             continue
         seen_rwsems.add(rwsemaddr)
 
-        get_rwsem_info(rwsem, stack)
+        index = 0
+        print(f"Rwsem: ({rwsem.type_.type_name()})0x{rwsem.value_():x}")
+        if rwsem_has_spinner(rwsem):
+            get_rwsem_spinners_info(rwsem, stack)
+        else:
+            print("rwsem has no spinners.")
+
+        owner_task, owner_type = get_rwsem_owner(rwsem)
+
+        if owner_task:
+            # Only for a writer owned rwsem, we get task_struct of owner
+            print(
+                f"Writer owner ({owner_task.type_.type_name()})0x{owner_task.value_():x}: (pid){owner_task.pid.value_()}"
+            )
+            print("")
+            if stack:
+                bt(owner_task.pid)
+            print("")
+        elif owner_type == RwsemStateCode.READER_OWNED:
+            # For reader owned rwsems, we can get number of readers in newer kernels( >= v5.3.1).
+            # So try to retrieve that info.
+            if rwsem.owner.type_.type_name() == "atomic_long_t":
+                num_readers = (
+                    rwsem.count.counter.value_() & _RWSEM_READER_MASK
+                ) >> _RWSEM_READER_SHIFT
+                print(f"Owned by {num_readers} reader(s)")
+            else:
+                print("rwsem is owned by one or more readers")
+        else:
+            print(f" rwsem is {owner_type.value}")
+
+        print(
+            "Rwsem WAITERS (Index, cpu, comm, pid, state, type, wait time (d hr:min:sec:ms)):"
+        )
+        if pid is None:
+            if time is None:
+                time = 0
+
+            for waiter in for_each_rwsem_waiter(prog, rwsem):
+                waittime = task_lastrun2now(waiter)
+                timens = time * 1000000000
+                index = index + 1
+
+                if waittime > timens or timens == 0:
+                    show_lock_waiter(prog, waiter, index, stacktrace=stack)
+                else:
+                    continue
+        else:
+            show_lock_waiter(prog, wtask, index, stacktrace=stack)
 
         print("")
 
@@ -284,8 +344,17 @@ def scan_sem_lock(
         show_sem_lock(prog, frame_list, seen_sems, stack, time, pid)
 
 
-def scan_rwsem_lock(prog: Program, stack: bool) -> None:
+def scan_rwsem_lock(
+    prog: Program,
+    stack: bool,
+    time: Optional[int] = None,
+    pid: Optional[int] = None,
+) -> None:
     """Scan for read-write(rw) semphores"""
+    wtask = None
+    if pid is not None:
+        wtask = find_task(prog, pid)
+
     seen_rwsems: Set[int] = set()
     functions = [
         "__rwsem_down_write_failed_common",
@@ -293,9 +362,9 @@ def scan_rwsem_lock(prog: Program, stack: bool) -> None:
         "rwsem_down_write_slowpath",
         "rwsem_down_read_slowpath",
     ]
-    frame_list = bt_has_any(prog, functions)
+    frame_list = bt_has_any(prog, functions, wtask)
     if frame_list:
-        show_rwsem_lock(prog, frame_list, seen_rwsems, stack)
+        show_rwsem_lock(prog, frame_list, seen_rwsems, stack, time, pid)
 
 
 def scan_lock(
@@ -315,7 +384,7 @@ def scan_lock(
 
     print("Scanning RWSemaphores...")
     print("")
-    scan_rwsem_lock(prog, stack)
+    scan_rwsem_lock(prog, stack, time, pid)
 
 
 class Locking(CorelensModule):
