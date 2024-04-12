@@ -38,6 +38,7 @@ from typing import Tuple
 from typing import TYPE_CHECKING
 from typing import Union
 from urllib.error import HTTPError
+from urllib.error import URLError
 
 from drgn_tools.config import get_config
 from drgn_tools.logging import get_logger
@@ -182,6 +183,8 @@ class OracleLinuxYumFetcher(DebuginfoFetcher):
                             e.code, e.reason, url
                         )
                     )
+                except URLError as e:
+                    errors.append(f"download failed for debuginfo RPM: {e}")
             else:
                 log.warning(
                     "%s: tried all URLs and download failed:\n%s",
