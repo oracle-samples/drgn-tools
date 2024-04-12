@@ -10,6 +10,7 @@ from typing import Tuple
 from drgn import cast
 from drgn import Object
 from drgn import Program
+from drgn.helpers.linux.list import list_first_entry_or_null
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.rbtree import rbtree_inorder_for_each_entry
 
@@ -181,8 +182,86 @@ def show_table_linear(dm: Object, name: str) -> None:
         )
 
 
+def show_multipath_pg(pg: Object) -> str:
+    pg_cfg = "%s %d " % (pg.ps.type.name.string_().decode(), pg.nr_pgpaths)
+    for pgpath in list_for_each_entry(
+        "struct pgpath", pg.pgpaths.address_of_(), "list"
+    ):
+        bdev = pgpath.path.dev.bdev
+        pg_cfg += "%d:%d [%s] " % (
+            bdev.bd_dev >> 20,
+            bdev.bd_dev & 0xFFFFF,
+            bdev.bd_disk.disk_name.string_().decode(),
+        )
+    return pg_cfg
+
+
+def show_table_multipath(dm: Object, name: str) -> None:
+    """
+    Dump dm table for multipath devices
+
+    The output format is this:
+    name: start_sec, lenght, "multipath", "1 queue_if_no_path" or 0,
+    hw handler name & parameters or 0, next priority group number,
+    iterate each pg using this format
+    (path_selector_type, path_num, iterate_each_path(dev_t, disk name))
+    """
+    msg = ensure_debuginfo(dm.prog_, ["dm_multipath"])
+    if msg:
+        print(msg)
+        return
+    table = dm_table(dm)
+    target = table.targets
+    line = "%s: %d %d multipath " % (name, target.begin, target.len)
+
+    # multipath flags
+    multipath = cast("struct multipath *", target.private)
+    if has_member(multipath, "queue_if_no_path"):
+        line += "1 queue_if_no_path " if multipath.queue_if_no_path else "0 "
+    elif multipath.flags & 7:
+        line += "1 queue_if_no_path "
+    else:
+        line += "0 "
+
+    # hardware handler parameters
+    handler = []
+    if multipath.hw_handler_name:
+        handler.append(multipath.hw_handler_name.string_().decode())
+        if multipath.hw_handler_params:
+            for param in multipath.hw_handler_params.split(" "):
+                handler.append(param)
+    line += "%d " % len(handler)
+    for param in handler:
+        line += "%s " % str(param)
+    line += "%d " % multipath.nr_priority_groups
+
+    # next priority group number
+    next_pg_num = 1
+    if multipath.current_pg:
+        next_pg_num = multipath.current_pg.pg_num
+    else:
+        pg = list_first_entry_or_null(
+            multipath.priority_groups.address_of_(),
+            "struct priority_group",
+            "list",
+        )
+        if pg:
+            next_pg_num = pg.pg_num
+    line += "%d " % next_pg_num
+
+    # priority groups
+    for pg in list_for_each_entry(
+        "struct priority_group",
+        multipath.priority_groups.address_of_(),
+        "list",
+    ):
+        line += show_multipath_pg(pg)
+    print(line)
+
+
 dmtable_handler = {
     "linear": show_table_linear,
+    "multipath": show_table_multipath,
 }
 
 
