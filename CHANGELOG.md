@@ -6,9 +6,37 @@ Unreleased
 
 Changes which are committed to git, but not yet released, may appear here.
 
+0.9.0 - Tue, Apr 16, 2023
+-------------------------
+
+This marks the final version before public release! The primary changes have to
+do with release preparation.
+
+### Added
+
+- RPM spec file for packaging
+- Manual page for `corelens`
+- Corelens modules:
+  - `net`
+  - `multipath` (v2 only)
+  - `virtutil` (v2 only)
+- Corelens modules for v2 have been split off into the `drgn_tools.v2` package.
+  They will not be included in the v1 RPM.
+
 ### Changed
 
 - The required drgn version is 0.0.25 or 0.0.26.
+- Corelens improvements to user experience:
+  - When run with `-o`, corelens prints each module as it runs, along with
+    runtime. This helps assure that progress is made. The timing information is
+    also included in the report.
+  - Additional information is provided to the user about each module: what
+    kernel moudles it depends on, special debuginfo requirements, etc.
+  - Corelens now checks whether CTF is compatible prior to loading it
+- The `lock` module is improved to index stack traces for much faster runtime.
+- The `lock` module now supports rwsem.
+- The `ps` module has more command line arguments similar to crash's.
+
 
 0.8.0 - Wed, Jan 31, 2023
 -------------------------
