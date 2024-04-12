@@ -7,7 +7,6 @@ Workqueue
 The ``drgn.helpers.linux.workqueue`` module provides helpers for working with the
 Linux workqueues.
 """
-import argparse
 from typing import Iterator
 from typing import Optional
 from typing import Union
@@ -25,7 +24,6 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import find_task
 
-from drgn_tools.corelens import CorelensModule
 
 __all__ = (
     "for_each_workqueue",
@@ -551,12 +549,3 @@ def find_worker_executing_work(work: Object) -> Object:
                 return worker
 
     return NULL(prog, "struct worker *")
-
-
-class WorkqueueModule(CorelensModule):
-    """Show details about all workqueues"""
-
-    name = "wq"
-
-    def run(self, prog: Program, args: argparse.Namespace) -> None:
-        show_all_workqueues(prog)

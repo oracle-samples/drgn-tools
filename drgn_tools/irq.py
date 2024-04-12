@@ -4,7 +4,6 @@
 Helpers related to kernel irq management framework under kernel/irq.
 
 """
-import argparse
 from typing import Any
 from typing import Iterator
 from typing import List
@@ -17,7 +16,6 @@ from drgn.helpers.linux.cpumask import for_each_present_cpu
 from drgn.helpers.linux.percpu import per_cpu_ptr
 from drgn.helpers.linux.radixtree import radix_tree_lookup
 
-from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_table
 from drgn_tools.util import cpumask_to_cpulist
 from drgn_tools.util import has_member
@@ -469,12 +467,3 @@ def print_all_irqs(prog: Program, ignore_zero: bool = False) -> None:
             if count or not ignore_zero:
                 rows.append([irq, name, hex(desc.value_()), affinity, count])
     print_table(rows)
-
-
-class IrqModule(CorelensModule):
-    """Print basic IRQ information"""
-
-    name = "irq"
-
-    def run(self, prog: Program, args: argparse.Namespace) -> None:
-        print_all_irqs(prog)

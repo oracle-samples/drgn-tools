@@ -3,7 +3,6 @@
 """
 Helpers for multipath
 """
-import argparse
 from typing import Iterable
 
 from drgn import cast
@@ -15,7 +14,6 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn_tools.block import blkdev_name
 from drgn_tools.block import blkdev_ro
 from drgn_tools.block import blkdev_size
-from drgn_tools.corelens import CorelensModule
 from drgn_tools.dm import dm_table
 from drgn_tools.dm import dm_target_name
 from drgn_tools.dm import for_each_dm
@@ -303,20 +301,3 @@ def show_mp(prog: Program) -> None:
         print("%s (%s) %s" % (name, uuid.partition("-")[2], disk_name))
         show_multipath(prog, dm)
         dm_device_count += 1
-
-
-class Multipath(CorelensModule):
-    """Display info about Multipath devices"""
-
-    name = "multipath"
-    debuginfo_kmods = [
-        "dm_mod",
-        "dm_multipath",
-        "dm_service",
-        "dm_queue_length",
-        "dm_io_affinity",
-        "dm_historical_service_time",
-    ]
-
-    def run(self, prog: Program, args: argparse.Namespace) -> None:
-        show_mp(prog)
