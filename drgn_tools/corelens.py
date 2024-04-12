@@ -27,7 +27,9 @@ from typing import Tuple
 from drgn import Program
 from drgn import ProgramFlags
 
+from drgn_tools.debuginfo import CtfCompatibility
 from drgn_tools.debuginfo import find_debuginfo
+from drgn_tools.debuginfo import KernelVersion
 from drgn_tools.module import get_module_load_summary
 from drgn_tools.module import KernelModule
 from drgn_tools.module import load_module_debuginfo
@@ -339,6 +341,52 @@ def _load_candidate_modules(
     return candidate_modules_to_run
 
 
+def _get_host_ol() -> Optional[int]:
+    path = "/etc/oracle-release"
+    if not os.path.exists(path):
+        return None
+    m = re.search(r"(\d+)\.\d+", open(path).read())
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _check_ctf_compat(release: str, vmcore: str) -> bool:
+    """
+    Return True if CTF is compatible with this kernel release
+
+    If False, print a user-friendly diagnostic.
+    """
+    host_ol = _get_host_ol()
+    kver = KernelVersion.parse(release)
+    compat = CtfCompatibility.get(kver, host_ol)
+    if compat == CtfCompatibility.YES:
+        return True
+    elif compat == CtfCompatibility.LIMITED_PROC and vmcore == "/proc/kcore":
+        return True
+
+    print("error: CTF found, but incompatible with drgn-tools")
+    print(f"  uname = {release}")
+    print(f"  host_ol = {host_ol}")
+    print(f"  compat = {compat}")
+
+    # Some helpful extra info
+    if kver.uek_version and kver.uek_version < 4:
+        print("Kernels prior to UEK4 are completely unsupported.")
+        print("Please update.")
+    elif compat == CtfCompatibility.LIMITED_PROC and kver.uek_version == 4:
+        print("UEK 4 kernels can only be used with CTF in live mode")
+    elif compat == CtfCompatibility.LIMITED_PROC:
+        print("This UEK version only supports using CTF in live mode.")
+        print("More recent UEK releases support core dump debugging.")
+    elif (
+        compat == CtfCompatibility.NO and host_ol == 7 and kver.ol_version > 7
+    ):
+        print("Debugging OL8 and later vmcores on OL7 is not supported.")
+        print("Please debug on a more recent version of Oracle Linux.")
+    return False
+
+
 def _load_prog_and_debuginfo(args: argparse.Namespace) -> Tuple[Program, bool]:
     """
     Load up the program and debuginfo. Don't attempt extraction.
@@ -380,7 +428,7 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Tuple[Program, bool]:
         fmts_tried.append("CTF")
         release = prog["UTS_RELEASE"].string_().decode()
         path = args.ctf or f"/lib/modules/{release}/kernel/vmlinux.ctfa"
-        if os.path.isfile(path):
+        if os.path.isfile(path) and _check_ctf_compat(release, args.vmcore):
             load_ctf(prog, path)
             return prog, True
     except ModuleNotFoundError:

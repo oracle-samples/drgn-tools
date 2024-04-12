@@ -441,7 +441,6 @@ _UEK_VER = {
     "4.14.35": 5,
     "5.4.17": 6,
     "5.15.0": 7,
-    "6.6.0": 8,
 }
 
 
@@ -632,7 +631,9 @@ class CtfCompatibility(enum.Enum):
     """Functionality is not available"""
 
     @classmethod
-    def get(cls, kver: KernelVersion, host_ol: int) -> "CtfCompatibility":
+    def get(
+        cls, kver: KernelVersion, host_ol: Optional[int]
+    ) -> "CtfCompatibility":
         # At this point, only UEK kernels have CTF debuginfo.
         if not kver.is_uek or kver.uek_version is None:
             return cls.NO
@@ -673,13 +674,6 @@ class CtfCompatibility(enum.Enum):
             and kver.release_tuple < kallsyms_backport[kver.uek_version]
         ):
             return cls.LIMITED_PROC
-
-        # The ORC unwinder is configured for UEK7 and later. Drgn contains
-        # support for unwinding using ORC as a backup format, but currently, the
-        # CTF implementation can't make use of that. Therefore, UEK7 and later
-        # with x86_64 have no stack trace support.
-        if kver.uek_version >= 7 and kver.arch == "x86_64":
-            return cls.LIMITED_STACK
 
         return cls.YES
 
