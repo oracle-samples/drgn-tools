@@ -3,7 +3,6 @@
 """
 Helpers for dumping virtio device information
 """
-import argparse
 import typing as t
 from collections import namedtuple
 
@@ -13,7 +12,6 @@ from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
 
-from drgn_tools.corelens import CorelensModule
 from drgn_tools.logging import get_logger
 from drgn_tools.module import address_to_module
 from drgn_tools.module import KernelModule
@@ -929,21 +927,3 @@ def virtio_show(
 
     if len(vrings) > 0:
         vrings_show(vrings, True, vd_name)
-
-
-class Virtio(CorelensModule):
-    """Show details of each virtio device, and optionally virtqueues"""
-
-    name = "virtio"
-    debuginfo_kmods = ["*virtio*"]
-    default_args = [["--show-vq"]]
-
-    def add_args(self, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument(
-            "--show-vq",
-            action="store_true",
-            help="show vrings in output",
-        )
-
-    def run(self, prog: Program, args: argparse.Namespace) -> None:
-        virtio_show(prog, show_vq=args.show_vq)
