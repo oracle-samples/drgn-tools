@@ -21,6 +21,7 @@ from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import TextIO
 from typing import Tuple
 
 from drgn import Program
@@ -479,9 +480,10 @@ def _run_module(
 
 
 def _report_errors(
-    errors: List[str], warnings: List[str], out_dir: Optional[Path]
+    errors: List[str],
+    warnings: List[str],
+    err_file: Optional[TextIO],
 ) -> None:
-    err_file = None if not out_dir else (out_dir / "corelens").open("w")
     for error in errors:
         print("error: " + error, file=sys.stderr)
         if err_file:
@@ -566,13 +568,13 @@ def main() -> None:
         "-a",
         action="store_true",
         dest="run_all",
-        help="run almost all of the corelens modules",
+        help="run all of the standard corelens modules",
     )
     grp.add_argument(
         "-A",
         action="store_true",
         dest="run_all_verbose",
-        help="run ALL of the corelens, including those which aren't run by -a",
+        help="run ALL of the modules, both standard and detailed",
     )
     parser.add_argument(
         "--output-directory",
@@ -615,31 +617,47 @@ def main() -> None:
         warn_not_present=not (args.run_all or args.run_all_verbose),
     )
     load_time = time.time() - start_time
-    if args.output_directory:
-        print(f"Loaded debuginfo in in {load_time:.03f}s")
 
     out_dir: Optional[Path] = None
+    err_file: Optional[TextIO] = None
     if args.output_directory:
         out_dir = Path(args.output_directory)
         out_dir.mkdir(exist_ok=True)
+        err_file = (out_dir / "corelens").open("w")
+        kind = "CTF" if ctf else "DWARF"
+        print(f"Loaded {kind} debuginfo in in {load_time:.03f}s")
+        print(
+            f"Loaded {kind} debuginfo in in {load_time:.03f}s", file=err_file
+        )
 
     print_header = not out_dir and len(modules_to_run) > 1
     for mod, mod_args in modules_to_run:
         if out_dir:
             out_file = out_dir / mod.name
             print(f"Running module {mod.name}... ", end="", flush=True)
+            print(
+                f"Running module {mod.name}... ",
+                end="",
+                flush=True,
+                file=err_file,
+            )
             with redirect_stdout(str(out_file), append=True):
                 runtime = _run_module(
                     mod, prog, mod_args, errors, print_header
                 )
             print(f"completed in {runtime:.3f}s")
+            print(f"completed in {runtime:.3f}s", file=err_file)
         else:
             _run_module(mod, prog, mod_args, errors, print_header)
 
-    _report_errors(errors, warnings, out_dir)
+    _report_errors(errors, warnings, err_file)
     corelens_total_time = time.time() - corelens_begin_time
     if out_dir:
         print(f"corelens total runtime: {corelens_total_time:.3f}s")
+        print(
+            f"corelens total runtime: {corelens_total_time:.3f}s",
+            file=err_file,
+        )
     if errors:
         sys.exit(1)
 
