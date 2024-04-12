@@ -5,3 +5,4 @@ from drgn_tools import dm
 
 def test_show_dm(prog):
     dm.show_dm(prog)
+    dm.show_dm_table(prog)
