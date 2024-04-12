@@ -633,6 +633,9 @@ def main() -> None:
     if not args.vmcore:
         parser.print_usage()
         sys.exit("error: specify a vmcore or /proc/kcore, or a help option")
+    if args.vmcore == "/proc/kcore":
+        print("warning: Running corelens against a live system.")
+        print("         Data may be inconsistent, or corelens may crash.")
 
     start_time = time.time()
     prog, ctf = _load_prog_and_debuginfo(args)
