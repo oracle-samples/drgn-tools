@@ -189,6 +189,24 @@ class CorelensModule(abc.ABC):
         """
         return "always"
 
+    def _notes(self) -> List[str]:
+        # Return notes for the user about this module.
+        notes = []
+        if self.need_dwarf:
+            notes.append("Requires DWARF debuginfo.")
+        if not self.live_ok:
+            notes.append("Live kernel not supported.")
+        if self.skip_unless_have_kmod:
+            notes.append(
+                f'Skipped unless "{self.skip_unless_have_kmod}" '
+                "kernel module is loaded."
+            )
+        if self.run_when == "verbose":
+            notes.append("Detailed module (runs with -A)")
+        elif self.run_when == "never":
+            notes.append("Manually run module (only run with -M)")
+        return notes
+
     def _parse_args(
         self,
         args: List[str],
@@ -203,9 +221,11 @@ class CorelensModule(abc.ABC):
         description = self.__doc__
         if description:
             description = inspect.cleandoc(description)
+        epilog = "\n\n".join(self._notes())
         parser = argparse.ArgumentParser(
             prog=self.name,
             description=description,
+            epilog=epilog,
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
         if not exit_on_error:
@@ -521,6 +541,8 @@ def _print_module_listing() -> None:
             print(f"{name.ljust(maxlen)} {first_line}")
         else:
             print(name)
+        for note in module._notes():
+            print(" " * (maxlen), note)
 
 
 def main() -> None:
