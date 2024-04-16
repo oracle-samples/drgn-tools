@@ -109,9 +109,10 @@ debugging information for _VMCORE_. There are two possibilities:
 
 *DWARF*
 	DWARF information is the most detailed option, but it requires that the
-	*-debuginfo* package corresponding to _VMCORE_ is installed. When DWARF
-	information is available, corelens can provide more detailed stack
-	traces, and some modules only work when DWARF is available.
+	*debuginfo* package corresponding to _VMCORE_ (or the running kernel) is
+	installed. When DWARF information is available, corelens can provide
+	more detailed stack traces, and some modules only work when DWARF is
+	available.
 
 *CTF*
 	CTF (Compact Type Format) is a lightweight type format. For Oracle UEK
