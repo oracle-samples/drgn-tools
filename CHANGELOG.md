@@ -6,6 +6,10 @@ Unreleased
 
 Changes which are committed to git, but not yet released, may appear here.
 
+### Changed
+
+- The required drgn version is 0.0.25 or 0.0.26.
+
 0.8.0 - Wed, Jan 31, 2023
 -------------------------
 
