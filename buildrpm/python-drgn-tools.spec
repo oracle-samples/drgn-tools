@@ -20,7 +20,7 @@ BuildRequires:  python%{python3_pkgversion}-wheel
 
 # The drgn dependency can be fulfilled by drgn with, or without, CTF support.
 # However, drgn-tools is tied to a specific drgn release.
-Requires:       drgn >= 0.0.25, drgn < 0.0.26
+Requires:       drgn >= 0.0.25, drgn < 0.0.27
 
 %description
 drgn-tools extends the drgn debugger with scripts & helpers developed by the
