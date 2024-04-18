@@ -14,6 +14,7 @@ from drgn.helpers.linux.list import list_first_entry_or_null
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.rbtree import rbtree_inorder_for_each_entry
 
+from drgn_tools.block import blkdev_devt_str
 from drgn_tools.block import blkdev_name
 from drgn_tools.block import blkdev_ro
 from drgn_tools.block import blkdev_size
@@ -169,13 +170,12 @@ def show_table_linear(dm: Object, name: str) -> None:
         target = table.targets[tid]
         dev = cast("struct linear_c *", target.private)
         print(
-            "%s: %d %d linear %d:%d [%s] %d"
+            "%s: %d %d linear %s [%s] %d"
             % (
                 name,
                 int(target.begin),
                 int(target.len),
-                dev.dev.bdev.bd_dev >> 20,
-                dev.dev.bdev.bd_dev & 0xFFFFF,
+                blkdev_devt_str(dev.dev.bdev),
                 blkdev_name(dev.dev.bdev),
                 dev.start,
             )
@@ -188,9 +188,8 @@ def show_multipath_pg(pg: Object) -> str:
         "struct pgpath", pg.pgpaths.address_of_(), "list"
     ):
         bdev = pgpath.path.dev.bdev
-        pg_cfg += "%d:%d [%s] " % (
-            bdev.bd_dev >> 20,
-            bdev.bd_dev & 0xFFFFF,
+        pg_cfg += "%s [%s] " % (
+            blkdev_devt_str(bdev),
             bdev.bd_disk.disk_name.string_().decode(),
         )
     return pg_cfg
