@@ -258,9 +258,38 @@ def show_table_multipath(dm: Object, name: str) -> None:
     print(line)
 
 
+def show_table_snapshot(dm: Object, name: str) -> None:
+    msg = ensure_debuginfo(dm.prog_, ["dm_snapshot"])
+    if msg:
+        print(msg)
+        return
+
+    table = dm_table(dm)
+    for tid in range(table.num_targets):
+        target = table.targets[tid]
+        snapshot = cast("struct dm_snapshot *", target.private)
+        print(
+            "%s: %d %d %s %s %s %s %s %s %d"
+            % (
+                name,
+                target.begin,
+                target.len,
+                target.type.name.string_().decode(),
+                snapshot.origin.name.string_().decode(),
+                blkdev_devt_str(snapshot.origin.bdev),
+                snapshot.cow.name.string_().decode(),
+                blkdev_devt_str(snapshot.cow.bdev),
+                snapshot.store.type.name.string_().decode(),
+                snapshot.store.chunk_size,
+            )
+        )
+
+
 dmtable_handler = {
     "linear": show_table_linear,
     "multipath": show_table_multipath,
+    "snapshot": show_table_snapshot,
+    "snapshot-merge": show_table_snapshot,
 }
 
 
