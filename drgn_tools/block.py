@@ -17,6 +17,8 @@ from drgn import TypeKind
 from drgn.helpers.common.format import decode_enum_type_flags
 from drgn.helpers.linux.block import for_each_disk
 from drgn.helpers.linux.cpumask import for_each_online_cpu
+from drgn.helpers.linux.device import MAJOR
+from drgn.helpers.linux.device import MINOR
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.xarray import xa_for_each
 
@@ -48,6 +50,10 @@ def for_each_badblocks(bb: Object) -> Iterable[Object]:
         length = (item & BB_LEN_MASK) + 1
         ack = (item & BB_ACK_MASK) != 0
         yield (offset, length, ack)
+
+
+def blkdev_devt_str(bdev: Object) -> str:
+    return "%d:%d" % (MAJOR(bdev.bd_dev), MINOR(bdev.bd_dev))
 
 
 def blkdev_ro(bdev: Object) -> int:
