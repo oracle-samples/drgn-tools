@@ -5,7 +5,7 @@
 .nh
 .ad l
 .\" Begin generated content:
-.TH "CORELENS" "1" "2024-04-12"
+.TH "CORELENS" "1" "2024-04-19"
 .P
 .P
 .SH NAME
@@ -141,9 +141,10 @@ debugging information for \fIVMCORE\fR.\& There are two possibilities:
 \fBDWARF\fR
 .RS 4
 DWARF information is the most detailed option, but it requires that the
-\fB-debuginfo\fR package corresponding to \fIVMCORE\fR is installed.\& When DWARF
-information is available, corelens can provide more detailed stack
-traces, and some modules only work when DWARF is available.\&
+\fBdebuginfo\fR package corresponding to \fIVMCORE\fR (or the running kernel) is
+installed.\& When DWARF information is available, corelens can provide
+more detailed stack traces, and some modules only work when DWARF is
+available.\&
 .P
 .RE
 \fBCTF\fR
