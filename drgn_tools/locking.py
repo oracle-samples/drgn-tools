@@ -9,6 +9,7 @@ from typing import Tuple
 
 import drgn
 from drgn import cast
+from drgn import IntegerLike
 from drgn import NULL
 from drgn import Object
 from drgn import Program
@@ -25,6 +26,33 @@ from drgn_tools.task import get_current_run_time
 from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import per_cpu_owner
 from drgn_tools.util import timestamp_str
+
+
+def is_task_blocked_on_lock(
+    pid: IntegerLike, lock_type: str, lock: Object
+) -> bool:
+    """
+    Check if a task is blocked on a given lock or not
+
+    :param pid: PID of task
+    :param lock_type: type of lock i.e mutex, semaphore or rw_semaphore
+    :param lock: ``struct mutex *`` or ``struct semaphore *`` or ``struct rw_semaphore *``
+    :returns: True if task is blocked on given lock, False otherwise.
+    """
+
+    if lock_type == "semaphore" or lock_type == "rw_semaphore":
+        return pid in [
+            waiter.pid.value_()
+            for waiter in for_each_rwsem_waiter(lock.prog_, lock)
+        ]
+    elif lock_type == "mutex":
+        return pid in [
+            waiter.pid.value_()
+            for waiter in for_each_mutex_waiter(lock.prog_, lock)
+        ]
+    else:
+        return False
+
 
 ######################################
 # osq lock
