@@ -39,8 +39,8 @@ rm -rf drgn_tools/v2/
 
 %install
 %py3_install_wheel %{python_wheelname}
-gzip -k man/corelens.1
-install -m644 -Dt %{buildroot}%{_mandir}/man1/ man/corelens.1.gz
+gzip man/corelens.1
+install -m644 -D man/corelens.1.gz %{buildroot}%{_mandir}/man1/corelens.1.gz
 
 # The DRGN script is an interactive CLI which is convenient for developers,
 # but should not be part of general users' PATH. If necessary, it can be invoked
