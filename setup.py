@@ -1,6 +1,6 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-import os.path
+import os
 import re
 import shutil
 import subprocess
@@ -10,6 +10,9 @@ from setuptools import setup
 long_description = "drgn helper script repository"
 
 RELEASE_VERSION = "0.9.0"
+PACKAGES = ["drgn_tools"]
+if not os.environ.get("DRGN_TOOLS_V2_OMIT"):
+    PACKAGES.append("drgn_tools.v2")
 
 
 def get_version():
@@ -93,7 +96,7 @@ setup(
     author="Oracle Linux Sustaining Engineering Team",
     author_email="stephen.s.brennan@oracle.com",
     license="UPL",
-    packages=["drgn_tools"],
+    packages=PACKAGES,
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: Universal Permissive License (UPL)",
