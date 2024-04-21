@@ -9,10 +9,12 @@ from typing import Tuple
 
 import drgn
 from drgn import cast
+from drgn import FaultError
 from drgn import IntegerLike
 from drgn import NULL
 from drgn import Object
 from drgn import Program
+from drgn import sizeof
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
@@ -27,6 +29,42 @@ from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import per_cpu_owner
 from drgn_tools.util import timestamp_str
 
+rw_semaphore_frame_names = [
+    "rwsem_down_read_slowpath",
+    "rwsem_down_write_slowpath",
+    "__rwsem_down_read_failed_common",
+    "__rwsem_down_write_failed_common",
+]
+
+
+def get_lock_from_stack_frame(
+    prog: Program, pid: IntegerLike, frame: Object, lock_type: str
+) -> Object:
+    if lock_type == "rw_semaphore":
+        if frame.name in rw_semaphore_frame_names:
+            lock_addr = prog.read_word(
+                frame.register("rbp") - 5 * sizeof(prog.type("void *"))
+            )
+            lock = Object(prog, "struct " + lock_type, address=lock_addr)
+            if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
+                return lock.address_of_()
+        elif frame.name == "__schedule":
+            for offset in 5, 6, 7:
+                lock_addr = prog.read_word(
+                    frame.sp + offset * sizeof(prog.type("void *"))
+                )
+                lock = Object(prog, "struct " + lock_type, address=lock_addr)
+                if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
+                    return lock.address_of_()
+    elif lock_type == "semaphore":
+        pass
+    elif lock_type == "mutex":
+        pass
+    else:
+        pass
+
+    return NULL(prog, "struct " + lock_type + " *")
+
 
 def is_task_blocked_on_lock(
     pid: IntegerLike, lock_type: str, lock: Object
@@ -40,17 +78,21 @@ def is_task_blocked_on_lock(
     :returns: True if task is blocked on given lock, False otherwise.
     """
 
-    if lock_type == "semaphore" or lock_type == "rw_semaphore":
-        return pid in [
-            waiter.pid.value_()
-            for waiter in for_each_rwsem_waiter(lock.prog_, lock)
-        ]
-    elif lock_type == "mutex":
-        return pid in [
-            waiter.pid.value_()
-            for waiter in for_each_mutex_waiter(lock.prog_, lock)
-        ]
-    else:
+    try:
+        if lock_type == "semaphore" or lock_type == "rw_semaphore":
+            return pid in [
+                waiter.pid.value_()
+                for waiter in for_each_rwsem_waiter(lock.prog_, lock)
+            ]
+        elif lock_type == "mutex":
+            return pid in [
+                waiter.pid.value_()
+                for waiter in for_each_mutex_waiter(lock.prog_, lock)
+            ]
+        else:
+            return False
+    except FaultError:
+        # print("Could not retrieve list of waiters.")
         return False
 
 

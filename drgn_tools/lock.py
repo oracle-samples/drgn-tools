@@ -47,6 +47,7 @@ from drgn_tools.locking import _RWSEM_READER_MASK
 from drgn_tools.locking import _RWSEM_READER_SHIFT
 from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
+from drgn_tools.locking import get_lock_from_stack_frame
 from drgn_tools.locking import get_rwsem_owner
 from drgn_tools.locking import get_rwsem_spinners_info
 from drgn_tools.locking import mutex_owner
@@ -246,26 +247,56 @@ def show_rwsem_lock(
     """Show rw_semaphore details"""
     warned_absent = False
     wtask = None
+    seen_rwsems_waiters: Set[int] = set()
 
     if pid is not None:
         wtask = find_task(prog, pid)
 
     for task, frame in frame_list:
-        try:
-            rwsem = frame["sem"]
-            rwsemaddr = rwsem.value_()
-        except drgn.ObjectAbsentError:
-            if not warned_absent:
-                print(
-                    "warning: failed to get rwsemaphore from stack frame"
-                    "- information is incomplete"
-                )
-                warned_absent = True
+        # If rwsem can't be located using frame["sem"], then we rely on
+        # locating it at certain known offsets within a frame and this is
+        # an expensive operation,
+        # So keep a set of already seen waiters because these waiters and the
+        # rwsems, these waiters are blocked on, have already been accounted for.
+        if task.pid.value_() in seen_rwsems_waiters:
             continue
 
+        try:
+            rwsem = frame["sem"]
+        except drgn.ObjectAbsentError:
+            rwsem = get_lock_from_stack_frame(
+                prog, task.pid.value_(), frame, "rw_semaphore"
+            )
+            if not rwsem:
+                task_frame_list = prog.stack_trace(task.pid.value_())
+                for tmp_frame in task_frame_list:
+                    if tmp_frame.name != "__schedule":
+                        continue
+
+                    rwsem = get_lock_from_stack_frame(
+                        prog, task.pid.value_(), tmp_frame, "rw_semaphore"
+                    )
+                    if not rwsem:
+                        if not warned_absent:
+                            print(
+                                "warning: failed to get rwsemaphore from stack frame"
+                                "- information is incomplete"
+                            )
+                            warned_absent = True
+
+        if not rwsem:
+            continue
+
+        rwsemaddr = rwsem.value_()
         if rwsemaddr in seen_rwsems:
             continue
         seen_rwsems.add(rwsemaddr)
+        seen_rwsems_waiters.update(
+            [
+                waiter.pid.value_()
+                for waiter in for_each_rwsem_waiter(prog, rwsem)
+            ]
+        )
 
         index = 0
         print(f"Rwsem: ({rwsem.type_.type_name()})0x{rwsem.value_():x}")
