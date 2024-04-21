@@ -26,6 +26,7 @@ from drgn_tools.bt import bt
 from drgn_tools.table import FixedTable
 from drgn_tools.task import get_current_run_time
 from drgn_tools.task import task_lastrun2now
+from drgn_tools.util import kernel_version
 from drgn_tools.util import per_cpu_owner
 from drgn_tools.util import timestamp_str
 
@@ -57,7 +58,23 @@ def get_lock_from_stack_frame(
                 if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
                     return lock.address_of_()
     elif lock_type == "semaphore":
-        pass
+        kmaj, kmin, _ = kernel_version(prog)
+        if frame.name == "__down_common":
+            if kmaj == 6 and kmin == 6:
+                offsets = [
+                    0,
+                ]
+            elif kmaj == 5 and kmin == 15:
+                offsets = [13, 14]
+            else:
+                offsets = [8, 9]
+            for offset in offsets:
+                lock_addr = prog.read_word(
+                    frame.sp + offset * sizeof(prog.type("void *"))
+                )
+                lock = Object(prog, "struct " + lock_type, address=lock_addr)
+                if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
+                    return lock.address_of_()
     elif lock_type == "mutex":
         pass
     else:

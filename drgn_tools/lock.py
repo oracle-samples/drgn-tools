@@ -192,26 +192,42 @@ def show_sem_lock(
     """Show semaphore details"""
     warned_absent = False
     wtask = None
+    seen_sems_waiters: Set[int] = set()
 
     if pid is not None:
         wtask = find_task(prog, pid)
 
     for task, frame in frame_list:
-        try:
-            sem = frame["sem"]
-            semaddr = sem.value_()
-        except drgn.ObjectAbsentError:
-            if not warned_absent:
-                print(
-                    "warning: failed to get semaphore from stack frame"
-                    "- information is incomplete"
-                )
-                warned_absent = True
+        if task.pid.value_() in seen_sems_waiters:
             continue
 
+        try:
+            sem = frame["sem"]
+        except drgn.ObjectAbsentError:
+            sem = get_lock_from_stack_frame(
+                prog, task.pid.value_(), frame, "semaphore"
+            )
+            if not sem:
+                if not warned_absent:
+                    print(
+                        "warning: failed to get semaphore from stack frame"
+                        "- information is incomplete"
+                    )
+                    warned_absent = True
+
+        if not sem:
+            continue
+
+        semaddr = sem.value_()
         if semaddr in seen_sems:
             continue
         seen_sems.add(semaddr)
+        seen_sems_waiters.update(
+            [
+                waiter.pid.value_()
+                for waiter in for_each_rwsem_waiter(prog, sem)
+            ]
+        )
 
         index = 0
         print(f"Semaphore: 0x{semaddr:x}")
