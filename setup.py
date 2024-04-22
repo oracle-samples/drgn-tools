@@ -9,7 +9,7 @@ from setuptools import setup
 
 long_description = "drgn helper script repository"
 
-RELEASE_VERSION = "0.9.0"
+RELEASE_VERSION = "0.9.1"
 PACKAGES = ["drgn_tools"]
 if not os.environ.get("DRGN_TOOLS_V2_OMIT"):
     PACKAGES.append("drgn_tools.v2")

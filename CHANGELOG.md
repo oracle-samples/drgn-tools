@@ -6,6 +6,13 @@ Unreleased
 
 Changes which are committed to git, but not yet released, may appear here.
 
+0.9.1 - Mon, Apr 22, 2023
+-------------------------
+
+* Bugfix: include `drgn_tools/v2` in wheel distributions.
+* Bugfix: fix manual page generation on OL7 RPM build.
+* Regenerate manual page
+
 0.9.0 - Tue, Apr 16, 2023
 -------------------------
 
