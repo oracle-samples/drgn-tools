@@ -41,6 +41,30 @@ rw_semaphore_frame_names = [
 def get_lock_from_stack_frame(
     prog: Program, pid: IntegerLike, frame: Object, lock_type: str
 ) -> Object:
+    """
+    Get lock address from a given stack frame.
+
+    This has been tested only for UEKs 5,6,7 and 8 and for mutexes,
+    semaphores and rw_semaphore.
+
+    For cases, where frame["lock"] can't provide the lock address and gives
+    ObjectAbsent exception, this can be used as fallback method to obtain
+    lock addresses.
+    There can still be cases where for other kernels or other configurations
+    or for same kernel/configuration compiled with a different gcc versions,
+    the lock address may not be available at offsets used here, but the idea
+    here is that since we are mostly debugging released kernels built using
+    Jenkins pipelines, we should not see gcc or kernel configuration variation
+    and this helper will avoid need to manually check stack frames to locate
+    the locks when frame["lock"] method does not work.
+
+    :param pid: PID of task
+    :param frame: StackFrame that should be checked for lock
+    :param lock_type: type of lock i.e mutex, semaphore or rw_semaphore
+    :returns: True if task is blocked on given lock, False otherwise.
+    """
+
+    kmaj, kmin, _ = kernel_version(prog)
     if lock_type == "rw_semaphore":
         if frame.name in rw_semaphore_frame_names:
             lock_addr = prog.read_word(
@@ -58,7 +82,6 @@ def get_lock_from_stack_frame(
                 if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
                     return lock.address_of_()
     elif lock_type == "semaphore":
-        kmaj, kmin, _ = kernel_version(prog)
         if frame.name == "__down_common":
             if kmaj == 6 and kmin == 6:
                 offsets = [
@@ -76,9 +99,17 @@ def get_lock_from_stack_frame(
                 if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
                     return lock.address_of_()
     elif lock_type == "mutex":
-        pass
-    else:
-        pass
+        if frame.name == "__mutex_lock":
+            offsets = [12, 17]
+        elif frame.name == "__schedule":
+            offsets = [7, 8]
+        for offset in offsets:
+            lock_addr = prog.read_word(
+                frame.sp + offset * sizeof(prog.type("void *"))
+            )
+            lock = Object(prog, "struct " + lock_type, address=lock_addr)
+            if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
+                return lock.address_of_()
 
     return NULL(prog, "struct " + lock_type + " *")
 

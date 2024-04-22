@@ -118,6 +118,8 @@ def scan_mutex_lock(
 ) -> None:
     """Scan for mutex and show details"""
     wtask = None
+    seen_mutex_waiters: Set[int] = set()
+
     if pid is not None:
         wtask = find_task(prog, pid)
 
@@ -129,23 +131,46 @@ def scan_mutex_lock(
 
     warned_absent = False
     for task, frame in frame_list:
+        if task.pid.value_() in seen_mutex_waiters:
+            continue
         try:
             mutex = frame["lock"]
-            mutex_addr = mutex.value_()
         except drgn.ObjectAbsentError:
-            if not warned_absent:
-                print(
-                    "warning: failed to get mutex from stack frame"
-                    "- information is incomplete"
-                )
-                warned_absent = True
+            mutex = get_lock_from_stack_frame(
+                prog, task.pid.value_(), frame, "mutex"
+            )
+            if not mutex:
+                task_frame_list = prog.stack_trace(task.pid.value_())
+                for tmp_frame in task_frame_list:
+                    if tmp_frame.name != "__schedule":
+                        continue
+
+                    mutex = get_lock_from_stack_frame(
+                        prog, task.pid.value_(), tmp_frame, "mutex"
+                    )
+                    if not mutex:
+                        if not warned_absent:
+                            print(
+                                "warning: failed to get mutex from stack frame"
+                                "- information is incomplete"
+                            )
+                            warned_absent = True
+
+        if not mutex:
             continue
 
         struct_owner = mutex_owner(prog, mutex)
 
+        mutex_addr = mutex.value_()
         if mutex_addr in seen_mutexes:
             continue
         seen_mutexes.add(mutex_addr)
+        seen_mutex_waiters.update(
+            [
+                waiter.pid.value_()
+                for waiter in for_each_mutex_waiter(prog, mutex)
+            ]
+        )
 
         index = 0
         print(f"Mutex: 0x{mutex_addr:x}")
