@@ -452,6 +452,13 @@ class KernelVersion(NamedTuple):
     Note that depending on the package versioning scheme, the patchlevel number
     here may be useless, misleading, or otherwise unhelpful.
     """
+    version_tuple: Tuple[int, ...]
+    """
+    The upstream version, split into integer groups for easy comparison.
+
+    This should be a three element tuple, but the code does not enforce it as a
+    requirement, so you should treat it as a variable length tuple of integers.
+    """
     release: str
     """The packaging release version (the stuff after the hyphen)."""
     release_tuple: Tuple[int, ...]
@@ -479,14 +486,22 @@ class KernelVersion(NamedTuple):
     """Whether the kernel is a UEK kernel."""
     uek_version: Optional[int]
     """The major version of the UEK release, if applicable."""
+    is_ueknext: bool
+    """Whether the kernel is a UEK-next kernel (uek_version will be None)"""
 
     @classmethod
     def parse(cls, original: str) -> "KernelVersion":
         """
         Parse the given kernel release string and return a ``KernelVersion``:
 
-            >>> KernelVersion.parse(prog["UTS_RELEASE"].string_().decode("ascii"))
-            KernelVersion(version='4.14.35', release='2047.516.2.4', ol_version=7, ol_update=None, arch='x86_64', original='4.14.35-2047.516.2.4.el7uek.x86_64', is_uek=True)
+            >>> KernelVersion.parse('4.14.35-2047.516.2.4.el7uek.x86_64')
+            KernelVersion(version='4.14.35', version_tuple=(4, 14, 35),
+                          release='2047.516.2.4',
+                          release_tuple=(2047, 516, 2, 4),
+                          ol_version=7, ol_update=None, arch='x86_64',
+                          original='4.14.35-2047.516.2.4.el7uek.x86_64',
+                          extraversion1='', extraversion2='', is_uek=True,
+                          uek_version=5, is_ueknext=False)
 
         :param original: The kernel's release string
         :returns: A ``KernelVersion`` with fields parsed
@@ -503,17 +518,23 @@ class KernelVersion(NamedTuple):
             raise ValueError(
                 "Could not understand kernel version string: " + original
             )
+        version_tuple = tuple(
+            int(g) for g in re.split("[.-]", match["version"])
+        )
         release_tuple = tuple(
             int(g) for g in re.split("[.-]", match["release"])
         )
         update = None
         if match["update"]:
             update = int(match["update"])
+        is_uek = match["extra"].startswith("uek")
         uek_ver = None
-        if match["extra"].startswith("uek"):
+        if is_uek:
             uek_ver = _UEK_VER.get(match["version"])
+        is_uek_next = is_uek and uek_ver is None and version_tuple >= (6, 8, 0)
         return cls(
             match["version"],
+            version_tuple,
             match["release"],
             release_tuple,
             int(match.group("ol_version")),
@@ -522,12 +543,15 @@ class KernelVersion(NamedTuple):
             original,
             match["extraversion1"] or "",
             match["extraversion2"] or "",
-            match["extra"].startswith("uek"),
+            is_uek,
             uek_ver,
+            is_uek_next,
         )
 
     def oraclelinux_debuginfo_rpm(self) -> str:
-        if self.is_uek:
+        if self.is_uek and self.is_ueknext:
+            package_name = "kernel-ueknext"
+        elif self.is_uek:
             package_name = "kernel-uek"
         else:
             package_name = "kernel"
@@ -635,7 +659,14 @@ class CtfCompatibility(enum.Enum):
         cls, kver: KernelVersion, host_ol: Optional[int]
     ) -> "CtfCompatibility":
         # At this point, only UEK kernels have CTF debuginfo.
-        if not kver.is_uek or kver.uek_version is None:
+        if not kver.is_uek:
+            return cls.NO
+        # UEK-next kernels have no compatibility issues
+        if kver.is_ueknext:
+            return cls.YES
+        elif kver.uek_version is None:
+            # If it's UEK, but we can't identify a version or -next, that's a
+            # bug!
             return cls.NO
 
         # Prior to UEK4, it is untested and will not be tested.
