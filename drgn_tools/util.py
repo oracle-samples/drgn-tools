@@ -208,11 +208,11 @@ def percpu_ref_sum(prog: Program, ref: Object) -> int:
     PERCPU_COUNT_BIAS = 1 << (bits_per_long - 1)
     counter = atomic_count.counter & ~PERCPU_COUNT_BIAS
     if ptr & 0x3 != 0 or ptr == 0:
-        return counter
+        return int(counter)
     percpu = Object(prog, "unsigned long", address=ptr)
     for cpu in for_each_possible_cpu(prog):
         counter += per_cpu(percpu, cpu).value_()
-    return counter
+    return int(counter)
 
 
 def to_binary_units(num: t.Union[float, int], units: t.List[str]) -> str:
