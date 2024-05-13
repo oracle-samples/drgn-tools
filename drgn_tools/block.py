@@ -26,6 +26,7 @@ from drgn_tools.bitops import for_each_bit_set
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_table
 from drgn_tools.util import has_member
+from drgn_tools.util import percpu_ref_sum
 from drgn_tools.util import timestamp_str
 from drgn_tools.util import type_exists
 
@@ -631,18 +632,51 @@ def get_inflight_io_nr(prog: drgn.Program, disk: Object) -> int:
     return int(nr)
 
 
+def queue_freezed_depth(q: Object) -> int:
+    depth = q.mq_freeze_depth
+    if depth.type_.kind == TypeKind.INT:
+        return int(depth)
+    else:
+        return int(depth.counter)
+
+
+def queue_usage_counter(q: Object) -> int:
+    return percpu_ref_sum(q.prog_, q.q_usage_counter)
+
+
 def print_block_devs_info(prog: drgn.Program) -> None:
     """
     Prints the block device information
     """
-    output = [["MAJOR", "GENDISK", "NAME", "REQUEST_QUEUE", "Inflight I/Os"]]
+    output = [
+        [
+            "MAJOR",
+            "GENDISK",
+            "NAME",
+            "REQUEST_QUEUE",
+            "Inflight I/Os",
+            "Freezed Depth",
+            "Usage Counter",
+        ]
+    ]
     for disk in for_each_disk(prog):
+        q = disk.queue
         major = int(disk.major)
         gendisk = hex(disk.value_())
         name = disk.disk_name.string_().decode("utf-8")
-        rq = hex(disk.queue.value_())
+        rq = hex(q.value_())
         ios = get_inflight_io_nr(prog, disk)
-        output.append([str(major), gendisk, name, rq, str(ios)])
+        output.append(
+            [
+                str(major),
+                gendisk,
+                name,
+                rq,
+                str(ios),
+                str(queue_freezed_depth(q)),
+                str(queue_usage_counter(q)),
+            ]
+        )
     print_table(output)
 
 
