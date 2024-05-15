@@ -22,10 +22,13 @@ import drgn
 from drgn import cast
 from drgn import container_of
 from drgn import Object
+from drgn import PlatformFlags
 from drgn import Program
 from drgn.helpers.linux import for_each_online_cpu
 from drgn.helpers.linux import per_cpu
 from drgn.helpers.linux.list import hlist_for_each_entry
+from drgn.helpers.linux.list import list_empty
+from drgn.helpers.linux.list import list_for_each
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.pid import find_task
 
@@ -80,6 +83,51 @@ RDMA_CM_STATES = {
 }
 
 # Helpers #
+
+
+def be64_to_host(prog: drgn.Program, value: int) -> int:
+    """
+    Convert 64 byte value from big endian to host order
+
+    :param prog: drgn program
+    :param value: The value to be converted
+    """
+    # If the platform byte order differs from ours, drgn will
+    # transparently handle that. We only need to do a byte
+    # swap if the program byte order is little endian.
+    if prog.platform.flags & PlatformFlags.IS_LITTLE_ENDIAN:
+        return struct.unpack("<Q", struct.pack(">Q", value))[0]
+    return value
+
+
+def be32_to_host(prog: drgn.Program, value: int) -> int:
+    """
+    Convert 32 byte value from big endian to host order
+
+    :param prog: drgn program
+    :param value: The value to be converted
+    """
+    # If the platform byte order differs from ours, drgn will
+    # transparently handle that. We only need to do a byte
+    # swap if the program byte order is little endian.
+    if prog.platform.flags & PlatformFlags.IS_LITTLE_ENDIAN:
+        return struct.unpack("<L", struct.pack(">L", value))[0]
+    return value
+
+
+def be16_to_host(prog: drgn.Program, value: int) -> int:
+    """
+    Convert 16 byte value from big endian to host order
+
+    :param prog: drgn program
+    :param value: The value to be converted
+    """
+    # If the platform byte order differs from ours, drgn will
+    # transparently handle that. We only need to do a byte
+    # swap if the program byte order is little endian.
+    if prog.platform.flags & PlatformFlags.IS_LITTLE_ENDIAN:
+        return struct.unpack("<H", struct.pack(">H", value))[0]
+    return value
 
 
 def rds_inet_ntoa(addr_obj: Object) -> str:
@@ -429,6 +477,33 @@ def rds_ip_state_list(dev: Object) -> Dict[str, Tuple[int, int]]:
         else:
             ip_list[ipaddr] = (num_conns_up, num_conns + 1)
     return ip_list
+
+
+def ib_mr_type(ib_mr: Object) -> str:
+    """
+    Get the IB_MR_TYPE for a given RDS IB_MR.
+
+    :param ib_mr: ``struct rdma_id_private`` Object.
+    :returns: The RDS connection RDMA CM state in string format.
+    """
+
+    ib_mr_types = {
+        0: "IB_MR_TYPE_MEM_REG",
+        1: "IB_MR_TYPE_SG_GAPS",
+        2: "IB_MR_TYPE_DM",
+        3: "IB_MR_TYPE_USER",
+        4: "IB_MR_TYPE_DMA",
+        5: "IB_MR_TYPE_INTEGRITY",
+    }
+
+    if ib_mr is None:
+        return "N/A"
+
+    key = ib_mr.type.value_()
+    if key not in ib_mr_types.keys():
+        return "N/A"
+
+    return ib_mr_types[key]
 
 
 # RDS Corelens module functions #
@@ -786,6 +861,8 @@ def rds_info_verbose(
             "Rx_poll_cnt",
             "SCQ vector",
             "RCQ vector",
+            "SND IRQN",
+            "RCV IRQN",
         ]
     ]
     for dev in for_each_rds_ib_device(prog):
@@ -875,6 +952,24 @@ def rds_info_verbose(
             except AttributeError:
                 rcq_vector = "N/A"
 
+            try:
+                scq = Object(prog, "struct mlx5_ib_cq *", con.i_scq)
+                send_mcq = Object(
+                    prog, "struct mlx5_core_cq *", scq.mcq.address_of_()
+                )
+                snd_irqn = hex(send_mcq.irqn)
+            except AttributeError:
+                snd_irqn = "N/A"
+
+            try:
+                rcq = Object(prog, "struct mlx5_ib_cq *", con.i_rcq)
+                recv_mcq = Object(
+                    prog, "struct mlx5_core_cq *", rcq.mcq.address_of_()
+                )
+                rcv_irqn = hex(recv_mcq.irqn)
+            except AttributeError:
+                rcv_irqn = "N/A"
+
             ics.append(con)
             index += 1
             conn_info.append(
@@ -901,6 +996,8 @@ def rds_info_verbose(
                     rx_poll_cnt,
                     scq_vector,
                     rcq_vector,
+                    snd_irqn,
+                    rcv_irqn,
                 ]
             )
 
@@ -1020,6 +1117,421 @@ def rds_sock_info(
         return None
 
 
+def rds_print_recv_msg_queue(
+    prog: drgn.Program,
+    laddr: Optional[str] = None,
+    raddr: Optional[str] = None,
+    tos: Optional[str] = None,
+    lport: Optional[str] = None,
+    rport: Optional[str] = None,
+    ret: Optional[bool] = False,
+    outfile: Optional[str] = None,
+    report: bool = False,
+) -> None:
+    """
+    Print the rds recv msg queue similar rds-info -r
+
+    :param prog: drgn program
+    :param laddr: comma seperated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param raddr: comma seperated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param tos: comma seperated string list of TOS.  Ex: '0, 3, ...'
+    :param lport: comma seperated string list of lport.  Ex: 2259, 36554, ...'
+    :param rport: comma seperated string list of rport.  Ex: 2259, 36554, ...'
+    :param outfile: A file to write the output to.
+    :param report: Open the file in append mode. Used to generate a report of all the functions in the rds module.
+    :returns: None
+
+    """
+    msg = ensure_debuginfo(prog, ["rds"])
+    if msg:
+        print(msg)
+
+    index = -1
+    msg_queue: List[List[Any]] = [
+        [
+            " ",
+            "LocalAddr",
+            "LPort",
+            "RemoteAddr",
+            "RPort",
+            "Tos",
+            "Seq",
+            "Bytes",
+        ]
+    ]
+
+    if laddr:
+        laddr_list = fields_to_list(laddr)
+    if raddr:
+        raddr_list = fields_to_list(raddr)
+    if tos:
+        tos_list = fields_to_list(tos)
+    if lport:
+        lport_list = fields_to_list(lport)
+    if rport:
+        rport_list = fields_to_list(rport)
+
+    rds_sock_list_p = prog["rds_sock_list"].address_of_()
+
+    for rs in list_for_each_entry(
+        "struct rds_sock", rds_sock_list_p, "rs_item"
+    ):
+        for inc in list_for_each_entry(
+            "struct rds_incoming", rs.rs_recv_queue.address_of_(), "i_item"
+        ):
+            lport_rm = be16_to_host(prog, inc.i_hdr.h_dport)
+            rport_rm = be16_to_host(prog, inc.i_hdr.h_sport)
+            seq = be64_to_host(prog, inc.i_hdr.h_sequence)
+            num_bytes = be32_to_host(prog, inc.i_hdr.h_len)
+            local_addr = rds_inet_ntoa(rs.rs_bound_sin6.sin6_addr)
+            remote_addr = rds_inet_ntoa(inc.i_saddr)
+            tos_rm = int(inc.i_conn.c_tos)
+
+            if laddr and local_addr not in laddr_list:
+                continue
+            if raddr and remote_addr not in raddr_list:
+                continue
+            if tos and str(tos_rm) not in tos_list:
+                continue
+            if lport and str(lport_rm) not in lport_list:
+                continue
+            if rport and str(rport_rm) not in rport_list:
+                continue
+
+            index = index + 1
+            msg_queue.append(
+                [
+                    index,
+                    local_addr,
+                    lport_rm,
+                    remote_addr,
+                    rport_rm,
+                    tos_rm,
+                    seq,
+                    num_bytes,
+                ]
+            )
+
+    print("Receive Message Queue:")
+    print_table(msg_queue, outfile, report)
+    print("\n")
+    return None
+
+
+def rds_print_send_retrans_msg_queue(
+    prog: drgn.Program,
+    queue: str,
+    laddr: Optional[str] = None,
+    raddr: Optional[str] = None,
+    tos: Optional[str] = None,
+    lport: Optional[str] = None,
+    rport: Optional[str] = None,
+    ret: Optional[bool] = False,
+    outfile: Optional[str] = None,
+    report: bool = False,
+) -> None:
+    """
+    Print the rds send or retransmit msg queue similar rds-info -st
+
+    :param prog: drgn program
+    :prarm queue: The msg queue to be displaed. Ex: 'send', 'recv'
+    :param laddr: comma seperated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param raddr: comma seperated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param tos: comma seperated string list of TOS.  Ex: '0, 3, ...'
+    :param lport: comma seperated string list of lport.  Ex: 2259, 36554, ...'
+    :param rport: comma seperated string list of rport.  Ex: 2259, 36554, ...'
+    :param outfile: A file to write the output to.
+    :param report: Open the file in append mode. Used to generate a report of all the functions in the rds module.
+    :returns: None
+
+    """
+    msg = ensure_debuginfo(prog, ["rds"])
+    if msg:
+        print(msg)
+
+    index = -1
+    msg_queue: List[List[Any]] = [
+        [
+            " ",
+            "LocalAddr",
+            "LPort",
+            "RemoteAddr",
+            "RPort",
+            "Tos",
+            "Seq",
+            "Bytes",
+        ]
+    ]
+
+    if laddr:
+        laddr_list = fields_to_list(laddr)
+    if raddr:
+        raddr_list = fields_to_list(raddr)
+    if tos:
+        tos_list = fields_to_list(tos)
+    if lport:
+        lport_list = fields_to_list(lport)
+    if rport:
+        rport_list = fields_to_list(rport)
+
+    conn_hash = prog["rds_conn_hash"]
+    for conns in conn_hash:
+        for conn in hlist_for_each_entry(
+            "struct rds_connection", conns.address_of_(), "c_hash_node"
+        ):
+            conn_tos = int(conn.c_tos)
+            conn_laddr = rds_inet_ntoa(conn.c_laddr)
+            conn_raddr = rds_inet_ntoa(conn.c_faddr)
+            cp = Object(
+                prog,
+                "struct rds_conn_path *",
+                address=conn.c_path.address_of_(),
+            )
+            if queue.lower() == "send":
+                msg_list = cp.cp_send_queue
+            elif queue.lower() == "retrans":
+                msg_list = cp.cp_retrans
+            else:
+                print("Invalid queue name provided in args !")
+                return None
+            # print(send_list)
+
+            for rm in list_for_each_entry(
+                "struct rds_message", msg_list.address_of_(), "m_conn_item"
+            ):
+                # print(rm)
+                lport_rm = be16_to_host(prog, rm.m_inc.i_hdr.h_sport)
+                rport_rm = be16_to_host(prog, rm.m_inc.i_hdr.h_dport)
+                seq = be64_to_host(prog, rm.m_inc.i_hdr.h_sequence)
+                num_bytes = be32_to_host(prog, rm.m_inc.i_hdr.h_len)
+
+                if laddr and conn_laddr not in laddr_list:
+                    continue
+                if raddr and conn_raddr not in raddr_list:
+                    continue
+                if tos and str(conn_tos) not in tos_list:
+                    continue
+                if lport and str(lport_rm) not in lport_list:
+                    continue
+                if rport and str(rport_rm) not in rport_list:
+                    continue
+
+                index = index + 1
+                msg_queue.append(
+                    [
+                        index,
+                        conn_laddr,
+                        lport_rm,
+                        conn_raddr,
+                        rport_rm,
+                        conn_tos,
+                        seq,
+                        num_bytes,
+                    ]
+                )
+
+    if queue.lower() == "send":
+        print("Send Message Queue:")
+    elif queue.lower() == "retrans":
+        print("Retransmit Message Queue:")
+
+    print_table(msg_queue, outfile, report)
+    print("\n")
+    return None
+
+
+def rds_print_msg_queue(
+    prog: drgn.Program,
+    queue: str = "All",
+    laddr: Optional[str] = None,
+    raddr: Optional[str] = None,
+    tos: Optional[str] = None,
+    lport: Optional[str] = None,
+    rport: Optional[str] = None,
+    ret: Optional[bool] = False,
+    outfile: Optional[str] = None,
+    report: bool = False,
+) -> None:
+    """
+    Print the rds msg queue similar rds-info -srt
+
+    :param prog: drgn program
+    :prarm queue: The msg queue to be displaed. Ex: 'send', 'recv' , 'retrans', 'All'. Default: 'All'
+    :param laddr: comma seperated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param raddr: comma seperated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param tos: comma seperated string list of TOS.  Ex: '0, 3, ...'
+    :param lport: comma seperated string list of lport.  Ex: 2259, 36554, ...'
+    :param rport: comma seperated string list of rport.  Ex: 2259, 36554, ...'
+    :param outfile: A file to write the output to.
+    :param report: Open the file in append mode. Used to generate a report of all the functions in the rds module.
+    :returns: None
+
+    """
+    msg = ensure_debuginfo(prog, ["rds"])
+    if msg:
+        print(msg)
+
+    if queue.lower() == "all":
+        rds_print_send_retrans_msg_queue(
+            prog, "send", laddr, raddr, tos, lport, rport, ret, outfile, report
+        )
+        rds_print_send_retrans_msg_queue(
+            prog,
+            "retrans",
+            laddr,
+            raddr,
+            tos,
+            lport,
+            rport,
+            ret,
+            outfile,
+            report,
+        )
+        rds_print_recv_msg_queue(
+            prog, laddr, raddr, tos, lport, rport, ret, outfile, report
+        )
+    elif queue.lower() == "send" or queue.lower() == "snd":
+        rds_print_send_retrans_msg_queue(
+            prog, "send", laddr, raddr, tos, lport, rport, ret, outfile, report
+        )
+    elif queue.lower() == "retrans" or queue.lower() == "re":
+        rds_print_send_retrans_msg_queue(
+            prog,
+            "retrans",
+            laddr,
+            raddr,
+            tos,
+            lport,
+            rport,
+            ret,
+            outfile,
+            report,
+        )
+    elif queue.lower() == "recv" or queue.lower() == "rcv":
+        rds_print_recv_msg_queue(
+            prog, laddr, raddr, tos, lport, rport, ret, outfile, report
+        )
+    else:
+        print("Incorrect queue arg provided !")
+
+    return
+
+
+def print_mr_list_head_info(
+    prog: drgn.Program, list_head: Object, pool_name: str, list_name: str
+) -> None:
+    """
+    Print the specific MR list info for busy_list or clean_list
+
+    :pram prog: drgn.Program
+    :param list_head: The ``struct list_head`` Object
+    :param pool_name: The name of the pool the given list belongs to.
+    :param list_name: The name of the list. Ex 'busy_list', 'clean_list'
+    :returns: None
+
+    """
+    if list_empty(list_head.address_of_()):
+        print("\nrds_ib_mr->{}->{} is empty!\n".format(pool_name, list_name))
+        return
+    index = 0
+
+    list_info: List[List[Any]] = [
+        [
+            "Index",
+            "IB device",
+            "RDS_IB_MR",
+            "IB_MR",
+            "lkey",
+            "rkey",
+            "page_size",
+            "need_inval",
+            "mr_type",
+            "length",
+            "pd",
+        ]
+    ]
+
+    for list_ptr in list_for_each(list_head.address_of_()):
+        rds_ib_mr = container_of(list_ptr, "struct rds_ib_mr", "pool_list")
+        rds_ib_mr_addr = hex(rds_ib_mr.value_())
+        ib_mr = Object(prog, "struct ib_mr *", rds_ib_mr.mr)
+        if ib_mr.value_() == 0x0:
+            continue
+        ib_mr_addr = hex(ib_mr.value_())
+        lkey = int(ib_mr.lkey)
+        rkey = int(ib_mr.rkey)
+        page_size = int(ib_mr.page_size)
+        need_inval = bool(ib_mr.need_inval)
+        mr_type = ib_mr_type(ib_mr)
+        length = int(ib_mr.length)
+        device_addr = hex(ib_mr.device.value_())
+        pd_addr = hex(ib_mr.pd.value_())
+        list_info.append(
+            [
+                index,
+                device_addr,
+                rds_ib_mr_addr,
+                ib_mr_addr,
+                lkey,
+                rkey,
+                page_size,
+                need_inval,
+                mr_type,
+                length,
+                pd_addr,
+            ]
+        )
+        index = index + 1
+    print("\nrds_ib_mr->{}->{}\n".format(pool_name, list_name))
+    print_table(list_info, None, False)
+
+
+def rds_get_mr_list_info(
+    prog_or_obj: Union[Program, Object], dev_ptr: Optional[int] = None
+) -> None:
+    """
+    Print the MR list info
+
+    :param prog_or_obj: drgn program or ``struct rds_ib_device`` Object
+    :prarm dev_ptr: ``struct rds_ib_device`` address as an integer.
+    returns: None
+    """
+
+    if isinstance(prog_or_obj, Program):
+        if dev_ptr is None:
+            raise ValueError("Provide a rds_ib_device pointer")
+        prog = prog_or_obj
+        dev = Object(prog, "struct rds_ib_device *", value=dev_ptr)
+    else:
+        prog = prog_or_obj.prog_
+        dev = prog_or_obj
+
+    msg = ensure_debuginfo(prog, ["rds"])
+    if msg:
+        print(msg)
+        return
+
+    rds_mr_1m_pool = Object(
+        prog, "struct rds_ib_mr_pool *", dev.mr_1m_pool.value_()
+    )
+    rds_mr_8k_pool = Object(
+        prog, "struct rds_ib_mr_pool *", dev.mr_8k_pool.value_()
+    )
+
+    print_mr_list_head_info(
+        prog, rds_mr_8k_pool.busy_list, "rds_mr_8k_pool", "busy_list"
+    )
+    print_mr_list_head_info(
+        prog, rds_mr_8k_pool.clean_list, "rds_mr_8k_pool", "clean_list"
+    )
+    print_mr_list_head_info(
+        prog, rds_mr_1m_pool.busy_list, "rds_mr_1m_pool", "busy_list"
+    )
+    print_mr_list_head_info(
+        prog, rds_mr_1m_pool.clean_list, "rds_mr_1m_pool", "clean_list"
+    )
+
+
 def report(prog: drgn.Program, outfile: Optional[str] = None) -> None:
     """
     Generate a report of RDS related data.
@@ -1039,6 +1551,7 @@ def report(prog: drgn.Program, outfile: Optional[str] = None) -> None:
     rds_conn_info(prog, outfile=outfile, report=True)
     rds_info_verbose(prog, outfile=outfile, report=True)
     rds_stats(prog, outfile=outfile, report=True)
+    rds_print_msg_queue(prog, queue="All", outfile=outfile, report=True)
 
 
 class Rds(CorelensModule):
