@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List
 from typing import Optional
+from typing import Union
 
 from drgn_tools.util import download_file
 from testing.util import BASE_DIR
@@ -24,7 +25,7 @@ UEK_YUM = (
 )
 REPODATA = "repodata/repomd.xml"
 
-DEBUGINFO_URL = "https://oss.oracle.com/ol{ol_ver}/debuginfo/kernel-uek-debuginfo-{release}.rpm"
+DEBUGINFO_URL = "https://oss.oracle.com/ol{ol_ver}/debuginfo/{pkgbase}-debuginfo-{release}.rpm"
 
 YUM_CACHE_DIR = BASE_DIR / "yumcache"
 
@@ -91,7 +92,7 @@ def download_file_cached(
 
 class TestKernel:
     ol_ver: int
-    uek_ver: int
+    uek_ver: Union[int, str]
     arch: str
     pkgs: List[str]
 
@@ -104,11 +105,15 @@ class TestKernel:
         arch: str,
         pkgs: List[str],
         cache_dir: Optional[Path] = None,
+        pkgbase: str = "kernel-uek",
+        yum_fmt: Optional[str] = None,
     ) -> None:
         self.ol_ver = ol_ver
         self.uek_ver = uek_ver
         self.arch = arch
         self.pkgs = pkgs
+        self.yum_fmt = yum_fmt
+        self.pkgbase = pkgbase
 
         self._release: str = ""
         self._rpm_urls: List[str] = []
@@ -136,7 +141,7 @@ class TestKernel:
     def _getlatest(self) -> None:
         # Fetch Yum index (repomd.xml) to get the database filename.
         # This is never cached, and it's a small file.
-        yumbase = UEK_YUM.format(
+        yumbase = (self.yum_fmt or UEK_YUM).format(
             ol_ver=self.ol_ver,
             uek_ver=self.uek_ver,
             arch=self.arch,
@@ -170,14 +175,13 @@ class TestKernel:
         # Finally, search for the latest version in the DB. We always search for
         # kernel-uek since even if the package is split, that's the
         # meta-package.
-        pkg = "kernel-uek"
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute(
             """
             SELECT version, release, location_href FROM packages
             WHERE name=? AND arch=?;
             """,
-            (pkg, self.arch),
+            (self.pkgbase, self.arch),
         ).fetchall()
         conn.close()
 
@@ -193,10 +197,12 @@ class TestKernel:
         self._rpm_urls = []
         rpm_url = yumbase + href
         for final_pkg in self.pkgs:
-            self._rpm_urls.append(rpm_url.replace(pkg, final_pkg))
+            self._rpm_urls.append(rpm_url.replace(self.pkgbase, final_pkg))
         self._release = f"{ver}-{rel}.{self.arch}"
         self._dbinfo_url = DEBUGINFO_URL.format(
-            ol_ver=self.ol_ver, release=self._release
+            ol_ver=self.ol_ver,
+            release=self._release,
+            pkgbase=self.pkgbase,
         )
 
     def _get_rpms(self) -> None:
@@ -236,6 +242,28 @@ class TestKernel:
 
 
 TEST_KERNELS = [
+    # UEK-next is a snapshot of the latest upstream kernel, with UEK
+    # configurations and any customizations. It's not officially supported, but
+    # it's an excellent test bed to ensure we are ready to support the latest
+    # upstream features.
+    # We also apparently need to add "-modules-core" RPMs, because there weren't
+    # enough kernel RPMs yet.
+    # Tests currently fail on UEK-next. Uncomment this to enable the tests:
+    # TestKernel(
+    #     9,
+    #     "next",
+    #     "x86_64",
+    #     [
+    #         "kernel-ueknext-core",
+    #         "kernel-ueknext-modules",
+    #         "kernel-ueknext-modules-core",
+    #     ],
+    #     yum_fmt=(
+    #         "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/"
+    #         "developer/UEK{uek_ver}/{arch}/"
+    #     ),
+    #     pkgbase="kernel-ueknext",
+    # ),
     # UEK7 switches from a single "kernel-uek" to "-core" and "-modules".
     # The "kernel-uek" package still exists as a placeholder.
     TestKernel(9, 7, "x86_64", ["kernel-uek-core", "kernel-uek-modules"]),
