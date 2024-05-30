@@ -309,7 +309,10 @@ def get_spectre_v2_mitigation(prog: Program, cpu_caps_bugs: Object) -> str:
             if test_bit(X86_FEATURE_RSB_CTXSW, cpu_caps_bugs):
                 mitigation += ", RSB filling"
 
-            if prog["spectre_v2_bad_module"]:
+            if (
+                "spectre_v2_bad_module" in prog
+                and prog["spectre_v2_bad_module"]
+            ):
                 mitigation += " - vulnerable module loaded"
 
     return mitigation
