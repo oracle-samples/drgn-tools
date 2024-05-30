@@ -549,6 +549,8 @@ def _run_module(
         if print_header:
             print(f"\n====== MODULE {mod.name} ======")
         mod.run(prog, args)
+    except (KeyboardInterrupt, BrokenPipeError):
+        raise
     except Exception:
         formatted = traceback.format_exc()
         errors.append(
@@ -791,4 +793,9 @@ if __name__ == "__main__":
     # terrible, terrible corner of Python.
     import drgn_tools.corelens
 
-    drgn_tools.corelens.main()
+    try:
+        drgn_tools.corelens.main()
+    except KeyboardInterrupt:
+        sys.exit("interrupted")
+    except BrokenPipeError:
+        pass
