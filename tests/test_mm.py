@@ -63,7 +63,7 @@ def test_AddrKind_categorize_data(prog: drgn.Program) -> None:
     assert mm.AddrKind.categorize(prog, bss) == mm.AddrKind.BSS
 
     # percpu
-    pcpu = prog.symbol("cpu_number").address
+    pcpu = prog.symbol("runqueues").address
     assert mm.AddrKind.categorize(prog, pcpu) == mm.AddrKind.PERCPU
 
 
