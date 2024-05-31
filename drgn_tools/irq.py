@@ -7,12 +7,14 @@ Helpers related to kernel irq management framework under kernel/irq.
 from typing import Any
 from typing import Iterator
 from typing import List
+from typing import Tuple
 
 from drgn import NULL
 from drgn import Object
 from drgn import Program
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_present_cpu
+from drgn.helpers.linux.mapletree import mtree_load
 from drgn.helpers.linux.percpu import per_cpu_ptr
 from drgn.helpers.linux.radixtree import radix_tree_lookup
 
@@ -22,12 +24,20 @@ from drgn_tools.util import has_member
 from drgn_tools.util import uek4_radix_tree_lookup
 
 
-def _sparse_irq_supported(prog: Program) -> bool:
+def _sparse_irq_supported(prog: Program) -> Tuple[bool, str]:
     try:
-        _ = prog["irq_desc_tree"]
-        return True
+        # Since Linux kernel commit 721255b9826b ("genirq: Use a maple
+        # tree for interrupt descriptor management") (in v6.5), sparse
+        # irq descriptors are stored in a maple tree.
+        _ = prog["sparse_irqs"]
+        return True, "maple"
     except KeyError:
-        return False
+        # Before that, they are in radix tree.
+        try:
+            _ = prog["irq_desc_tree"]
+            return True, "radix"
+        except KeyError:
+            return False, ""
 
 
 def _kstat_irqs_cpu(prog: Program, irq: int, cpu: int) -> int:
@@ -139,18 +149,24 @@ def irq_to_desc(prog: Program, irq: int) -> Object:
     :return: ``struct irq_desc *`` object if irq descriptor is found.
              NULL otherwise
     """
-    if _sparse_irq_supported(prog):
-        try:
-            if prog.type("struct radix_tree_node").has_member("shift"):
+    _, tree_type = _sparse_irq_supported(prog)
+    if tree_type:
+        if tree_type == "radix":
+            try:
+                if prog.type("struct radix_tree_node").has_member("shift"):
+                    addr = radix_tree_lookup(
+                        prog["irq_desc_tree"].address_of_(), irq
+                    )
+                else:
+                    addr = uek4_radix_tree_lookup(
+                        prog["irq_desc_tree"].address_of_(), irq
+                    )
+            except LookupError:
                 addr = radix_tree_lookup(
                     prog["irq_desc_tree"].address_of_(), irq
                 )
-            else:
-                addr = uek4_radix_tree_lookup(
-                    prog["irq_desc_tree"].address_of_(), irq
-                )
-        except LookupError:
-            addr = radix_tree_lookup(prog["irq_desc_tree"].address_of_(), irq)
+        else:
+            addr = mtree_load(prog["sparse_irqs"].address_of_(), irq)
 
         if addr:
             return Object(prog, "struct irq_desc", address=addr).address_of_()
