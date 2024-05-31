@@ -78,11 +78,12 @@ def test_for_each_cpu_worker_pool(prog: drgn.Program) -> None:
 def test_for_each_pwq(prog: drgn.Program) -> None:
     workq = prog["system_wq"]
     pwqs = [pwq.value_() for pwq in wq.for_each_pwq(workq)]
-    cpu_pwqs = [
-        per_cpu_ptr(workq.cpu_pwqs, cpu).value_()
+    cpu_pwqs_attr = "cpu_pwqs" if hasattr(workq, "cpu_pwqs") else "cpu_pwq"
+    cpu_pwqs_list = [
+        per_cpu_ptr(getattr(workq, cpu_pwqs_attr), cpu).value_()
         for cpu in for_each_online_cpu(prog)
     ]
-    assert pwqs.sort() == cpu_pwqs.sort()
+    assert pwqs.sort() == cpu_pwqs_list.sort()
 
 
 def test_for_each_pending_work_on_cpu(prog: drgn.Program) -> None:
@@ -97,7 +98,7 @@ def test_for_each_pending_work_in_pool(prog: drgn.Program) -> None:
 
 
 def test_for_each_pending_work_of_pwq(prog: drgn.Program) -> None:
-    cpu_pwqs_0 = per_cpu_ptr(prog["system_wq"].cpu_pwqs, 0)
+    cpu_pwqs_0 = wq.workqueue_get_pwq(prog["system_wq"], 0)
     for work in wq.for_each_pending_work_of_pwq(cpu_pwqs_0):
         pass
 

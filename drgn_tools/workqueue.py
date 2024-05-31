@@ -12,6 +12,7 @@ from typing import Optional
 from typing import Union
 
 from drgn import cast
+from drgn import IntegerLike
 from drgn import NULL
 from drgn import Object
 from drgn import Program
@@ -22,6 +23,7 @@ from drgn.helpers.linux.list import hlist_for_each_entry
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
+from drgn.helpers.linux.percpu import per_cpu_ptr
 from drgn.helpers.linux.pid import find_task
 
 
@@ -46,10 +48,39 @@ __all__ = (
     "show_one_worker_pool",
     "is_task_a_worker",
     "find_worker_executing_work",
+    "workqueue_get_pwq",
 )
 
 
 _PF_WQ_WORKER = 0x00000020
+
+
+def _work_offq_pool_none(prog: Program) -> IntegerLike:
+    # Linux kernel commit afa4bb778e48 ("workqueue: clean up WORK_* constant
+    # types, clarify masking") (in v6.4) changed WORK_OFFQ_POOL_NONE from
+    # constants of type enum to constants of type unsigned long.
+    try:
+        val = prog["WORK_OFFQ_POOL_NONE"].value_()
+    except KeyError:
+        val = (
+            Object(prog, "unsigned long", 1).value_()
+            << prog["WORK_OFFQ_POOL_BITS"]
+        ) - 1
+    return val
+
+
+def _work_struct_wq_data_mask(prog: Program) -> IntegerLike:
+    # Linux kernel commit afa4bb778e48 ("workqueue: clean up WORK_* constant
+    # types, clarify masking") (in v6.4) changed WORK_STRUCT_WQ_DATA_MASK from
+    # constants of type enum to constants of type unsigned long.
+    try:
+        val = prog["WORK_STRUCT_WQ_DATA_MASK"].value_()
+    except KeyError:
+        val = ~(
+            (Object(prog, "unsigned long", 1) << prog["WORK_STRUCT_FLAG_BITS"])
+            - 1
+        )
+    return val
 
 
 def _print_work(work: Object) -> None:
@@ -61,6 +92,28 @@ def _print_work(work: Object) -> None:
     print(
         f"        ({work.type_.type_name()})0x{work.value_():x}: func: {func}"
     )
+
+
+def workqueue_get_pwq(workqueue: Object, cpu: int) -> Object:
+    """
+    Find pool_workqueue of a bound workqueue for a given CPU.
+
+    :param workqueue: ``struct workqueue_struct *``
+    :return: ``struct pool_workqueue *``.
+    """
+    # At first Linux kernel commit ee1ceef72754 ("workqueue: Rename wq->cpu_pwqs to
+    # wq->cpu_pwq") (in v6.6) renamed cpu_pwqs to cpu_pwq and then Linux kernel commit
+    # 687a9aa56f81("workqueue: Make per-cpu pool_workqueues allocated and released
+    # like unbound ones") (in v6.6) changed cpu_pwq to double pointer.
+    # As both of the changes were made in v6.6, there are no kernel versions
+    # with wq->cpu_pwq as a pointer. Still I have mentioned both the changes so that
+    # we can track both name change and type change of this member.
+    try:
+        pwq = per_cpu_ptr(workqueue.cpu_pwqs, cpu)
+    except AttributeError:
+        pwq = per_cpu_ptr(workqueue.cpu_pwq, cpu)[0]
+
+    return pwq
 
 
 def for_each_workqueue(prog: Program) -> Iterator[Object]:
@@ -243,7 +296,7 @@ def get_work_pwq(work: Object) -> Object:
     if data & prog["WORK_STRUCT_PWQ"].value_():
         return cast(
             "struct pool_workqueue *",
-            data & _wq_data_mask(prog),
+            data & _work_struct_wq_data_mask(prog),
         )
     else:
         return NULL(work.prog_, "struct pool_workqueue *")
@@ -262,12 +315,12 @@ def get_work_pool(work: Object) -> Object:
     data = cast("unsigned long", work.data.counter.read_())
 
     if data & prog["WORK_STRUCT_PWQ"].value_():
-        pwq = data & _wq_data_mask(prog)
+        pwq = data & _work_struct_wq_data_mask(prog)
         pool = Object(prog, "struct pool_workqueue", address=pwq).pool
     else:
         pool_id = data >> prog["WORK_OFFQ_POOL_SHIFT"].value_()
 
-        if pool_id == prog["WORK_OFFQ_POOL_NONE"].value_():
+        if pool_id == _work_offq_pool_none(prog):
             return NULL(work.prog_, "struct worker_pool *")
 
         pool = idr_find(prog["worker_pool_idr"].address_of_(), pool_id)
