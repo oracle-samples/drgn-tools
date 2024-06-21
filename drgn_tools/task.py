@@ -450,6 +450,29 @@ def for_each_task_in_state(prog: drgn.Program, state: str) -> Iterable[Object]:
                 yield task
 
 
+def for_each_task_in_group(
+    task: Object, include_self: bool = False
+) -> Iterable[Object]:
+    """
+    Iterate over all tasks in the thread group
+
+    Or, in the more common userspace terms, iterate over all threads of a
+    process.
+
+    :param task: a task whose group to iterate over
+    :param include_self: should ``task`` itself be returned
+    :returns: an iterable of every thread in the thread group
+    """
+    if include_self:
+        yield task
+    for gtask in list_for_each_entry(
+        "struct task_struct",
+        task.thread_group.address_of_(),
+        "thread_group",
+    ):
+        yield gtask
+
+
 def count_tasks_in_state(prog: drgn.Program, state: str) -> int:
     """
     Count all tasks in a given state.
