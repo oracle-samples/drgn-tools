@@ -241,7 +241,7 @@ def bt_frames(
     return expand_frames(stack_trace)
 
 
-def print_task_header(task: drgn.Object) -> None:
+def print_task_header(task: drgn.Object, indent: int = 0) -> None:
     """
     Given a task struct, print the header line of the stack trace.
     """
@@ -253,8 +253,9 @@ def print_task_header(task: drgn.Object) -> None:
     cpu_note = ""
     if cpu_curr(task.prog_, cpu) == task:
         cpu_note = "!"
+    pfx = " " * indent
     print(
-        f"PID: {pid:<7d}  TASK: {taskp:x} [{st}] CPU: {cpu}{cpu_note}"
+        f"{pfx}PID: {pid:<7d}  TASK: {taskp:x} [{st}] CPU: {cpu}{cpu_note}"
         f'  COMMAND: "{comm}"'
     )
 
@@ -265,6 +266,7 @@ def print_frames(
     show_vars: bool = False,
     show_absent: bool = False,
     start_idx: int = 0,
+    indent: int = 0,
 ) -> None:
     """
     Print stack frames using the drgn-tools (crash-like) format
@@ -274,8 +276,10 @@ def print_frames(
     :param trace: The stack trace or list of frames to print
     :param show_vars: True if you want to show variables
     :param show_absent: True if you further want to show absent variables
-    :start_idx: Where to start counting the frame indices from
+    :param start_idx: Where to start counting the frame indices from
+    :param indent: How many spaces to indent the output
     """
+    pfx = " " * indent
     for i, frame in enumerate(trace):
         sp = frame.sp  # drgn 0.0.22
         intr = "!" if frame.interrupted else " "
@@ -285,7 +289,7 @@ def print_frames(
             pc = "???"
         name = frame_name(prog, frame)
         idx = start_idx + i
-        out_line = f"{intr}#{idx:2d} [{sp:x}] {name} at {pc}"
+        out_line = f"{pfx}{intr}#{idx:2d} [{sp:x}] {name} at {pc}"
         try:
             file_, line, col = frame.source()
             out_line += f" {file_}:{line}:{col}"
@@ -306,7 +310,8 @@ def print_frames(
             # This formats the registers in three columns.
             for j in range(0, len(regnames), 3):
                 print(
-                    " " * 5
+                    pfx
+                    + " " * 5
                     + "  ".join(
                         f"{reg.upper():>3s}: {registers[reg]:016x}"
                         for reg in regnames[j : j + 3]
@@ -336,13 +341,14 @@ def print_frames(
             if val.absent_ and not show_absent:
                 continue
             val_str = val.format_(dereference=False).replace("\n", "\n     ")
-            print(" " * 5 + f"{local} = {val_str}")
+            print(pfx + " " * 5 + f"{local} = {val_str}")
 
 
 def print_traces(
     traces: t.List[drgn.StackTrace],
     show_vars: bool = False,
     show_absent: bool = False,
+    indent: int = 0,
 ) -> None:
     """
     Given a list of stack traces, print them in the crash-like format
@@ -357,13 +363,15 @@ def print_traces(
     idx = 0
     prog = traces[0].prog
     for trace_idx, trace in enumerate(traces):
-        print_frames(prog, trace, show_vars=show_vars, start_idx=idx)
+        print_frames(
+            prog, trace, show_vars=show_vars, start_idx=idx, indent=indent
+        )
         idx += len(trace)
 
         # Ok, this is the end of the loop over each frame within the trace.
         if trace_idx < len(traces) - 1:
             # But there is still another segment
-            print(" -- continuing to previous stack -- ")
+            print(" " * indent + " -- continuing to previous stack -- ")
 
 
 def bt(
@@ -373,6 +381,7 @@ def bt(
     show_vars: bool = False,
     show_absent: bool = False,
     retframes: bool = False,
+    indent: int = 0,
 ) -> t.Optional[t.List[drgn.StackFrame]]:
     """
     Format a crash-like stack trace.
@@ -418,6 +427,7 @@ def bt(
       to include absent variables. Normally there's no reason to see this, since
       absent variables have no information.
     :param retframes: When true, returns a list of stack frames.
+    :param indent: Number of spaces to indent all output lines
     :returns: A list of the stack frames which were printed. This can be useful
       for accessing the variables out of the frames interactively. If you're
       writing a script that needs to access frames, you may want to consider the
@@ -431,13 +441,15 @@ def bt(
         "struct task_struct *",
     ):
         state = task_state_to_char(task)
-        print_task_header(task)
+        print_task_header(task, indent=indent)
         if state in ("Z", "X"):
             print(f"Task is in state: {state} - cannot unwind")
             return []
 
     traces = expand_traces(task.prog_.stack_trace(task))
-    print_traces(traces, show_vars=show_vars, show_absent=show_absent)
+    print_traces(
+        traces, show_vars=show_vars, show_absent=show_absent, indent=indent
+    )
     frames = None
     if retframes:
         frames = []
