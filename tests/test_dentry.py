@@ -14,3 +14,7 @@ def test_for_each_dentry_in_hashtable(prog):
 
 def test_list_dentries_in_hashtable(prog):
     dentry.list_dentries_in_hashtable(prog, LIMIT)
+
+
+def test_ls(prog):
+    dentry.ls(prog, "/")

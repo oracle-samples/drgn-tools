@@ -1,4 +1,4 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 Helpers for dentries.
@@ -12,6 +12,8 @@ from typing import Optional
 import drgn
 from drgn import Object
 from drgn import Program
+from drgn.helpers.linux.fs import path_lookup
+from drgn.helpers.linux.list import hlist_for_each_entry
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.corelens import CorelensModule
@@ -22,6 +24,27 @@ from drgn_tools.util import kernel_version
 
 
 MNT_INTERNAL = 0x4000
+
+
+def dentry_for_each_child(dentry: Object) -> Iterator[Object]:
+    """
+    Iterate over every child of a dentry
+    """
+    # Commit da549bdd15c29 ("dentry: switch the lists of children to hlist")
+    # changes the list names and types. Try the older names first since all UEK
+    # versions have the older names.
+    try:
+        return list_for_each_entry(
+            "struct dentry",
+            dentry.d_subdirs.address_of_(),
+            "d_child",
+        )
+    except AttributeError:
+        return hlist_for_each_entry(
+            "struct dentry",
+            dentry.d_children.address_of_(),
+            "d_sib",
+        )
 
 
 def sb_first_mount_point(sb: Object) -> Optional[Object]:
@@ -356,6 +379,52 @@ def __file_type(mode: Object) -> str:
         return "WHT"
 
     return "UNKN"
+
+
+def ls(prog: Program, directory: str, count: bool = False) -> None:
+    """
+    Print dentry children, like the ls command
+    :param directory: directory to print children of
+    :param count: when true, only print counts (not the full contents)
+    """
+    dentries = dentry_for_each_child(path_lookup(prog, directory).dentry)
+
+    pos = neg = 0
+    for i, dentry in enumerate(dentries):
+        path = dentry_path_any_mount(dentry).decode()
+        if dentry_is_negative(dentry):
+            neg += 1
+        else:
+            pos += 1
+        if not count:
+            print(f"{i:05d} {path}")
+    print(f"{pos} positive, {neg} negative dentries")
+
+
+class Ls(CorelensModule):
+    """List or count child dentries given a file path"""
+
+    name = "ls"
+
+    # This module shouldn't run for corelens reports, because it has a required
+    # argument. It's quite useful to run it interactively though.
+    run_when = "never"
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "directory",
+            type=str,
+            help="directory to list",
+        )
+        parser.add_argument(
+            "--count",
+            "-c",
+            action="store_true",
+            help="only print counts, rather than every element",
+        )
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        ls(prog, args.directory, count=args.count)
 
 
 class DentryCache(CorelensModule):
