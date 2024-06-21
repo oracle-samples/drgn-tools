@@ -85,6 +85,20 @@ def kernel_version(prog: Program) -> t.Tuple[int, int, int]:
     return (int(maj), int(min), int(patch))
 
 
+def type_has_member(prog: Program, typ: str, name: str) -> bool:
+    """
+    Return true if a given object has a member with the given name.
+    :param typ: type name to check
+    :param name: string member name to check
+    :returns: whether the object has a member by that name
+    """
+    try:
+        prog.type(typ).member(name)
+        return True
+    except LookupError:
+        return False
+
+
 def has_member(obj: Object, name: str) -> bool:
     """
     Return true if a given object has a member with the given name.
