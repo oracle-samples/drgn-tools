@@ -570,13 +570,27 @@ def bt_has(
     return bt_has_any(prog, [funcname], task)
 
 
-def print_online_bt(prog: Program, **kwargs: t.Any) -> None:
+def print_online_bt(
+    prog: Program, skip_idle: bool = True, **kwargs: t.Any
+) -> None:
     """
     Prints the stack trace of all on-CPU tasks
 
     :kwargs: passed to bt() to control backtrace format
     """
     for cpu in for_each_online_cpu(prog):
+        task = cpu_curr(prog, cpu)
+        if skip_idle and task.comm.string_().decode() == f"swapper/{cpu}":
+            # Just because it's the swapper task, does not mean it is idling.
+            # Check the symbol at the top of the stack to ensure it's the
+            # architecture idle function.
+            trace = prog.stack_trace(task)
+            try:
+                sym = trace[0].symbol().name
+                if sym in ("intel_idle",):
+                    continue
+            except (IndexError, LookupError):
+                pass
         bt(prog, cpu=cpu, **kwargs)
         print()
 
