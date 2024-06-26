@@ -72,6 +72,18 @@ def fsnotify_group_for_each_mark(group: Object) -> Iterator[Object]:
     )
 
 
+def _get_object_no_type(obj: Object) -> Tuple[str, Object]:
+    # obj may be:
+    #  - struct fsnotify_mark_connector  (if it exists)
+    #  - struct fsnotify_mark  (if this kernel version has no connector struct)
+    if obj.flags & 0x1:
+        return "inode", obj.inode
+    elif obj.flags & 0x2:
+        return "vfsmount", obj.vfsmount
+    else:
+        return "unknown", NULL(obj.prog_, "void *")
+
+
 def fsnotify_mark_object(mark: Object) -> Tuple[str, Object]:
     """
     For an fsnotify mark, determine what kind of object and return it
@@ -81,25 +93,31 @@ def fsnotify_mark_object(mark: Object) -> Tuple[str, Object]:
     pointer to the object. If we don't understand the object type, then we
     return ("unknown", NULL).
 
-    :param mark: ``struct fsnotify-mark *``
+    :param mark: ``struct fsnotify_mark *``
     :returns: (object type, object pointer)
     """
-    conn = mark.connector
     prog = mark.prog_
 
-    if not hasattr(conn, "type"):
+    try:
+        conn = mark.connector
+    except AttributeError:
+        # Commit 9dd813c15b2c1 ("fsnotify: Move mark list head from object into
+        # dedicated structure") is the beginning of a series that introduces the
+        # fsnotify_mark_connector. Prior to this, the mark directly pointed at
+        # the object it contained. This was merged in 4.12.
+        return _get_object_no_type(mark)
+
+    try:
+        type_ = conn.type.read_()
+    except AttributeError:
         # Commit d6f7b98bc8147 ("fsnotify: use type id to identify connector
         # object type") adds a type field to the connector. Before this, type
         # was expressed as bits in the flag field. The bit numbers were
         # preprocessor definitions, let's just hardcode them here.
-        if conn.flags & 0x1:
-            return "inode", conn.inode
-        elif conn.flags & 0x2:
-            return "vfsmount", conn.vfsmount
-        else:
-            return "unknown", NULL(prog, "void *")
+        return _get_object_no_type(conn)
+
     # See fsnotify_conn_{inode,mount,sb} in fs/notify/fsnotify.h
-    if conn.type == prog.constant("FSNOTIFY_OBJ_TYPE_INODE"):
+    if type_ == prog.constant("FSNOTIFY_OBJ_TYPE_INODE"):
         # Prior to 36f10f55ff1d2 ("fsnotify: let connector point to an abstract
         # object"), there were direct pointers in the connector.
         if hasattr(conn, "inode"):
@@ -107,7 +125,7 @@ def fsnotify_mark_object(mark: Object) -> Tuple[str, Object]:
         return "inode", container_of(
             conn.obj, "struct inode", "i_fsnotify_marks"
         )
-    elif conn.type == prog.constant("FSNOTIFY_OBJ_TYPE_VFSMOUNT"):
+    elif type_ == prog.constant("FSNOTIFY_OBJ_TYPE_VFSMOUNT"):
         # Prior to 36f10f55ff1d2 ("fsnotify: let connector point to an abstract
         # object"), there were direct pointers in the connector.
         if hasattr(conn, "vfsmount"):
@@ -115,7 +133,7 @@ def fsnotify_mark_object(mark: Object) -> Tuple[str, Object]:
         return "vfsmount", container_of(
             conn.obj, "struct mount", "mnt_fsnotify_marks"
         )
-    elif conn.type == prog.constant("FSNOTIFY_OBJ_TYPE_SB"):
+    elif type_ == prog.constant("FSNOTIFY_OBJ_TYPE_SB"):
         # The "sb" object type was not present when 36f10f55ff1d2 ("fsnotify:
         # let connector point to an abstract object") so it will never have an
         # "sb" field.
