@@ -583,11 +583,11 @@ def print_online_bt(
         if skip_idle and task.comm.string_().decode() == f"swapper/{cpu}":
             # Just because it's the swapper task, does not mean it is idling.
             # Check the symbol at the top of the stack to ensure it's the
-            # architecture idle function.
+            # architecture idle function, or if the swapper task got halted.
             trace = prog.stack_trace(task)
             try:
                 sym = trace[0].symbol().name
-                if sym in ("intel_idle",):
+                if sym in ("intel_idle", "arch_cpu_idle", "native_safe_halt"):
                     continue
             except (IndexError, LookupError):
                 pass
