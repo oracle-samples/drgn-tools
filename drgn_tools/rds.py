@@ -35,6 +35,7 @@ from drgn.helpers.linux.pid import find_task
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.table import print_table
+from drgn_tools.table import Table
 
 # Golbal variables and definitions #
 
@@ -235,7 +236,7 @@ def fields_to_list(fields: str) -> List[str]:
     """
     Create a list of fields from a given string
 
-    :param fields: Input string containing ',' seperated fields
+    :param fields: Input string containing ',' separated fields
     :returns: List of fields
     """
     return [s.lower().strip() for s in fields.split(",")]
@@ -479,31 +480,28 @@ def rds_ip_state_list(dev: Object) -> Dict[str, Tuple[int, int]]:
     return ip_list
 
 
-def ib_mr_type(ib_mr: Object) -> str:
+def ensure_mlx_core_ib_debuginfo(prog: drgn.Program, dev_name: str) -> bool:
     """
-    Get the IB_MR_TYPE for a given RDS IB_MR.
+    Ensure that the correct mlx[5/4]_core debuginfo is present.
 
-    :param ib_mr: ``struct rdma_id_private`` Object.
-    :returns: The RDS connection RDMA CM state in string format.
+    :param prog: drgn program
+    :param dev_name: Name of the device
+    :returns: True if the mlx_core module is present and false otherwise.
     """
 
-    ib_mr_types = {
-        0: "IB_MR_TYPE_MEM_REG",
-        1: "IB_MR_TYPE_SG_GAPS",
-        2: "IB_MR_TYPE_DM",
-        3: "IB_MR_TYPE_USER",
-        4: "IB_MR_TYPE_DMA",
-        5: "IB_MR_TYPE_INTEGRITY",
-    }
+    if "mlx5" in dev_name:
+        module = ["mlx5_core", "mlx5_ib"]
+    elif "mlx4" in dev_name:
+        module = ["mlx4_core", "mlx4_ib"]
+    else:
+        return False
 
-    if ib_mr is None:
-        return "N/A"
+    msg = ensure_debuginfo(prog, module)
+    if msg:
+        print(msg)
+        return False
 
-    key = ib_mr.type.value_()
-    if key not in ib_mr_types.keys():
-        return "N/A"
-
-    return ib_mr_types[key]
+    return True
 
 
 # RDS Corelens module functions #
@@ -583,7 +581,7 @@ def rds_stats(
     Print the RDS stats and counters.
 
     :param prog: drgn program
-    :param fields: List of comma seperated fields to print. It also supports substring matching for the fields provided. Ex: 'conn_reset,  ib_tasklet_call, send, ...'
+    :param fields: List of comma separated fields to print. It also supports substring matching for the fields provided. Ex: 'conn_reset,  ib_tasklet_call, send, ...'
     :param outfile: A file to write the output to.
     :param report: Open the file in append mode. Used to generate a report of all the functions in the rds module.
     :returns: None
@@ -619,10 +617,10 @@ def rds_conn_info(
     Display all RDS connections
 
     :param prog: drgn program
-    :param laddr: comma seperated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
-    :param faddr: comma seperated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
-    :param tos: comma seperated string list of TOS.  Ex: '0, 3, ...'
-    :param state: comma seperated string list of conn states. Ex 'RDS_CONN_UP, CONNECTING, ...'
+    :param laddr: comma separated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param faddr: comma separated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param tos: comma separated string list of TOS.  Ex: '0, 3, ...'
+    :param state: comma separated string list of conn states. Ex 'RDS_CONN_UP, CONNECTING, ...'
     :param ret: If true the function returns the ``struct rds_ib_connection`` list and None if the arg is false
     :param outfile: A file to write the output to.
     :param report: Open the file in append mode. Used to generate a report of all the functions in the rds module.
@@ -820,10 +818,10 @@ def rds_info_verbose(
     Print the rds conn stats similar to rds-info -Iv
 
     :param prog: drgn program
-    :param laddr: comma seperated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
-    :param faddr: comma seperated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
-    :param tos: comma seperated string list of TOS.  Ex: '0, 3, ...'
-    :param fields: List of comma seperated fields to display. It also supports substring matching for the fields provided.  Ex: 'Recv_alloc_ctr,  Cache Allocs, Tx, ...'
+    :param laddr: comma separated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param faddr: comma separated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param tos: comma separated string list of TOS.  Ex: '0, 3, ...'
+    :param fields: List of comma separated fields to display. It also supports substring matching for the fields provided.  Ex: 'Recv_alloc_ctr,  Cache Allocs, Tx, ...'
     :param ret: If true the function returns the ``struct rds_ib_connection`` list and None if the arg is false
     :param outfile: A file to write the output to.
     :param report: Open the file in append mode. Used to generate a report of all the functions in the rds module.
@@ -865,8 +863,10 @@ def rds_info_verbose(
             "RCV IRQN",
         ]
     ]
-    for dev in for_each_rds_ib_device(prog):
-        for con in for_each_rds_ib_conn(dev, laddr, faddr, tos):
+    for rds_ib_dev in for_each_rds_ib_device(prog):
+        dev_name = rds_ib_dev.dev.name.string_().decode("utf-8")
+        debuginfo = ensure_mlx_core_ib_debuginfo(prog, dev_name)
+        for con in for_each_rds_ib_conn(rds_ib_dev, laddr, faddr, tos):
             conn_laddr = rds_inet_ntoa(con.conn.c_laddr)
             conn_faddr = rds_inet_ntoa(con.conn.c_faddr)
             conn_tos = int(con.conn.c_tos)
@@ -952,22 +952,37 @@ def rds_info_verbose(
             except AttributeError:
                 rcq_vector = "N/A"
 
-            try:
-                scq = Object(prog, "struct mlx5_ib_cq *", con.i_scq)
-                send_mcq = Object(
-                    prog, "struct mlx5_core_cq *", scq.mcq.address_of_()
-                )
-                snd_irqn = hex(send_mcq.irqn)
-            except AttributeError:
-                snd_irqn = "N/A"
+            if debuginfo:
+                is_mlx5 = False
+                if "mlx5" in dev_name:
+                    mlx_ib_cq = "struct mlx5_ib_cq"
+                    mlx_core_cq = "struct mlx5_core_cq *"
+                    is_mlx5 = True
+                elif "mlx4" in dev_name:
+                    mlx_ib_cq = "struct mlx4_ib_cq"
+                    mlx_core_cq = "struct mlx4_cq *"
 
-            try:
-                rcq = Object(prog, "struct mlx5_ib_cq *", con.i_rcq)
-                recv_mcq = Object(
-                    prog, "struct mlx5_core_cq *", rcq.mcq.address_of_()
-                )
-                rcv_irqn = hex(recv_mcq.irqn)
-            except AttributeError:
+                try:
+                    scq = container_of(con.i_scq, mlx_ib_cq, "ibcq")
+                    send_mcq = cast(mlx_core_cq, scq.mcq.address_of_())
+                    if is_mlx5:
+                        snd_irqn = hex(send_mcq.irqn)
+                    else:
+                        snd_irqn = hex(send_mcq.irq)
+                except AttributeError:
+                    snd_irqn = "N/A"
+
+                try:
+                    rcq = container_of(con.i_rcq, mlx_ib_cq, "ibcq")
+                    recv_mcq = cast(mlx_core_cq, rcq.mcq.address_of_())
+                    if is_mlx5:
+                        rcv_irqn = hex(recv_mcq.irqn)
+                    else:
+                        rcv_irqn = hex(recv_mcq.irq)
+                except AttributeError:
+                    rcv_irqn = "N/A"
+            else:
+                snd_irqn = "N/A"
                 rcv_irqn = "N/A"
 
             ics.append(con)
@@ -1132,22 +1147,19 @@ def rds_print_recv_msg_queue(
     Print the rds recv msg queue similar rds-info -r
 
     :param prog: drgn program
-    :param laddr: comma seperated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
-    :param raddr: comma seperated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
-    :param tos: comma seperated string list of TOS.  Ex: '0, 3, ...'
-    :param lport: comma seperated string list of lport.  Ex: 2259, 36554, ...'
-    :param rport: comma seperated string list of rport.  Ex: 2259, 36554, ...'
+    :param laddr: comma separated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param raddr: comma separated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param tos: comma separated string list of TOS.  Ex: '0, 3, ...'
+    :param lport: comma separated string list of lport.  Ex: 2259, 36554, ...'
+    :param rport: comma separated string list of rport.  Ex: 2259, 36554, ...'
     :param outfile: A file to write the output to.
     :param report: Open the file in append mode. Used to generate a report of all the functions in the rds module.
     :returns: None
 
     """
-    msg = ensure_debuginfo(prog, ["rds"])
-    if msg:
-        print(msg)
 
     index = -1
-    msg_queue: List[List[Any]] = [
+    msg_queue = Table(
         [
             " ",
             "LocalAddr",
@@ -1157,8 +1169,10 @@ def rds_print_recv_msg_queue(
             "Tos",
             "Seq",
             "Bytes",
-        ]
-    ]
+        ],
+        outfile=outfile,
+        report=report,
+    )
 
     if laddr:
         laddr_list = fields_to_list(laddr)
@@ -1199,22 +1213,19 @@ def rds_print_recv_msg_queue(
                 continue
 
             index = index + 1
-            msg_queue.append(
-                [
-                    index,
-                    local_addr,
-                    lport_rm,
-                    remote_addr,
-                    rport_rm,
-                    tos_rm,
-                    seq,
-                    num_bytes,
-                ]
+            msg_queue.row(
+                index,
+                local_addr,
+                lport_rm,
+                remote_addr,
+                rport_rm,
+                tos_rm,
+                seq,
+                num_bytes,
             )
 
     print("Receive Message Queue:")
-    print_table(msg_queue, outfile, report)
-    print("\n")
+    msg_queue.write()
     return None
 
 
@@ -1235,22 +1246,18 @@ def rds_print_send_retrans_msg_queue(
 
     :param prog: drgn program
     :prarm queue: The msg queue to be displaed. Ex: 'send', 'recv'
-    :param laddr: comma seperated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
-    :param raddr: comma seperated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
-    :param tos: comma seperated string list of TOS.  Ex: '0, 3, ...'
-    :param lport: comma seperated string list of lport.  Ex: 2259, 36554, ...'
-    :param rport: comma seperated string list of rport.  Ex: 2259, 36554, ...'
+    :param laddr: comma separated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param raddr: comma separated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param tos: comma separated string list of TOS.  Ex: '0, 3, ...'
+    :param lport: comma separated string list of lport.  Ex: 2259, 36554, ...'
+    :param rport: comma separated string list of rport.  Ex: 2259, 36554, ...'
     :param outfile: A file to write the output to.
     :param report: Open the file in append mode. Used to generate a report of all the functions in the rds module.
     :returns: None
 
     """
-    msg = ensure_debuginfo(prog, ["rds"])
-    if msg:
-        print(msg)
-
     index = -1
-    msg_queue: List[List[Any]] = [
+    msg_queue = Table(
         [
             " ",
             "LocalAddr",
@@ -1260,8 +1267,10 @@ def rds_print_send_retrans_msg_queue(
             "Tos",
             "Seq",
             "Bytes",
-        ]
-    ]
+        ],
+        outfile=outfile,
+        report=report,
+    )
 
     if laddr:
         laddr_list = fields_to_list(laddr)
@@ -1282,11 +1291,7 @@ def rds_print_send_retrans_msg_queue(
             conn_tos = int(conn.c_tos)
             conn_laddr = rds_inet_ntoa(conn.c_laddr)
             conn_raddr = rds_inet_ntoa(conn.c_faddr)
-            cp = Object(
-                prog,
-                "struct rds_conn_path *",
-                address=conn.c_path.address_of_(),
-            )
+            cp = cast("struct rds_conn_path *", conn.c_path)
             if queue.lower() == "send":
                 msg_list = cp.cp_send_queue
             elif queue.lower() == "retrans":
@@ -1294,12 +1299,10 @@ def rds_print_send_retrans_msg_queue(
             else:
                 print("Invalid queue name provided in args !")
                 return None
-            # print(send_list)
 
             for rm in list_for_each_entry(
                 "struct rds_message", msg_list.address_of_(), "m_conn_item"
             ):
-                # print(rm)
                 lport_rm = be16_to_host(prog, rm.m_inc.i_hdr.h_sport)
                 rport_rm = be16_to_host(prog, rm.m_inc.i_hdr.h_dport)
                 seq = be64_to_host(prog, rm.m_inc.i_hdr.h_sequence)
@@ -1317,17 +1320,15 @@ def rds_print_send_retrans_msg_queue(
                     continue
 
                 index = index + 1
-                msg_queue.append(
-                    [
-                        index,
-                        conn_laddr,
-                        lport_rm,
-                        conn_raddr,
-                        rport_rm,
-                        conn_tos,
-                        seq,
-                        num_bytes,
-                    ]
+                msg_queue.row(
+                    index,
+                    conn_laddr,
+                    lport_rm,
+                    conn_raddr,
+                    rport_rm,
+                    conn_tos,
+                    seq,
+                    num_bytes,
                 )
 
     if queue.lower() == "send":
@@ -1335,8 +1336,7 @@ def rds_print_send_retrans_msg_queue(
     elif queue.lower() == "retrans":
         print("Retransmit Message Queue:")
 
-    print_table(msg_queue, outfile, report)
-    print("\n")
+    msg_queue.write()
     return None
 
 
@@ -1357,11 +1357,11 @@ def rds_print_msg_queue(
 
     :param prog: drgn program
     :prarm queue: The msg queue to be displaed. Ex: 'send', 'recv' , 'retrans', 'All'. Default: 'All'
-    :param laddr: comma seperated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
-    :param raddr: comma seperated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
-    :param tos: comma seperated string list of TOS.  Ex: '0, 3, ...'
-    :param lport: comma seperated string list of lport.  Ex: 2259, 36554, ...'
-    :param rport: comma seperated string list of rport.  Ex: 2259, 36554, ...'
+    :param laddr: comma separated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param raddr: comma separated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param tos: comma separated string list of TOS.  Ex: '0, 3, ...'
+    :param lport: comma separated string list of lport.  Ex: 2259, 36554, ...'
+    :param rport: comma separated string list of rport.  Ex: 2259, 36554, ...'
     :param outfile: A file to write the output to.
     :param report: Open the file in append mode. Used to generate a report of all the functions in the rds module.
     :returns: None
@@ -1370,11 +1370,20 @@ def rds_print_msg_queue(
     msg = ensure_debuginfo(prog, ["rds"])
     if msg:
         print(msg)
+        return None
 
-    if queue.lower() == "all":
+    queue = queue.lower()
+    if queue not in ("all", "send", "snd", "retrans", "re", "recv", "rcv"):
+        print(
+            f"Unknown queue type '{queue}'. Expected: all, send, retrans, or recv"
+        )
+        return
+    if queue in ("send", "snd", "all"):
         rds_print_send_retrans_msg_queue(
             prog, "send", laddr, raddr, tos, lport, rport, ret, outfile, report
         )
+        print("\n")
+    if queue in ("retrans", "re", "all"):
         rds_print_send_retrans_msg_queue(
             prog,
             "retrans",
@@ -1387,34 +1396,11 @@ def rds_print_msg_queue(
             outfile,
             report,
         )
+        print("\n")
+    if queue in ("recv", "rcv", "all"):
         rds_print_recv_msg_queue(
             prog, laddr, raddr, tos, lport, rport, ret, outfile, report
         )
-    elif queue.lower() == "send" or queue.lower() == "snd":
-        rds_print_send_retrans_msg_queue(
-            prog, "send", laddr, raddr, tos, lport, rport, ret, outfile, report
-        )
-    elif queue.lower() == "retrans" or queue.lower() == "re":
-        rds_print_send_retrans_msg_queue(
-            prog,
-            "retrans",
-            laddr,
-            raddr,
-            tos,
-            lport,
-            rport,
-            ret,
-            outfile,
-            report,
-        )
-    elif queue.lower() == "recv" or queue.lower() == "rcv":
-        rds_print_recv_msg_queue(
-            prog, laddr, raddr, tos, lport, rport, ret, outfile, report
-        )
-    else:
-        print("Incorrect queue arg provided !")
-
-    return
 
 
 def print_mr_list_head_info(
@@ -1435,7 +1421,7 @@ def print_mr_list_head_info(
         return
     index = 0
 
-    list_info: List[List[Any]] = [
+    list_info = Table(
         [
             "Index",
             "IB device",
@@ -1448,13 +1434,15 @@ def print_mr_list_head_info(
             "mr_type",
             "length",
             "pd",
-        ]
-    ]
+        ],
+        outfile=None,
+        report=False,
+    )
 
     for list_ptr in list_for_each(list_head.address_of_()):
         rds_ib_mr = container_of(list_ptr, "struct rds_ib_mr", "pool_list")
         rds_ib_mr_addr = hex(rds_ib_mr.value_())
-        ib_mr = Object(prog, "struct ib_mr *", rds_ib_mr.mr)
+        ib_mr = cast("struct ib_mr *", rds_ib_mr.mr)
         if ib_mr.value_() == 0x0:
             continue
         ib_mr_addr = hex(ib_mr.value_())
@@ -1462,28 +1450,26 @@ def print_mr_list_head_info(
         rkey = int(ib_mr.rkey)
         page_size = int(ib_mr.page_size)
         need_inval = bool(ib_mr.need_inval)
-        mr_type = ib_mr_type(ib_mr)
+        mr_type = ib_mr.type.format_(type_name=False)
         length = int(ib_mr.length)
         device_addr = hex(ib_mr.device.value_())
         pd_addr = hex(ib_mr.pd.value_())
-        list_info.append(
-            [
-                index,
-                device_addr,
-                rds_ib_mr_addr,
-                ib_mr_addr,
-                lkey,
-                rkey,
-                page_size,
-                need_inval,
-                mr_type,
-                length,
-                pd_addr,
-            ]
+        list_info.row(
+            index,
+            device_addr,
+            rds_ib_mr_addr,
+            ib_mr_addr,
+            lkey,
+            rkey,
+            page_size,
+            need_inval,
+            mr_type,
+            length,
+            pd_addr,
         )
         index = index + 1
     print("\nrds_ib_mr->{}->{}\n".format(pool_name, list_name))
-    print_table(list_info, None, False)
+    list_info.write()
 
 
 def rds_get_mr_list_info(
@@ -1501,7 +1487,7 @@ def rds_get_mr_list_info(
         if dev_ptr is None:
             raise ValueError("Provide a rds_ib_device pointer")
         prog = prog_or_obj
-        dev = Object(prog, "struct rds_ib_device *", value=dev_ptr)
+        dev = cast("struct rds_ib_device *", dev_ptr)
     else:
         prog = prog_or_obj.prog_
         dev = prog_or_obj
@@ -1511,12 +1497,8 @@ def rds_get_mr_list_info(
         print(msg)
         return
 
-    rds_mr_1m_pool = Object(
-        prog, "struct rds_ib_mr_pool *", dev.mr_1m_pool.value_()
-    )
-    rds_mr_8k_pool = Object(
-        prog, "struct rds_ib_mr_pool *", dev.mr_8k_pool.value_()
-    )
+    rds_mr_1m_pool = cast("struct rds_ib_mr_pool *", dev.mr_1m_pool)
+    rds_mr_8k_pool = cast("struct rds_ib_mr_pool *", dev.mr_8k_pool)
 
     print_mr_list_head_info(
         prog, rds_mr_8k_pool.busy_list, "rds_mr_8k_pool", "busy_list"
@@ -1559,6 +1541,9 @@ class Rds(CorelensModule):
 
     name = "rds"
     skip_unless_have_kmod = "rds"
+
+    # We access information from the following modules #
+    debuginfo_kmods = ["mlx5_core", "mlx4_core", "mlx5_ib", "mlx4_ib"]
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         report(prog)
