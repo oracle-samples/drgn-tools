@@ -9,9 +9,12 @@ from typing import Tuple
 
 import drgn
 from drgn import cast
+from drgn import FaultError
+from drgn import IntegerLike
 from drgn import NULL
 from drgn import Object
 from drgn import Program
+from drgn import sizeof
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
@@ -23,8 +26,123 @@ from drgn_tools.bt import bt
 from drgn_tools.table import FixedTable
 from drgn_tools.task import get_current_run_time
 from drgn_tools.task import task_lastrun2now
+from drgn_tools.util import kernel_version
 from drgn_tools.util import per_cpu_owner
 from drgn_tools.util import timestamp_str
+
+rw_semaphore_frame_names = [
+    "rwsem_down_read_slowpath",
+    "rwsem_down_write_slowpath",
+    "__rwsem_down_read_failed_common",
+    "__rwsem_down_write_failed_common",
+]
+
+
+def get_lock_from_stack_frame(
+    prog: Program, pid: IntegerLike, frame: Object, lock_type: str
+) -> Object:
+    """
+    Get lock address from a given stack frame.
+
+    This has been tested only for UEKs 5,6,7 and 8 and for mutexes,
+    semaphores and rw_semaphore.
+
+    For cases, where frame["lock"] can't provide the lock address and gives
+    ObjectAbsent exception, this can be used as fallback method to obtain
+    lock addresses.
+    There can still be cases where for other kernels or other configurations
+    or for same kernel/configuration compiled with a different gcc versions,
+    the lock address may not be available at offsets used here, but the idea
+    here is that since we are mostly debugging released kernels built using
+    Jenkins pipelines, we should not see gcc or kernel configuration variation
+    and this helper will avoid need to manually check stack frames to locate
+    the locks when frame["lock"] method does not work.
+
+    :param pid: PID of task
+    :param frame: StackFrame that should be checked for lock
+    :param lock_type: type of lock i.e mutex, semaphore or rw_semaphore
+    :returns: True if task is blocked on given lock, False otherwise.
+    """
+
+    kmaj, kmin, _ = kernel_version(prog)
+    if lock_type == "rw_semaphore":
+        if frame.name in rw_semaphore_frame_names:
+            lock_addr = prog.read_word(
+                frame.register("rbp") - 5 * sizeof(prog.type("void *"))
+            )
+            lock = Object(prog, "struct " + lock_type, address=lock_addr)
+            if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
+                return lock.address_of_()
+        elif frame.name == "__schedule":
+            for offset in 5, 6, 7:
+                lock_addr = prog.read_word(
+                    frame.sp + offset * sizeof(prog.type("void *"))
+                )
+                lock = Object(prog, "struct " + lock_type, address=lock_addr)
+                if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
+                    return lock.address_of_()
+    elif lock_type == "semaphore":
+        if frame.name == "__down_common":
+            if kmaj == 6 and kmin == 6:
+                offsets = [
+                    0,
+                ]
+            elif kmaj == 5 and kmin == 15:
+                offsets = [13, 14]
+            else:
+                offsets = [8, 9]
+            for offset in offsets:
+                lock_addr = prog.read_word(
+                    frame.sp + offset * sizeof(prog.type("void *"))
+                )
+                lock = Object(prog, "struct " + lock_type, address=lock_addr)
+                if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
+                    return lock.address_of_()
+    elif lock_type == "mutex":
+        if frame.name == "__mutex_lock":
+            offsets = [12, 17]
+        elif frame.name == "__schedule":
+            offsets = [7, 8]
+        for offset in offsets:
+            lock_addr = prog.read_word(
+                frame.sp + offset * sizeof(prog.type("void *"))
+            )
+            lock = Object(prog, "struct " + lock_type, address=lock_addr)
+            if is_task_blocked_on_lock(pid, lock_type, lock.address_of_()):
+                return lock.address_of_()
+
+    return NULL(prog, "struct " + lock_type + " *")
+
+
+def is_task_blocked_on_lock(
+    pid: IntegerLike, lock_type: str, lock: Object
+) -> bool:
+    """
+    Check if a task is blocked on a given lock or not
+
+    :param pid: PID of task
+    :param lock_type: type of lock i.e mutex, semaphore or rw_semaphore
+    :param lock: ``struct mutex *`` or ``struct semaphore *`` or ``struct rw_semaphore *``
+    :returns: True if task is blocked on given lock, False otherwise.
+    """
+
+    try:
+        if lock_type == "semaphore" or lock_type == "rw_semaphore":
+            return pid in [
+                waiter.pid.value_()
+                for waiter in for_each_rwsem_waiter(lock.prog_, lock)
+            ]
+        elif lock_type == "mutex":
+            return pid in [
+                waiter.pid.value_()
+                for waiter in for_each_mutex_waiter(lock.prog_, lock)
+            ]
+        else:
+            return False
+    except FaultError:
+        # print("Could not retrieve list of waiters.")
+        return False
+
 
 ######################################
 # osq lock
