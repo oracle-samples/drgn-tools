@@ -509,7 +509,7 @@ class KernelVersion(NamedTuple):
         version_re = re.compile(
             r"(?P<version>\d+\.\d+\.\d+)-(?P<release>[0-9.-]+)"
             r"(?P<extraversion1>\.[0-9a-zA-Z._]+?)?"
-            r"\.el(?P<ol_version>\d+)(?P<extra>uek|_(?P<update>\d+)|)"
+            r"\.el(?P<ol_version>\d+)(?P<extra>uek|ueknext|_(?P<update>\d+)|)"
             r"(?P<extraversion2>\.[0-9a-zA-Z._]+?)?"
             r"\.(?P<arch>.+)"
         )
@@ -531,7 +531,12 @@ class KernelVersion(NamedTuple):
         uek_ver = None
         if is_uek:
             uek_ver = _UEK_VER.get(match["version"])
-        is_uek_next = is_uek and uek_ver is None and version_tuple >= (6, 8, 0)
+        is_uek_next = (
+            match["extra"] == "ueknext"
+            # In the initial 6.8.0 releases of UEK-next, there was no "ueknext"
+            # in the extra part of the version. Since 6.9.0 this is present.
+            or (is_uek and uek_ver is None and version_tuple == (6, 8, 0))
+        )
         return cls(
             match["version"],
             version_tuple,
