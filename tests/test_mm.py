@@ -8,6 +8,7 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.mm import virt_to_page
 
 from drgn_tools import mm
+from drgn_tools.module import module_address_regions
 
 
 def test_totalram_pages(prog: drgn.Program) -> None:
@@ -94,14 +95,17 @@ def test_AddrKind_categorize_mapped(prog: drgn.Program) -> None:
         "list",
     )
     for mod in mods:
-        if mod.type_.type.has_member("core_layout"):
-            module_base = mod.core_layout.base.value_()
+        for region in module_address_regions(mod):
+            module_base = region[0]
+            break
         else:
-            module_base = mod.module_core.value_()
+            continue  # try the next module
+
+        # Test we can categorize modules
+        assert mm.AddrKind.categorize(prog, module_base) == mm.AddrKind.MODULE
         break
     else:
-        assert False, "No modules loaded, cannot test AddrKind.categorize()!"
-    assert mm.AddrKind.categorize(prog, module_base) == mm.AddrKind.MODULE
+        assert False, "Cannot AddrKind.categorize() (no kmod or missing addr)!"
 
 
 # TODO: get a better accounting of the exact percpu offset start and end, and
