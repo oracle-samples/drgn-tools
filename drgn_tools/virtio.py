@@ -373,7 +373,7 @@ def get_module_name(dev_obj: Object) -> t.Optional[str]:
     :param dev_obj: Object of type ``struct device *``
     :returns: module name, or None
     """
-    mod = address_to_module(dev_obj.driver)
+    mod = address_to_module(dev_obj.prog_, dev_obj.driver)
     if mod:
         return KernelModule(mod).name
     return None

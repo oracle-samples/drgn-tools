@@ -1,7 +1,8 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import pytest
 
+from drgn_tools.module import address_to_module
 from drgn_tools.module import KernelModule
 from drgn_tools.module import module_exports
 
@@ -31,11 +32,20 @@ def test_list_modules(prog):
     assert len(mods) > 1
 
 
+def test_address_to_module(prog, common_mod):
+    for addr, size in common_mod.address_regions():
+        if size:
+            break
+    else:
+        pytest.fail("Common module has no address regions")
+
+    mod = address_to_module(prog, addr)
+    assert mod == common_mod.obj
+
+
 def test_module_memory(prog, common_mod):
     # smoke test
-    common_mod.address_region()
-    common_mod.init_region()
-    common_mod.percpu_region()
+    common_mod.address_regions()
 
 
 def test_module_build_id(prog, common_mod):
