@@ -140,8 +140,13 @@ def get_per_node_meminfo(prog: Program, node: Object) -> Dict[str, int]:
         mm_consts["PAGE_SHIFT"] - 10
     )
     mm_stats["PageTables"] = node_zone_stats["NR_PAGETABLE"]
+
+    # ebc97a52b5d6c ("mm: add NR_SECONDARY_PAGETABLE to count secondary page
+    # table uses.")
+    if "NR_SECONDARY_PAGETABLE" in node_zone_stats:
+        mm_stats["SecPageTables"] = node_zone_stats["NR_SECONDARY_PAGETABLE"]
     mm_stats["NFS_Unstable"] = 0
-    if "NR_UNSTABLE_NFS" in mm_stats:
+    if "NR_UNSTABLE_NFS" in node_zone_stats:
         mm_stats["NFS_Unstable"] = node_zone_stats["NR_UNSTABLE_NFS"]
     mm_stats["Bounce"] = bounce_pages
     mm_stats["WritebackTmp"] = node_zone_stats["NR_WRITEBACK_TEMP"]
@@ -170,6 +175,10 @@ def get_per_node_meminfo(prog: Program, node: Object) -> Dict[str, int]:
         mm_stats["ShmemPmdMapped"] = -1
         mm_stats["FileHugePages"] = -1
         mm_stats["FilePmdMapped"] = -1
+
+    # dcdfdd40fa82b ("mm: Add support for unaccepted memory")
+    if "NR_UNACCEPTED" in node_zone_stats:
+        mm_stats["Unaccepted"] = node_zone_stats["NR_UNACCEPTED"]
 
     # Collect hugepage info for the default hugepage size in this node.
     node_id = node.node_id.value_()
