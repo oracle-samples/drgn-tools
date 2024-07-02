@@ -1,4 +1,4 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 Helpers related to accessing fields of task_struct in a compatible way.
@@ -19,10 +19,12 @@ from typing import Tuple
 import drgn
 from drgn import Object
 from drgn import Program
+from drgn import TypeKind
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
+from drgn.helpers.linux.percpu import percpu_counter_sum
 from drgn.helpers.linux.pid import find_task
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.sched import cpu_curr
@@ -343,6 +345,7 @@ def get_task_rss(task: Object, cache: Optional[Dict[int, TaskRss]]) -> TaskRss:
         return TaskRss(0, 0, 0)
 
     prog = task.prog_
+    rss_stat = task.mm.rss_stat
 
     MM_FILEPAGES = prog.constant("MM_FILEPAGES").value_()
     MM_ANONPAGES = prog.constant("MM_ANONPAGES").value_()
@@ -354,31 +357,35 @@ def get_task_rss(task: Object, cache: Optional[Dict[int, TaskRss]]) -> TaskRss:
     # Start with the counters from the mm_struct
     filerss = anonrss = shmemrss = 0
 
-    filerss += task.mm.rss_stat.count[MM_FILEPAGES].counter.value_()
-    anonrss += task.mm.rss_stat.count[MM_ANONPAGES].counter.value_()
-    if MM_SHMEMPAGES >= 0:
-        shmemrss += task.mm.rss_stat.count[MM_SHMEMPAGES].counter.value_()
-
-    ltask = task.group_leader
-
-    filerss += ltask.rss_stat.count[MM_FILEPAGES].value_()
-    anonrss += ltask.rss_stat.count[MM_ANONPAGES].value_()
-    if MM_SHMEMPAGES >= 0:
-        shmemrss += ltask.rss_stat.count[MM_SHMEMPAGES].value_()
-
-    # Finally, augment the values with the ones from the rest of the thread
-    # group.
-
-    for gtask in list_for_each_entry(
-        "struct task_struct",
-        task.group_leader.thread_group.address_of_(),
-        "thread_group",
-    ):
-        filerss += gtask.rss_stat.count[MM_FILEPAGES].value_()
-        anonrss += gtask.rss_stat.count[MM_ANONPAGES].value_()
+    if rss_stat.type_.kind == TypeKind.ARRAY:
+        # Since v6.2, f1a7941243c10 ("mm: convert mm's rss stats into
+        # percpu_counter"), the "rss_stat" object is an array of percpu
+        # counters. Simply sum them up!
+        filerss = percpu_counter_sum(rss_stat[MM_FILEPAGES].address_of_())
+        anonrss = percpu_counter_sum(rss_stat[MM_ANONPAGES].address_of_())
+        shmemrss = 0
         if MM_SHMEMPAGES >= 0:
-            shmemrss += gtask.rss_stat.count[MM_SHMEMPAGES].value_()
-    rss = TaskRss(filerss, anonrss, shmemrss)
+            shmemrss = percpu_counter_sum(
+                rss_stat[MM_SHMEMPAGES].address_of_()
+            )
+        rss = TaskRss(filerss, anonrss, shmemrss)
+    else:
+        # Prior to this, the "rss_stat" was a structure containing counters that
+        # were cached on each task_struct and periodically updated into the
+        # mm_struct. We start with the counter values from the mm_struct and
+        # then sum up the cached copies from each thread.
+        filerss += rss_stat.count[MM_FILEPAGES].counter.value_()
+        anonrss += rss_stat.count[MM_ANONPAGES].counter.value_()
+        if MM_SHMEMPAGES >= 0:
+            shmemrss += rss_stat.count[MM_SHMEMPAGES].counter.value_()
+
+        for gtask in for_each_task_in_group(task, include_self=True):
+            filerss += gtask.rss_stat.count[MM_FILEPAGES].value_()
+            anonrss += gtask.rss_stat.count[MM_ANONPAGES].value_()
+            if MM_SHMEMPAGES >= 0:
+                shmemrss += gtask.rss_stat.count[MM_SHMEMPAGES].value_()
+        rss = TaskRss(filerss, anonrss, shmemrss)
+
     if cache is not None:
         cache[mmptr] = rss
 
