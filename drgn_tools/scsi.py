@@ -13,6 +13,7 @@ from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.device import class_to_subsys
 from drgn_tools.table import print_table
 from drgn_tools.util import has_member
 
@@ -27,7 +28,8 @@ def for_each_scsi_host(prog: Program) -> Iterator[Object]:
         "knode_class"
     )
 
-    devices = prog["shost_class"].p.klist_devices.k_list.address_of_()
+    subsys_p = class_to_subsys(prog["shost_class"].address_of_())
+    devices = subsys_p.klist_devices.k_list.address_of_()
 
     if class_in_private:
         for device_private in list_for_each_entry(

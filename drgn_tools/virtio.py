@@ -14,6 +14,7 @@ from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.device import bus_to_subsys
 from drgn_tools.logging import get_logger
 from drgn_tools.module import address_to_module
 from drgn_tools.module import KernelModule
@@ -169,8 +170,9 @@ def get_virtio_devices(virtio_drv: Object) -> t.List[Object]:
     :param virtio_drv: Object of ``struct virtio_driver``
     :returns: List of all virtio device's ``struct device *``
     """
-    # virtio_driver -> device_driver -> bus_type -> subsys_private
-    subsys_p = virtio_drv.driver.bus.p
+    # virtio_driver -> device_driver -> bus_type
+    bus_type = virtio_drv.driver.bus
+    subsys_p = bus_to_subsys(bus_type)
 
     # Get the "struct list_head *" of the list of all devices for this
     # subsys_private.
