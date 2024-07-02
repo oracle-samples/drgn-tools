@@ -63,10 +63,6 @@ jobs:
           tox list
           tox --notest
           tox -e runner --notest
-      - name: Fetch RPMs
-        run: |
-          tox -e runner -- python -m testing.litevm.rpm
-
       - name: Run tests
         run: |
-          tox -e runner -- python -m testing.litevm.vm --python-version 3${{ matrix.python-minor }}
+          tox -e runner -- python -m testing.litevm.vm --delete-after-test --python-version 3${{ matrix.python-minor }}

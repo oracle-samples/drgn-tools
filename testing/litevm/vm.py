@@ -405,6 +405,11 @@ def main():
         help="Use CTF debuginfo for tests rather than DWARF",
     )
     parser.add_argument(
+        "--delete-after-test",
+        action="store_true",
+        help="Delete RPM cache and extract directory after test",
+    )
+    parser.add_argument(
         "command",
         nargs="*",
         help="Command to run on each vm (leave empty for default: test)",
@@ -423,7 +428,12 @@ def main():
         section_name = f"uek{k.uek_ver}"
         section_text = f"Run tests on UEK{k.uek_ver}"
         with ci_section(section_name, section_text):
+            release = k.latest_release()
+            extract_dir = args.extract_dir / release
             run_vm(k, args.extract_dir, commands)
+            if args.delete_after_test:
+                shutil.rmtree(extract_dir)
+                k.delete_cache()
 
 
 if __name__ == "__main__":

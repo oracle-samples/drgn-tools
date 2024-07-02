@@ -233,6 +233,11 @@ class TestKernel:
             self._get_rpms()
         return self._rpm_paths + [self._dbinfo_path]
 
+    def delete_cache(self) -> None:
+        """Removes all RPMs and the RPM cache."""
+        tree = self.cache_dir / self.slug()
+        shutil.rmtree(tree)
+
     def get_oot_modules(self) -> List[Path]:
         key = f"ol{self.ol_ver}uek{self.uek_ver}{self.arch}"
         path = Path(__file__).parent / "mod" / key
