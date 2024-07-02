@@ -1,5 +1,6 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import pytest
 from drgn.helpers.linux.pid import find_task
 from drgn.helpers.linux.pid import for_each_task
 
@@ -19,7 +20,13 @@ def test_user_kernel_threads(prog):
     assert task.is_user(init)
     assert task.is_group_leader(init)
 
-    kworker = next(for_each_worker(prog)).task
+    for worker in for_each_worker(prog):
+        if worker.task:
+            kworker = worker.task
+            break
+    else:
+        pytest.fail("no kworker available to test kthread helper")
+
     assert task.is_kthread(kworker)
     assert not task.is_user(kworker)
     assert task.is_group_leader(kworker)
