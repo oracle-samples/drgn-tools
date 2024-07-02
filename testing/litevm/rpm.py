@@ -101,7 +101,7 @@ class TestKernel:
     def __init__(
         self,
         ol_ver: int,
-        uek_ver: int,
+        uek_ver: Union[int, str],
         arch: str,
         pkgs: List[str],
         cache_dir: Optional[Path] = None,
@@ -254,21 +254,21 @@ TEST_KERNELS = [
     # We also apparently need to add "-modules-core" RPMs, because there weren't
     # enough kernel RPMs yet.
     # Tests currently fail on UEK-next. Uncomment this to enable the tests:
-    # TestKernel(
-    #     9,
-    #     "next",
-    #     "x86_64",
-    #     [
-    #         "kernel-ueknext-core",
-    #         "kernel-ueknext-modules",
-    #         "kernel-ueknext-modules-core",
-    #     ],
-    #     yum_fmt=(
-    #         "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/"
-    #         "developer/UEK{uek_ver}/{arch}/"
-    #     ),
-    #     pkgbase="kernel-ueknext",
-    # ),
+    TestKernel(
+        9,
+        "next",
+        "x86_64",
+        [
+            "kernel-ueknext-core",
+            "kernel-ueknext-modules",
+            "kernel-ueknext-modules-core",
+        ],
+        yum_fmt=(
+            "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/"
+            "developer/UEK{uek_ver}/{arch}/"
+        ),
+        pkgbase="kernel-ueknext",
+    ),
     # UEK7 switches from a single "kernel-uek" to "-core" and "-modules".
     # The "kernel-uek" package still exists as a placeholder.
     TestKernel(9, 7, "x86_64", ["kernel-uek-core", "kernel-uek-modules"]),
