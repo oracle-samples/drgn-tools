@@ -306,21 +306,29 @@ def get_total_swap_cache_pages(prog: Program) -> int:
     :returns: The number of cached memory back by swap space in pages.
     """
     ret = 0
-    max_swapfile_types = get_mm_constants(prog)["MAX_SWAPFILES"]
-    swapper_spaces = prog["swapper_spaces"]
 
-    if "nr_swapper_spaces" in prog:
-        nr_swapper_spaces = prog["nr_swapper_spaces"]
-        for i in range(max_swapfile_types):
-            nr = nr_swapper_spaces[i]
-            spaces = swapper_spaces[i]
-            if nr == 0 or spaces.value_() == 0x0:
-                continue
-            for j in range(nr):
-                ret += spaces[j].nrpages.value_()
+    global_stats = get_global_mm_stats(prog)
+    if "NR_SWAPCACHE" in global_stats:
+        # UEK7 and RHCK kernels may maintains a specific per-node
+        # statistics item "NR_SWAPCACHE" for tracking the total swap
+        # cache pages. In such cases, return the counter directly.
+        ret = global_stats.get("NR_SWAPCACHE", 0)
     else:
-        for i in range(max_swapfile_types):
-            ret += swapper_spaces[i].nrpages.value_()
+        max_swapfile_types = get_mm_constants(prog)["MAX_SWAPFILES"]
+        swapper_spaces = prog["swapper_spaces"]
+
+        if "nr_swapper_spaces" in prog:
+            nr_swapper_spaces = prog["nr_swapper_spaces"]
+            for i in range(max_swapfile_types):
+                nr = nr_swapper_spaces[i]
+                spaces = swapper_spaces[i]
+                if nr == 0 or spaces.value_() == 0x0:
+                    continue
+                for j in range(nr):
+                    ret += spaces[j].nrpages.value_()
+        else:
+            for i in range(max_swapfile_types):
+                ret += swapper_spaces[i].nrpages.value_()
     return ret
 
 
