@@ -5,8 +5,10 @@ Helpers for diagnosing issues with dnotify, inotify, fanotify: the "fsnotify"
 subsystem.
 """
 import argparse
+from datetime import timedelta
 from typing import Dict
 from typing import Iterator
+from typing import Optional
 from typing import Tuple
 
 from drgn import cast
@@ -30,6 +32,7 @@ from drgn_tools.corelens import CorelensModule
 from drgn_tools.dentry import dentry_path_any_mount
 from drgn_tools.dentry import sb_first_mount_point
 from drgn_tools.task import is_group_leader
+from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import type_has_member
 
 FSNOTIFY_FLAGS = {
@@ -196,6 +199,16 @@ def fsnotify_summarize_object(kind: str, obj: Object) -> str:
         return "(not implemented)"
 
 
+def _print_waiter(task: Object, kind: str, pfx: Optional[str]):
+    if not pfx:
+        pfx = ""
+    wait_time = task_lastrun2now(task)
+    wait_time_fmt = str(timedelta(seconds=wait_time / 1000000000))
+    print(
+        f"{pfx}[PID: {task.pid.value_()} COMM: {task.comm.string_().decode()}] WAIT: {kind} DURATION: {wait_time_fmt}"
+    )
+
+
 def print_waitqueue(
     wq: Object, indent: int = 2, stack_trace: bool = False
 ) -> None:
@@ -229,9 +242,7 @@ def print_waitqueue(
         if func == "pollwake":
             wqueues = cast("struct poll_wqueues *", entry.private)
             task = wqueues.polling_task
-            print(
-                f"{pfx}[PID: {task.pid.value_()} COMM: {task.comm.string_().decode()} WAIT: select]"
-            )
+            _print_waiter(task, "select", pfx)
             if stack_trace:
                 bt(task, indent=indent + 2)
         elif func == "ep_poll_callback":
@@ -255,9 +266,7 @@ def print_waitqueue(
             info = slab_object_info(entry.private)
             if info and info.slab_cache.name.string_() == b"task_struct":
                 task = cast("struct task_struct *", entry.private)
-                print(
-                    f"{pfx}[PID: {task.pid.value_()} COMM: {task.comm.string_().decode()} WAIT: direct]"
-                )
+                _print_waiter(task, "direct", pfx)
                 if stack_trace:
                     bt(task, indent=indent + 2)
 
