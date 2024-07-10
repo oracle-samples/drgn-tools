@@ -472,12 +472,27 @@ def for_each_task_in_group(
     """
     if include_self:
         yield task
-    for gtask in list_for_each_entry(
-        "struct task_struct",
-        task.thread_group.address_of_(),
-        "thread_group",
-    ):
-        yield gtask
+    if hasattr(task, "thread_group"):
+        yield from list_for_each_entry(
+            "struct task_struct",
+            task.thread_group.address_of_(),
+            "thread_group",
+        )
+    else:
+        # Since commit 8e1f385104ac0 ("kill task_struct->thread_group") from
+        # 6.7, the thread_group list is gone, replaced by a list inside the
+        # task.signal struct. This has an explicit list_head (unlike the
+        # thread_group which just linked each task together with no explicit
+        # head node).
+        for other in list_for_each_entry(
+            "struct task_struct",
+            task.signal.thread_head.address_of_(),
+            "thread_node",
+        ):
+            # We've already yielded "task" (or not, depending on the caller's
+            # preference) so skip it here.
+            if other != task:
+                yield other
 
 
 def count_tasks_in_state(prog: drgn.Program, state: str) -> int:
