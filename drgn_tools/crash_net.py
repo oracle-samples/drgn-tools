@@ -19,6 +19,7 @@ from drgn.helpers.linux.pid import find_task
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_table
+from drgn_tools.task import task_cpu
 
 _NETDEV_HASHBITS = 8
 _NETDEV_HASHENTRIES = 1 << _NETDEV_HASHBITS
@@ -266,7 +267,7 @@ def print_task_sockets(prog: Program, pid: int, print_full_data: bool) -> None:
         + "    TASK: "
         + hex(task.value_())[2:]
         + "    CPU: "
-        + str(int(task.cpu))
+        + str(task_cpu(task))
         + "    COMMAND: "
         + task.comm.string_().decode("utf-8")
     )
