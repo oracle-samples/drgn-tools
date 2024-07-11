@@ -19,14 +19,19 @@ BuildRequires:  python%{python3_pkgversion}-wheel
 %global python_wheelname drgn_tools-%{version}-py3-none-any.whl
 
 # The drgn dependency can be fulfilled by drgn with, or without, CTF support.
-# However, drgn-tools is tied to a specific drgn release.
-Requires:       drgn >= 0.0.25, drgn < 0.0.27
+# However, drgn-tools is tied to specific drgn releases.
+Requires:       drgn >= 0.0.25, drgn < 0.0.28
 
-%description
+%global _description %{expand:
 drgn-tools extends the drgn debugger with scripts & helpers developed by the
 Oracle Linux Sustaining team. It provides a program called "corelens" which
 allows users to extract diagnostic information from a kernel core dump, or from
-a running kernel image (via /proc/kcore).
+a running kernel image (via /proc/kcore).}
+%description %{_description}
+
+%package -n     drgn-tools
+Summary:        %{summary}
+%description -n drgn-tools %{_description}
 
 %prep
 %autosetup -n drgn-tools-%{version}
@@ -48,7 +53,7 @@ install -m644 -D man/corelens.1.gz %{buildroot}%{_mandir}/man1/corelens.1.gz
 # manually with "python3 -m drgn_tools.cli"
 rm %{buildroot}/usr/bin/DRGN
 
-%files -n python-drgn-tools
+%files -n drgn-tools
 %license LICENSE.txt
 %{python3_sitelib}/drgn_tools-*.dist-info/
 %{python3_sitelib}/drgn_tools/*
