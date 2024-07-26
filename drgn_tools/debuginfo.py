@@ -685,10 +685,12 @@ class CtfCompatibility(enum.Enum):
 
         # For OL8, UEK6, the CTF generation process produced buggy data. The
         # data was fixed starting in 5.4.17-2136.323.1: all prior versions are
-        # fully broken.
+        # fully broken. This is specific to x86_64: the aarch64 build used a
+        # different toolchain which was not affected.
         if (
             kver.ol_version == 8
             and kver.uek_version == 6
+            and kver.arch == "x86_64"
             and kver.release_tuple < (2136, 323, 1)
         ):
             return cls.NO
