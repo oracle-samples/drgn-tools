@@ -5,21 +5,29 @@ Helper for linux kernel locking
 """
 import enum
 from typing import Iterable
+from typing import Optional
 from typing import Tuple
 
 import drgn
+from drgn import Architecture
 from drgn import cast
+from drgn import FaultError
+from drgn import IntegerLike
 from drgn import NULL
 from drgn import Object
 from drgn import Program
+from drgn import StackFrame
+from drgn.helpers import ValidationError
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
+from drgn.helpers.linux.list import validate_list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.sched import cpu_curr
 from drgn.helpers.linux.sched import task_cpu
 from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.bt import bt
+from drgn_tools.mm import AddrKind
 from drgn_tools.table import FixedTable
 from drgn_tools.task import get_current_run_time
 from drgn_tools.task import task_lastrun2now
@@ -179,7 +187,7 @@ def show_lock_waiter(
     :param stacktrace: true to dump stack trace of the waiter
     :returns: None
     """
-    prefix = "[%d] " % index
+    prefix = "[%d]" % index
     ncpu = task_cpu(task)
     print(
         "%12s: %-4s %-4d %-16s %-8d %-6s %-16s"
@@ -194,8 +202,8 @@ def show_lock_waiter(
         )
     )
     if stacktrace:
+        bt(task, indent=12)
         print("")
-        bt(task)
 
 
 def for_each_rwsem_waiter(prog: Program, rwsem: Object) -> Iterable[Object]:
@@ -223,6 +231,49 @@ def for_each_mutex_waiter(prog: Program, mutex: Object) -> Iterable[Object]:
     for waiter in list_for_each_entry(
         prog.type("struct mutex_waiter"), mutex.wait_list.address_of_(), "list"
     ):
+        yield waiter.task
+
+
+def for_each_rwsem_waiter_careful(
+    prog: Program, rwsem: Object
+) -> Iterable[Object]:
+    """
+    List task waiting on the rw semaphore
+
+    :param prog: drgn program
+    :param rwsem: ``struct rw_semaphore *``
+    :returns: ``struct task_struct *``
+    """
+    seen = set()
+    for waiter in validate_list_for_each_entry(
+        prog.type("struct rwsem_waiter"), rwsem.wait_list.address_of_(), "list"
+    ):
+        addr = waiter.value_()
+        if addr in seen:
+            raise ValidationError("circular list")
+        seen.add(addr)
+        yield waiter.task
+
+
+def for_each_mutex_waiter_careful(
+    prog: Program,
+    mutex: Object,
+) -> Iterable[Object]:
+    """
+    List task waiting on the mutex
+
+    :param prog: drgn program
+    :param mutex: ``struct mutex *``
+    :returns: ``struct task_struct *``
+    """
+    seen = set()
+    for waiter in validate_list_for_each_entry(
+        prog.type("struct mutex_waiter"), mutex.wait_list.address_of_(), "list"
+    ):
+        addr = waiter.value_()
+        if addr in seen:
+            raise ValidationError("circular list")
+        seen.add(addr)
         yield waiter.task
 
 
@@ -519,3 +570,92 @@ def get_rwsem_info(rwsem: Object, callstack: int = 0) -> None:
         print("There are no waiters")
     else:
         get_rwsem_waiters_info(rwsem, callstack)
+
+
+def is_task_blocked_on_lock(
+    pid: IntegerLike, lock_type: str, lock: Object
+) -> bool:
+    """
+    Check if a task is blocked on a given lock or not
+    :param pid: PID of task
+    :param var_name: variable name (sem, or mutex)
+    :param lock: ``struct mutex *`` or ``struct semaphore *`` or ``struct rw_semaphore *``
+    :returns: True if task is blocked on given lock, False otherwise.
+    """
+
+    try:
+        if lock_type == "semaphore" or lock_type == "rw_semaphore":
+            return pid in [
+                waiter.pid.value_()
+                for waiter in for_each_rwsem_waiter_careful(lock.prog_, lock)
+            ]
+        elif lock_type == "mutex":
+            return pid in [
+                waiter.pid.value_()
+                for waiter in for_each_mutex_waiter_careful(lock.prog_, lock)
+            ]
+        else:
+            return False
+    except (FaultError, ValidationError):
+        return False
+
+
+def get_lock_from_frame(
+    prog: Program, task: Object, frame: StackFrame, kind: str, var: str
+) -> Optional[Object]:
+    """
+    Given a stack frame, try to get the relevant lock out of it.
+
+    :param task: the ``struct task_struct *`` of the task
+    :param frame: the stack frame in question
+    :param kind: the kind of lock (mutex, rw_semaphore, semaphore)
+    :param var: the variable name within the stack frame
+    :returns: an object of the appropriate type for the lock kind. If it could
+      not be found, returns None
+    """
+    # Try to use DWARF CFI to get the variable value. This is the most
+    # straightforward method to get the lock variable.
+    try:
+        lock = frame[var]
+        if not lock.absent_:
+            return lock
+    except (drgn.ObjectAbsentError, KeyError):
+        pass
+
+    # Fall back to a brute force method which works shockingly well. Simply scan
+    # from the top of the stack down to the frame of the lock. If the address is
+    # a kernel address, we'll test it (carefully) to see whether it's a valid
+    # lock, and if so, we'll return it.
+    #
+    # First, we need to get the start and end address to search. This is
+    # arch-specific.
+    if prog.platform.arch == Architecture.X86_64:
+        candidates = range(task.thread.sp, frame.sp, 8)
+    elif prog.platform.arch == Architecture.AARCH64:
+        candidates = range(
+            task.thread.cpu_context.sp,
+            # We can't rely on SP being available. We need the top of this
+            # function's frame, which is the *previous* frame's frame pointer,
+            # which we get by simply dereferencing the fp register.
+            prog.read_u64(frame.register("fp")),
+            8,
+        )
+
+    tp = prog.type(f"struct {kind} *")
+    pid = task.pid.value_()
+    for addr in candidates:
+        value = prog.read_u64(addr)
+        akind = AddrKind.categorize(prog, value)
+        if akind not in (
+            AddrKind.DIRECT_MAP,
+            AddrKind.DATA,
+            AddrKind.BSS,
+            AddrKind.PERCPU,  # it would be weird, but not impossible
+            AddrKind.VMALLOC,
+            AddrKind.MODULE,
+        ):
+            continue
+        lock = Object(prog, tp, value=value)
+        if is_task_blocked_on_lock(pid, kind, lock):
+            return lock
+    return None

@@ -32,7 +32,6 @@ from typing import Optional
 from typing import Set
 from typing import Tuple
 
-import drgn
 from drgn import Object
 from drgn import Program
 from drgn import StackFrame
@@ -47,6 +46,7 @@ from drgn_tools.locking import _RWSEM_READER_MASK
 from drgn_tools.locking import _RWSEM_READER_SHIFT
 from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
+from drgn_tools.locking import get_lock_from_frame
 from drgn_tools.locking import get_rwsem_owner
 from drgn_tools.locking import get_rwsem_spinners_info
 from drgn_tools.locking import mutex_owner
@@ -120,32 +120,31 @@ def scan_mutex_lock(
     if pid is not None:
         wtask = find_task(prog, pid)
 
-    frame_list = bt_has_any(prog, ["__mutex_lock"])
+    frame_list = bt_has_any(
+        prog,
+        [
+            "__mutex_lock",
+            "__mutex_lock_interruptible_slowpath",
+            "__mutex_lock_slowpath",
+            "__mutex_lock_killable_slowpath",
+        ],
+        one_per_task=True,
+    )
     if not frame_list:
         return
 
     seen_mutexes: Set[int] = set()
 
-    warned_absent = False
     for task, frame in frame_list:
-        try:
-            mutex = frame["lock"]
-            mutex_addr = mutex.value_()
-        except drgn.ObjectAbsentError:
-            if not warned_absent:
-                print(
-                    "warning: failed to get mutex from stack frame"
-                    "- information is incomplete"
-                )
-                warned_absent = True
+        mutex = get_lock_from_frame(prog, task, frame, "mutex", "lock")
+        if not mutex:
             continue
-
-        struct_owner = mutex_owner(prog, mutex)
-
+        mutex_addr = mutex.value_()
         if mutex_addr in seen_mutexes:
             continue
         seen_mutexes.add(mutex_addr)
 
+        struct_owner = mutex_owner(prog, mutex)
         index = 0
         print(f"Mutex: 0x{mutex_addr:x}")
         print(
@@ -154,10 +153,9 @@ def scan_mutex_lock(
             "PID :",
             struct_owner.pid.value_(),
         )
-        print("")
         if stack:
-            bt(struct_owner.pid)
-        print("")
+            bt(struct_owner)
+            print("")
 
         print(
             "Mutex WAITERS (Index, cpu, comm, pid, state, wait time (d hr:min:sec:ms)):"
@@ -183,31 +181,23 @@ def scan_mutex_lock(
 def show_sem_lock(
     prog: Program,
     frame_list,
-    seen_sems,
     stack: bool,
     time: Optional[int] = None,
     pid: Optional[int] = None,
 ) -> None:
     """Show semaphore details"""
-    warned_absent = False
     wtask = None
 
     if pid is not None:
         wtask = find_task(prog, pid)
 
-    for task, frame in frame_list:
-        try:
-            sem = frame["sem"]
-            semaddr = sem.value_()
-        except drgn.ObjectAbsentError:
-            if not warned_absent:
-                print(
-                    "warning: failed to get semaphore from stack frame"
-                    "- information is incomplete"
-                )
-                warned_absent = True
-            continue
+    seen_sems: Set[int] = set()
 
+    for task, frame in frame_list:
+        sem = get_lock_from_frame(prog, task, frame, "semaphore", "sem")
+        if not sem:
+            continue
+        semaddr = sem.value_()
         if semaddr in seen_sems:
             continue
         seen_sems.add(semaddr)
@@ -238,31 +228,23 @@ def show_sem_lock(
 def show_rwsem_lock(
     prog: Program,
     frame_list: List[Tuple[Object, StackFrame]],
-    seen_rwsems: Set[int],
     stack: bool,
     time: Optional[int] = None,
     pid: Optional[int] = None,
 ) -> None:
     """Show rw_semaphore details"""
-    warned_absent = False
     wtask = None
 
     if pid is not None:
         wtask = find_task(prog, pid)
 
-    for task, frame in frame_list:
-        try:
-            rwsem = frame["sem"]
-            rwsemaddr = rwsem.value_()
-        except drgn.ObjectAbsentError:
-            if not warned_absent:
-                print(
-                    "warning: failed to get rwsemaphore from stack frame"
-                    "- information is incomplete"
-                )
-                warned_absent = True
-            continue
+    seen_rwsems: Set[int] = set()
 
+    for task, frame in frame_list:
+        rwsem = get_lock_from_frame(prog, task, frame, "rw_semaphore", "sem")
+        if not rwsem:
+            continue
+        rwsemaddr = rwsem.value_()
         if rwsemaddr in seen_rwsems:
             continue
         seen_rwsems.add(rwsemaddr)
@@ -281,10 +263,9 @@ def show_rwsem_lock(
             print(
                 f"Writer owner ({owner_task.type_.type_name()})0x{owner_task.value_():x}: (pid){owner_task.pid.value_()}"
             )
-            print("")
             if stack:
-                bt(owner_task.pid)
-            print("")
+                bt(owner_task)
+                print("")
         elif owner_type == RwsemStateCode.READER_OWNED:
             # For reader owned rwsems, we can get number of readers in newer kernels( >= v5.3.1).
             # So try to retrieve that info.
@@ -331,7 +312,6 @@ def scan_sem_lock(
     if pid is not None:
         wtask = find_task(prog, pid)
 
-    seen_sems: Set[int] = set()
     functions = [
         "__down",
         "__down_common",
@@ -339,9 +319,9 @@ def scan_sem_lock(
         "__down_killable",
         "__down_timeout",
     ]
-    frame_list = bt_has_any(prog, functions, wtask)
+    frame_list = bt_has_any(prog, functions, wtask, one_per_task=True)
     if frame_list:
-        show_sem_lock(prog, frame_list, seen_sems, stack, time, pid)
+        show_sem_lock(prog, frame_list, stack, time, pid)
 
 
 def scan_rwsem_lock(
@@ -355,16 +335,19 @@ def scan_rwsem_lock(
     if pid is not None:
         wtask = find_task(prog, pid)
 
-    seen_rwsems: Set[int] = set()
     functions = [
         "__rwsem_down_write_failed_common",
         "__rwsem_down_read_failed_common",
+        "rwsem_down_write_failed",
+        "rwsem_down_write_failed_killable",
         "rwsem_down_write_slowpath",
+        "rwsem_down_read_failed",
+        "rwsem_down_read_failed_killable",
         "rwsem_down_read_slowpath",
     ]
-    frame_list = bt_has_any(prog, functions, wtask)
+    frame_list = bt_has_any(prog, functions, wtask, one_per_task=True)
     if frame_list:
-        show_rwsem_lock(prog, frame_list, seen_rwsems, stack, time, pid)
+        show_rwsem_lock(prog, frame_list, stack, time, pid)
 
 
 def scan_lock(
@@ -374,16 +357,13 @@ def scan_lock(
     pid: Optional[int] = None,
 ) -> None:
     """Scan tasks for Mutex and Semaphore"""
-    print("Scanning Mutexes...")
-    print("")
+    print("Scanning Mutexes...\n")
     scan_mutex_lock(prog, stack, time, pid)
 
-    print("Scanning Semaphores...")
-    print("")
+    print("Scanning Semaphores...\n")
     scan_sem_lock(prog, stack, time, pid)
 
-    print("Scanning RWSemaphores...")
-    print("")
+    print("Scanning RWSemaphores...\n")
     scan_rwsem_lock(prog, stack, time, pid)
 
 
@@ -391,7 +371,6 @@ class Locking(CorelensModule):
     """Display active mutex and semaphores and their waiters"""
 
     name = "lock"
-    need_dwarf = True
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
