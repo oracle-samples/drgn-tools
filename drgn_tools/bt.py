@@ -571,21 +571,9 @@ def bt_has_any(
         return _indexed_bt_has_any(prog, funcs)
 
     frame_list = []
-    if task is not None:
-        try:
-            frames = bt_frames(task)
-            for frame in frames:
-                if func_name(prog, frame) in funcs:
-                    frame_list.append((task, frame))
+    tasks = [task] if task is not None else for_each_task(prog)
 
-            return frame_list
-
-        except (FaultError, ValueError):
-            # FaultError: catch unusual unwinding issues
-            # ValueError: catch "cannot unwind stack of running task"
-            pass
-
-    for task in for_each_task(prog):
+    for task in tasks:
         try:
             frames = bt_frames(task)
             for frame in frames:
