@@ -5,6 +5,7 @@ import collections
 import typing as t
 
 import drgn
+from drgn import Architecture
 from drgn import FaultError
 from drgn import Object
 from drgn import Program
@@ -159,6 +160,10 @@ def expand_traces(trace: drgn.StackTrace) -> t.List[drgn.StackTrace]:
     # We should continue appending traces so long as (a) we can find a pt_regs,
     # and (b) the stack pointer for that pt_regs is different than the stack
     # pointer for the current stack.
+    #
+    # NOTE: aarch64 does not guarantee having SP if we're unwinding with frame
+    # pointers. However, trace[0] always has SP, because we generally have a
+    # full register set to start the trace. Thus, this should be safe to test.
     while pt_regs is not None and pt_regs.sp.value_() != trace[0].sp:
         # Interrupted user address.
         if (
@@ -288,9 +293,28 @@ def print_frames(
     :param start_idx: Where to start counting the frame indices from
     :param indent: How many spaces to indent the output
     """
+    # On aarch64 without DWARF, it seems we're not guaranteed to have the stack
+    # pointer, or the frame pointer. Fallback to FP, then NULL, here so we don't
+    # crash during unwinds.
+    if prog.platform.arch == Architecture.AARCH64:
+
+        def get_sp(frame: drgn.StackFrame) -> int:
+            try:
+                return frame.sp
+            except LookupError:
+                try:
+                    return frame.register("fp")
+                except LookupError:
+                    return 0
+
+    else:
+
+        def get_sp(frame: drgn.StackFrame) -> int:
+            return frame.sp
+
     pfx = " " * indent
     for i, frame in enumerate(trace):
-        sp = frame.sp  # drgn 0.0.22
+        sp = get_sp(frame)
         intr = "!" if frame.interrupted else " "
         try:
             pc = hex(frame.pc)
@@ -313,7 +337,7 @@ def print_frames(
         # with a different stack pointer than the previous. That is: only
         # when we reach the frame for a non-inline function. Also, only
         # output registers when we have show_vars=True.
-        if i == len(trace) - 1 or trace[i].sp != trace[i + 1].sp:
+        if i == len(trace) - 1 or sp != get_sp(trace[i + 1]):
             registers = frame.registers()
             regnames = list(registers.keys())
             # This formats the registers in three columns.
