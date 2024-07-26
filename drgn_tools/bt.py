@@ -37,6 +37,15 @@ __all__ = (
 )
 
 
+def func_name(prog: drgn.Program, frame: drgn.StackFrame) -> t.Optional[str]:
+    if frame.name:
+        return frame.name
+    try:
+        return frame.symbol().name
+    except LookupError:
+        return None
+
+
 def frame_name(prog: drgn.Program, frame: drgn.StackFrame) -> str:
     """Return a suitable name for a stack frame"""
     # Looking up the module for an address is currently a bit inefficient, since
@@ -473,7 +482,10 @@ def _index_functions(prog: drgn.Program) -> t.Dict[str, t.Set[int]]:
         try:
             frames = bt_frames(task)
             for frame in frames:
-                func_to_pids[frame.name].add(pid)
+                name = func_name(prog, frame)
+                if not name:
+                    continue
+                func_to_pids[name].add(pid)
         except FaultError:
             # FaultError: catch unusual unwinding issues
             pass
@@ -496,7 +508,8 @@ def _indexed_bt_has_any(
     for pid in pids:
         task = find_task(prog, pid)
         for frame in bt_frames(task):
-            if frame.name in funcs:
+            name = func_name(prog, frame)
+            if name in funcs:
                 result.append((task, frame))
     return result
 
@@ -532,7 +545,7 @@ def bt_has_any(
         try:
             frames = bt_frames(task)
             for frame in frames:
-                if frame.name in funcs:
+                if func_name(prog, frame) in funcs:
                     frame_list.append((task, frame))
 
             return frame_list
@@ -546,7 +559,7 @@ def bt_has_any(
         try:
             frames = bt_frames(task)
             for frame in frames:
-                if frame.name in funcs:
+                if func_name(prog, frame) in funcs:
                     frame_list.append((task, frame))
         except (FaultError, ValueError):
             # FaultError: catch unusual unwinding issues
