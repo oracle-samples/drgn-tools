@@ -373,7 +373,13 @@ def print_frames(
                     raise
             if val.absent_ and not show_absent:
                 continue
-            val_str = val.format_(dereference=False).replace("\n", "\n     ")
+
+            try:
+                val_str = val.format_(dereference=False).replace(
+                    "\n", "\n     "
+                )
+            except FaultError:
+                val_str = "(FaultError occurred while formatting!)"
             print(pfx + " " * 5 + f"{local} = {val_str}")
 
 
