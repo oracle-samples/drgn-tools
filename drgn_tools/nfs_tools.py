@@ -40,12 +40,79 @@ __all__ = (
 """ include/linux/sunrpc/sched.h """
 
 
-class RpcTaskState(BitNumberFlags):
+class RpcTaskState_1(BitNumberFlags):
+    RPC_TASK_RUNNING = 0
+    RPC_TASK_QUEUED = 1
+    RPC_TASK_ACTIVE = 2
+
+
+# 729749bb8da1 SUNRPC: Don't hold the transport lock across socket copy operations
+class RpcTaskState_2(BitNumberFlags):
     RPC_TASK_RUNNING = 0
     RPC_TASK_QUEUED = 1
     RPC_TASK_ACTIVE = 2
     RPC_TASK_MSG_RECV = 3
     RPC_TASK_MSG_RECV_WAIT = 4
+
+
+# 7ebbbc6e7bd0 SUNRPC: Simplify identification of when the message send/receive is complete
+class RpcTaskState_3(BitNumberFlags):
+    RPC_TASK_RUNNING = 0
+    RPC_TASK_QUEUED = 1
+    RPC_TASK_ACTIVE = 2
+    RPC_TASK_NEED_XMIT = 3
+    RPC_TASK_NEED_RECV = 4
+    RPC_TASK_MSG_RECV = 5
+    RPC_TASK_MSG_RECV_WAIT = 6
+
+
+# cf9946cd6144 SUNRPC: Refactor the transport request pinning
+class RpcTaskState_4(BitNumberFlags):
+    RPC_TASK_RUNNING = 0
+    RPC_TASK_QUEUED = 1
+    RPC_TASK_ACTIVE = 2
+    RPC_TASK_NEED_XMIT = 3
+    RPC_TASK_NEED_RECV = 4
+    RPC_TASK_MSG_PIN_WAIT = 5
+
+
+# ae67bd3821bb SUNRPC: Fix up task signalling
+class RpcTaskState_5(BitNumberFlags):
+    RPC_TASK_RUNNING = 0
+    RPC_TASK_QUEUED = 1
+    RPC_TASK_ACTIVE = 2
+    RPC_TASK_NEED_XMIT = 3
+    RPC_TASK_NEED_RECV = 4
+    RPC_TASK_MSG_PIN_WAIT = 5
+    RPC_TASK_SIGNALLED = 6
+
+
+def does_func_exist(prog: drgn.Program, func: str) -> bool:
+    try:
+        prog.symbol(func)
+        return True
+    except LookupError:
+        return False
+
+
+def decode_tk_runstate(prog: drgn.Program, task: Object) -> str:
+    """
+    Given a rpc_task, return the string representation of tk_runstate
+
+    :param task: rpc_task object
+    :returns: tk_runstate decoded as string.
+    """
+
+    if does_func_exist(prog, "xprt_pin_rqst") is False:
+        return RpcTaskState_1.decode(task.tk_runstate.value_())
+    elif does_func_exist(prog, "xprt_request_data_received") is False:
+        return RpcTaskState_2.decode(task.tk_runstate.value_())
+    elif has_member(task.tk_rqstp, "rq_pin") is False:
+        return RpcTaskState_3.decode(task.tk_runstate.value_())
+    elif does_func_exist(prog, "rpc_signal_task") is False:
+        return RpcTaskState_4.decode(task.tk_runstate.value_())
+    else:
+        return RpcTaskState_5.decode(task.tk_runstate.value_())
 
 
 """ include/linux/sunrpc/xprt.h """
@@ -397,10 +464,7 @@ def display_rpc_tasks(
 
         print(
             "     tk_runstate: 0x%x  (%s)"
-            % (
-                task.tk_runstate,
-                RpcTaskState.decode(task.tk_runstate.value_()),
-            )
+            % (task.tk_runstate, decode_tk_runstate(prog, task))
         )
         print(
             "     tk_priority: %d  tk_timeout(ticks): %d  tk_timeouts(major): %d"
