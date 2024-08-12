@@ -36,6 +36,7 @@ def prog() -> drgn.Program:
             from drgn.helpers.linux.ctf import load_ctf
 
             load_ctf(p, path=CTF_FILE)
+            p.cache["using_ctf"] = True
         except ModuleNotFoundError:
             raise Exception("CTF is not supported, cannot run CTF test")
     elif DEBUGINFO:
