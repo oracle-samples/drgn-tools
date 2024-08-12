@@ -473,6 +473,8 @@ def module_has_debuginfo(module: Object) -> bool:
     imperfect heuristic. In the future, drgn will have an API which lets us
     enumerate modules directly query whether it has loaded debuginfo.
     """
+    if module.prog_.cache.get("using_ctf"):
+        return True
     fst = _first_kallsyms_symbol(module)
     if not fst:
         return False

@@ -430,6 +430,7 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Tuple[Program, bool]:
         path = args.ctf or f"/lib/modules/{release}/kernel/vmlinux.ctfa"
         if os.path.isfile(path) and _check_ctf_compat(release, args.vmcore):
             load_ctf(prog, path)
+            prog.cache["using_ctf"] = True
             return prog, True
     except ModuleNotFoundError:
         pass

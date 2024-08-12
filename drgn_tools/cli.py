@@ -90,6 +90,7 @@ def _set_debuginfo(
         ctf_path = _get_ctf_path(release, args)
         if ctf_path and HAVE_CTF:
             load_ctf(prog, ctf_path)
+            prog.cache["using_ctf"] = True
             return "CTF", ctf_path
         elif ctf_path:
             problems.append(
