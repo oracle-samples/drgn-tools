@@ -59,8 +59,17 @@ def test_AddrKind_categorize_data(prog: drgn.Program) -> None:
     assert mm.AddrKind.categorize(prog, rodata) == mm.AddrKind.RODATA
 
     # kernel/panic.c: uninitialized
-    bss = prog.symbol("panic_on_taint").address
-    assert mm.AddrKind.categorize(prog, bss) == mm.AddrKind.BSS
+    try:
+        bss = prog.symbol("panic_on_taint").address
+    except LookupError:
+        # panic_on_taint was added in 5.8, 77cb8f12fc6e9 ("kernel: add
+        # panic_on_taint"), which was backported to stable kernels. Don't fail
+        # the test if it's not found. However, some vmcores in our test suite
+        # are incredibly old UEK versions from before these stable backports.
+        # Don't fail the tests just because this variable is not found.
+        pass
+    else:
+        assert mm.AddrKind.categorize(prog, bss) == mm.AddrKind.BSS
 
     # percpu
     pcpu = prog.symbol("runqueues").address
