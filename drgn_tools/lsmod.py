@@ -74,9 +74,7 @@ def print_module_summary(prog: Program) -> None:
     """Print a list of module details and dependencies"""
     # List all loaded modules
     table_value = []
-    table_value.append(
-        ["MODULE", "NAME", "SIZE", "REF", "DEPENDENDENT MODULES"]
-    )
+    table_value.append(["MODULE", "NAME", "SIZE", "REF", "DEPENDENT MODULES"])
     for mod in KernelModule.all(prog):
         dep_mod = []
         for depuse in for_each_module_use(mod.obj.source_list.address_of_()):
