@@ -531,6 +531,7 @@ def _index_functions(prog: drgn.Program) -> t.Dict[str, t.Set[int]]:
 def _indexed_bt_has_any(
     prog: drgn.Program,
     funcs: t.List[str],
+    one_per_task: bool = False,
 ) -> t.List[t.Tuple[drgn.Object, drgn.StackFrame]]:
     index = prog.cache.get("drgn_tools.bt._index_functions")
     if index is None:
@@ -547,6 +548,9 @@ def _indexed_bt_has_any(
             name = func_name(prog, frame)
             if name in funcs:
                 result.append((task, frame))
+                if one_per_task:
+                    # don't return any more results for this task
+                    break
     return result
 
 
@@ -554,6 +558,7 @@ def bt_has_any(
     prog: drgn.Program,
     funcs: t.List[str],
     task: t.Optional[drgn.Object] = None,
+    one_per_task: bool = False,
 ) -> t.List[t.Tuple[drgn.Object, drgn.StackFrame]]:
     """
     Search for tasks whose stack contains the given functions
@@ -585,6 +590,8 @@ def bt_has_any(
             for frame in frames:
                 if func_name(prog, frame) in funcs:
                     frame_list.append((task, frame))
+                    if one_per_task:
+                        break
         except (FaultError, ValueError):
             # FaultError: catch unusual unwinding issues
             # ValueError: catch "cannot unwind stack of running task"
