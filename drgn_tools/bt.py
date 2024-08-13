@@ -42,7 +42,13 @@ def func_name(prog: drgn.Program, frame: drgn.StackFrame) -> t.Optional[str]:
     if frame.name:
         return frame.name
     try:
-        return frame.symbol().name
+        sym = frame.symbol().name
+        if ".isra." in sym:
+            return sym[: sym.index(".isra.")]
+        elif ".constprop." in sym:
+            return sym[: sym.index(".constprop.")]
+        else:
+            return sym
     except LookupError:
         return None
 
