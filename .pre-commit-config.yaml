@@ -41,5 +41,5 @@ repos:
     rev: 0.1.1
     hooks:
     -   id: copyright-notice
-        exclude: man/.*\.\d.*
+        exclude: (man|doc)/.*
         args: [--notice=.header.txt]
