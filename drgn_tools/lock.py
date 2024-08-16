@@ -65,10 +65,11 @@ def scan_osq_node(prog: Program, verbosity: int = 0) -> None:
 
     :param prog: drgn.Program
     :param verbosity: specify verbosity of report as follows:
-                      0: Show which CPUs are spinning
-                      1: Show which CPUs are spinning and for how long
-                      2: Show spinning CPUs, their spin duration and call stack
-                         till the point of spin
+
+        * ``0`` Show which CPUs are spinning
+        * ``1`` Show which CPUs are spinning and for how long
+        * ``2`` Show spinning CPUs, their spin duration and call stack till the
+          point of spin
     """
 
     osq_spinners: DefaultDict[int, List[int]] = defaultdict(list)

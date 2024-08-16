@@ -123,9 +123,8 @@ def mutex_owner(prog: Program, mutex: drgn.Object) -> drgn.Object:
 
     :param prog: drgn program
     :param mutex: ``struct mutex *``
-    :param : ``struct task_struct *``
-    :returns: ``struct task_struct *`` corresponding to owner,
-              or NULL if there is no owner
+    :returns: ``struct task_struct *`` corresponding to owner, or NULL if there
+        is no owner
     """
 
     try:
