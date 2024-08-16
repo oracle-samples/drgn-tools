@@ -6,6 +6,104 @@ Unreleased
 
 Changes which are committed to git, but not yet released, may appear here.
 
+0.9.1 - Mon, Apr 22, 2023
+-------------------------
+
+* Bugfix: include `drgn_tools/v2` in wheel distributions.
+* Bugfix: fix manual page generation on OL7 RPM build.
+* Regenerate manual page
+
+0.9.0 - Tue, Apr 16, 2023
+-------------------------
+
+This marks the final version before public release! The primary changes have to
+do with release preparation.
+
+### Added
+
+- RPM spec file for packaging
+- Manual page for `corelens`
+- Corelens modules:
+  - `net`
+  - `multipath` (v2 only)
+  - `virtutil` (v2 only)
+- Corelens modules for v2 have been split off into the `drgn_tools.v2` package.
+  They will not be included in the v1 RPM.
+
+### Changed
+
+- The required drgn version is 0.0.25 or 0.0.26.
+- Corelens improvements to user experience:
+  - When run with `-o`, corelens prints each module as it runs, along with
+    runtime. This helps assure that progress is made. The timing information is
+    also included in the report.
+  - Additional information is provided to the user about each module: what
+    kernel moudles it depends on, special debuginfo requirements, etc.
+  - Corelens now checks whether CTF is compatible prior to loading it
+- The `lock` module is improved to index stack traces for much faster runtime.
+- The `lock` module now supports rwsem.
+- The `ps` module has more command line arguments similar to crash's.
+
+
+0.8.0 - Wed, Jan 31, 2023
+-------------------------
+
+Another intermediate release prior to 1.0.0. We have a few new corelens modules,
+and some fixes and general improvements.
+
+### Added
+
+- `slabinfo` corelens module
+- `partitioninfo` corelens module
+- `CtfCompatibility` to automatically detect which UEK kernels are compatible
+  with CTF debuginfo
+
+### Fixed
+
+- `bt` corelens module is more resilient to unwind errors
+- `md` helpers now support kernels containing a92ce0feffee ("md: drop queue
+  limitation for RAID1 and RAID10"), from 5.17
+
+### Changed
+
+- `bt()` function now outputs the task state in `[]` brackets as part of the
+  header
+- `scsiinfo` now outputs more useful fields
+- Several minor improvements to testing infrastructure
+
+0.7.0 - Tue, Jan 9, 2023
+------------------------
+
+This is another intermediate release prior to the anticipated 1.0.0. It contains
+new corelens modules and an improved Corelens CLI, along with some bug and
+performance fixes.
+
+### Added
+
+- Corelens modules & helpers added:
+  - `runq` corelens module
+  - `lsmod` corelens module
+  - `blockinfo` corelens module
+  - `scsiinfo` corelens module
+  - `filecache` corelens module
+
+### Changed
+
+- The `ps` corelens module now supports regular output fields
+- The Corelens CLI has the following changes:
+  - When run without args, shows a usage summary
+  - When run without specifying modules, shows the `sys` output
+  - The `-a` and `-A` arguments are used to run all modules
+  - CTF is loaded automatically when DWARF is unavailable
+- Corelens modules may now be skipped if they don't support live kernels
+
+### Fixed
+
+- Performance issues related to `have_debuginfo()` is greatly reduced, especially
+  when using CTF.
+- Several block & NVME helpers are updated to work with RHCK 9.
+
+
 0.6.0 - Tue, Dec 5, 2023
 ------------------------
 

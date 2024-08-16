@@ -4,11 +4,11 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Index &#8212; drgn-tools v0.6.0 documentation</title>
-    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=4f649999" />
-    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=039e1c02" />
-    <script src="_static/documentation_options.js?v=741c5cc6"></script>
-    <script src="_static/doctools.js?v=888ff710"></script>
+    <title>Index &#8212; drgn-tools v0.9.1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d1102ebc" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=12dfc556" />
+    <script src="_static/documentation_options.js?v=6677775b"></script>
+    <script src="_static/doctools.js?v=9a2dae69"></script>
     <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
     <link rel="icon" href="_static/drgn-tools.png"/>
     <link rel="index" title="Index" href="#" />
@@ -16,8 +16,9 @@
    
   <link rel="stylesheet" href="_static/custom.css" type="text/css" />
   
+
   
-  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+  
 
   </head><body>
   
@@ -66,6 +67,12 @@
 </li>
       <li><a href="api.html#drgn_tools.logging.PrependedLoggerAdapter.add_context">add_context() (drgn_tools.logging.PrependedLoggerAdapter method)</a>
 </li>
+      <li><a href="api.html#drgn_tools.table.FixedTable.add_row">add_row() (drgn_tools.table.FixedTable method)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.table.Table.add_row">(drgn_tools.table.Table method)</a>
+</li>
+      </ul></li>
       <li><a href="api.html#drgn_tools.module.KernelModule.address_region">address_region() (drgn_tools.module.KernelModule method)</a>
 </li>
       <li><a href="api.html#drgn_tools.module.address_to_module">address_to_module() (in module drgn_tools.module)</a>
@@ -77,6 +84,10 @@
       <li><a href="api.html#drgn_tools.module.KernelModule.all">all() (drgn_tools.module.KernelModule class method)</a>
 </li>
       <li><a href="api.html#drgn_tools.corelens.all_corelens_modules">all_corelens_modules() (in module drgn_tools.corelens)</a>
+</li>
+      <li><a href="api.html#drgn_tools.slabinfo.SlabCacheInfo.allocated">allocated (drgn_tools.slabinfo.SlabCacheInfo attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.RwsemStateCode.ANONYMOUSLY_OWNED">ANONYMOUSLY_OWNED (drgn_tools.locking.RwsemStateCode attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.arch">arch (drgn_tools.debuginfo.KernelVersion attribute)</a>
 </li>
@@ -96,17 +107,37 @@
 </li>
       <li><a href="api.html#drgn_tools.module.ModuleLayout.base">base (drgn_tools.module.ModuleLayout attribute)</a>
 </li>
+      <li><a href="api.html#drgn_tools.rds.be16_to_host">be16_to_host() (in module drgn_tools.rds)</a>
+</li>
+      <li><a href="api.html#drgn_tools.rds.be32_to_host">be32_to_host() (in module drgn_tools.rds)</a>
+</li>
+      <li><a href="api.html#drgn_tools.rds.be64_to_host">be64_to_host() (in module drgn_tools.rds)</a>
+</li>
       <li><a href="api.html#drgn_tools.util.BitNumberFlags">BitNumberFlags (class in drgn_tools.util)</a>
+</li>
+      <li><a href="api.html#drgn_tools.block.blkdev_name">blkdev_name() (in module drgn_tools.block)</a>
 </li>
       <li><a href="api.html#drgn_tools.block.blkdev_ro">blkdev_ro() (in module drgn_tools.block)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.block.blkdev_size">blkdev_size() (in module drgn_tools.block)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits.BLOCK_IO_FOR_SUSPEND">BLOCK_IO_FOR_SUSPEND (drgn_tools.dm.DmFlagsBits attribute)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.dm.DmFlagsBitsOld.BLOCK_IO_FOR_SUSPEND">(drgn_tools.dm.DmFlagsBitsOld attribute)</a>
+</li>
+      </ul></li>
       <li><a href="api.html#drgn_tools.mm.AddrKind.BSS">BSS (drgn_tools.mm.AddrKind attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.bt.bt">bt() (in module drgn_tools.bt)</a>
 </li>
       <li><a href="api.html#drgn_tools.bt.bt_frames">bt_frames() (in module drgn_tools.bt)</a>
+</li>
+      <li><a href="api.html#drgn_tools.bt.bt_has">bt_has() (in module drgn_tools.bt)</a>
+</li>
+      <li><a href="api.html#drgn_tools.bt.bt_has_any">bt_has_any() (in module drgn_tools.bt)</a>
 </li>
       <li><a href="api.html#drgn_tools.module.KernelModule.build_id">build_id() (drgn_tools.module.KernelModule method)</a>
 </li>
@@ -116,11 +147,17 @@
 <h2 id="C">C</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.slabinfo.SlabCacheInfo.cache">cache (drgn_tools.slabinfo.SlabCacheInfo attribute)</a>
+</li>
       <li><a href="api.html#drgn_tools.mm.AddrKind.categorize">categorize() (drgn_tools.mm.AddrKind class method)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.check_arg_type">check_arg_type() (in module drgn_tools.task)</a>
 </li>
       <li><a href="api.html#drgn_tools.mm.check_freelists_at_cpu">check_freelists_at_cpu() (in module drgn_tools.mm)</a>
 </li>
       <li><a href="api.html#drgn_tools.cpuinfo.check_smt_enabled">check_smt_enabled() (in module drgn_tools.cpuinfo)</a>
+</li>
+      <li><a href="api.html#drgn_tools.slabinfo.collect_node_info">collect_node_info() (in module drgn_tools.slabinfo)</a>
 </li>
       <li><a href="api.html#drgn_tools.util.SimpleProgress.complete">complete() (drgn_tools.util.SimpleProgress method)</a>
 </li>
@@ -128,13 +165,15 @@
 </li>
       <li><a href="api.html#drgn_tools.corelens.CorelensModule">CorelensModule (class in drgn_tools.corelens)</a>
 </li>
-      <li><a href="api.html#drgn_tools.itertools.count">count() (in module drgn_tools.itertools)</a>
-</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.itertools.count">count() (in module drgn_tools.itertools)</a>
+</li>
       <li><a href="api.html#drgn_tools.dentry.count_dentries_in_hashtable">count_dentries_in_hashtable() (in module drgn_tools.dentry)</a>
 </li>
       <li><a href="api.html#drgn_tools.dentry.count_negative_dentries_in_hashtable">count_negative_dentries_in_hashtable() (in module drgn_tools.dentry)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.count_tasks_in_state">count_tasks_in_state() (in module drgn_tools.task)</a>
 </li>
       <li><a href="api.html#drgn_tools.dentry.count_unused_dentries_in_hashtable">count_unused_dentries_in_hashtable() (in module drgn_tools.dentry)</a>
 </li>
@@ -166,6 +205,22 @@
       </ul></li>
       <li><a href="api.html#drgn_tools.corelens.CorelensModule.default_args">default_args (drgn_tools.corelens.CorelensModule property)</a>
 </li>
+      <li><a href="api.html#drgn_tools.corelens.default_corelens_modules">default_corelens_modules() (in module drgn_tools.corelens)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits.DEFERRED_REMOVE">DEFERRED_REMOVE (drgn_tools.dm.DmFlagsBits attribute)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.dm.DmFlagsBitsOld.DEFERRED_REMOVE">(drgn_tools.dm.DmFlagsBitsOld attribute)</a>
+</li>
+      </ul></li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits.DELETING">DELETING (drgn_tools.dm.DmFlagsBits attribute)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.dm.DmFlagsBitsOld.DELETING">(drgn_tools.dm.DmFlagsBitsOld attribute)</a>
+</li>
+      </ul></li>
+      <li><a href="api.html#drgn_tools.dentry.dentry_for_each_child">dentry_for_each_child() (in module drgn_tools.dentry)</a>
+</li>
       <li><a href="api.html#drgn_tools.dentry.dentry_is_negative">dentry_is_negative() (in module drgn_tools.dentry)</a>
 </li>
       <li><a href="api.html#drgn_tools.dentry.dentry_is_unused">dentry_is_unused() (in module drgn_tools.dentry)</a>
@@ -174,11 +229,23 @@
 </li>
       <li><a href="api.html#drgn_tools.dentry.dentry_path_any_mount">dentry_path_any_mount() (in module drgn_tools.dentry)</a>
 </li>
+      <li><a href="api.html#drgn_tools.dentry.dentry_path_first_mount">dentry_path_first_mount() (in module drgn_tools.dentry)</a>
+</li>
       <li><a href="api.html#drgn_tools.taint.Taint.DIE">DIE (drgn_tools.taint.Taint attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.mm.AddrKind.DIRECT_MAP">DIRECT_MAP (drgn_tools.mm.AddrKind attribute)</a>
 </li>
+      <li><a href="api.html#drgn_tools.dm.dm_flags">dm_flags() (in module drgn_tools.dm)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.dm_table">dm_table() (in module drgn_tools.dm)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.dm_target_name">dm_target_name() (in module drgn_tools.dm)</a>
+</li>
       <li><a href="api.html#drgn_tools.printk.dmesg">dmesg() (in module drgn_tools.printk)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits">DmFlagsBits (class in drgn_tools.dm)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBitsOld">DmFlagsBitsOld (class in drgn_tools.dm)</a>
 </li>
       <li><a href="api.html#drgn_tools.util.download_file">download_file() (in module drgn_tools.util)</a>
 </li>
@@ -267,6 +334,13 @@
 </li>
       </ul></li>
       <li>
+    drgn_tools.dm
+
+      <ul>
+        <li><a href="api.html#module-drgn_tools.dm">module</a>
+</li>
+      </ul></li>
+      <li>
     drgn_tools.ext4_dirlock
 
       <ul>
@@ -294,6 +368,8 @@
         <li><a href="api.html#module-drgn_tools.itertools">module</a>
 </li>
       </ul></li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li>
     drgn_tools.lock
 
@@ -301,8 +377,6 @@
         <li><a href="api.html#module-drgn_tools.lock">module</a>
 </li>
       </ul></li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li>
     drgn_tools.locking
 
@@ -315,6 +389,13 @@
 
       <ul>
         <li><a href="api.html#module-drgn_tools.logging">module</a>
+</li>
+      </ul></li>
+      <li>
+    drgn_tools.lsmod
+
+      <ul>
+        <li><a href="api.html#module-drgn_tools.lsmod">module</a>
 </li>
       </ul></li>
       <li>
@@ -374,6 +455,13 @@
 </li>
       </ul></li>
       <li>
+    drgn_tools.partition
+
+      <ul>
+        <li><a href="api.html#module-drgn_tools.partition">module</a>
+</li>
+      </ul></li>
+      <li>
     drgn_tools.printk
 
       <ul>
@@ -385,6 +473,27 @@
 
       <ul>
         <li><a href="api.html#module-drgn_tools.rds">module</a>
+</li>
+      </ul></li>
+      <li>
+    drgn_tools.runq
+
+      <ul>
+        <li><a href="api.html#module-drgn_tools.runq">module</a>
+</li>
+      </ul></li>
+      <li>
+    drgn_tools.scsi
+
+      <ul>
+        <li><a href="api.html#module-drgn_tools.scsi">module</a>
+</li>
+      </ul></li>
+      <li>
+    drgn_tools.slabinfo
+
+      <ul>
+        <li><a href="api.html#module-drgn_tools.slabinfo">module</a>
 </li>
       </ul></li>
       <li>
@@ -466,7 +575,11 @@
 <h2 id="E">E</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits.EMULATE_ZONE_APPEND">EMULATE_ZONE_APPEND (drgn_tools.dm.DmFlagsBits attribute)</a>
+</li>
       <li><a href="api.html#drgn_tools.module.ensure_debuginfo">ensure_debuginfo() (in module drgn_tools.module)</a>
+</li>
+      <li><a href="api.html#drgn_tools.rds.ensure_mlx_core_ib_debuginfo">ensure_mlx_core_ib_debuginfo() (in module drgn_tools.rds)</a>
 </li>
       <li><a href="api.html#drgn_tools.util.enum_flags_str">enum_flags_str() (in module drgn_tools.util)</a>
 </li>
@@ -474,10 +587,10 @@
 </li>
       <li><a href="api.html#drgn_tools.virtio.VirtioQueueInfo.event">event (drgn_tools.virtio.VirtioQueueInfo attribute)</a>
 </li>
-      <li><a href="api.html#drgn_tools.bt.expand_frames">expand_frames() (in module drgn_tools.bt)</a>
-</li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.bt.expand_frames">expand_frames() (in module drgn_tools.bt)</a>
+</li>
       <li><a href="api.html#drgn_tools.bt.expand_traces">expand_traces() (in module drgn_tools.bt)</a>
 </li>
       <li><a href="api.html#drgn_tools.module.KernelModule.exports">exports() (drgn_tools.module.KernelModule method)</a>
@@ -520,6 +633,8 @@
 </li>
       <li><a href="api.html#drgn_tools.taint.Taint.FIRMWARE_WORKAROUND">FIRMWARE_WORKAROUND (drgn_tools.taint.Taint attribute)</a>
 </li>
+      <li><a href="api.html#drgn_tools.table.FixedTable">FixedTable (class in drgn_tools.table)</a>
+</li>
       <li><a href="api.html#drgn_tools.taint.Taint.FLAGS_COUNT">FLAGS_COUNT (drgn_tools.taint.Taint attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.block.for_each_badblocks">for_each_badblocks() (in module drgn_tools.block)</a>
@@ -540,6 +655,12 @@
 </li>
       <li><a href="api.html#drgn_tools.virtio.for_each_device_virtio">for_each_device_virtio() (in module drgn_tools.virtio)</a>
 </li>
+      <li><a href="api.html#drgn_tools.dm.for_each_dm">for_each_dm() (in module drgn_tools.dm)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.for_each_dm_hash">for_each_dm_hash() (in module drgn_tools.dm)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.for_each_dm_rbtree">for_each_dm_rbtree() (in module drgn_tools.dm)</a>
+</li>
       <li><a href="api.html#drgn_tools.file.for_each_file_system_page_in_pagecache">for_each_file_system_page_in_pagecache() (in module drgn_tools.file)</a>
 </li>
       <li><a href="api.html#drgn_tools.block.for_each_hw_queue">for_each_hw_queue() (in module drgn_tools.block)</a>
@@ -558,14 +679,18 @@
 </li>
       <li><a href="api.html#drgn_tools.module.for_each_module">for_each_module() (in module drgn_tools.module)</a>
 </li>
+      <li><a href="api.html#drgn_tools.lsmod.for_each_module_use">for_each_module_use() (in module drgn_tools.lsmod)</a>
+</li>
       <li><a href="api.html#drgn_tools.block.for_each_mq_pending_request">for_each_mq_pending_request() (in module drgn_tools.block)</a>
+</li>
+      <li><a href="api.html#drgn_tools.nvme.for_each_msi_desc">for_each_msi_desc() (in module drgn_tools.nvme)</a>
 </li>
       <li><a href="api.html#drgn_tools.locking.for_each_mutex_waiter">for_each_mutex_waiter() (in module drgn_tools.locking)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.dentry.for_each_negative_dentry_in_hashtable">for_each_negative_dentry_in_hashtable() (in module drgn_tools.dentry)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.nvme.for_each_nvme_disk">for_each_nvme_disk() (in module drgn_tools.nvme)</a>
 </li>
       <li><a href="api.html#drgn_tools.workqueue.for_each_pending_work">for_each_pending_work() (in module drgn_tools.workqueue)</a>
@@ -596,7 +721,11 @@
 </li>
       <li><a href="api.html#drgn_tools.locking.for_each_rwsem_waiter">for_each_rwsem_waiter() (in module drgn_tools.locking)</a>
 </li>
+      <li><a href="api.html#drgn_tools.locking.for_each_rwsem_waiter_entity">for_each_rwsem_waiter_entity() (in module drgn_tools.locking)</a>
+</li>
       <li><a href="api.html#drgn_tools.block.for_each_sbitmap_set_bit">for_each_sbitmap_set_bit() (in module drgn_tools.block)</a>
+</li>
+      <li><a href="api.html#drgn_tools.scsi.for_each_scsi_host">for_each_scsi_host() (in module drgn_tools.scsi)</a>
 </li>
       <li><a href="api.html#drgn_tools.block.for_each_sq_elevator_rq">for_each_sq_elevator_rq() (in module drgn_tools.block)</a>
 </li>
@@ -610,6 +739,10 @@
 </li>
       <li><a href="api.html#drgn_tools.block.for_each_tag_pending_rq_uek4">for_each_tag_pending_rq_uek4() (in module drgn_tools.block)</a>
 </li>
+      <li><a href="api.html#drgn_tools.task.for_each_task_in_group">for_each_task_in_group() (in module drgn_tools.task)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.for_each_task_in_state">for_each_task_in_state() (in module drgn_tools.task)</a>
+</li>
       <li><a href="api.html#drgn_tools.dentry.for_each_unused_dentry_in_hashtable">for_each_unused_dentry_in_hashtable() (in module drgn_tools.dentry)</a>
 </li>
       <li><a href="api.html#drgn_tools.dentry.for_each_used_dentry_in_hashtable">for_each_used_dentry_in_hashtable() (in module drgn_tools.dentry)</a>
@@ -622,6 +755,8 @@
 </li>
       <li><a href="api.html#drgn_tools.workqueue.for_each_workqueue">for_each_workqueue() (in module drgn_tools.workqueue)</a>
 </li>
+      <li><a href="api.html#drgn_tools.locking.for_osq_owner_and_each_spinner">for_osq_owner_and_each_spinner() (in module drgn_tools.locking)</a>
+</li>
       <li><a href="api.html#drgn_tools.taint.Taint.FORCED_MODULE">FORCED_MODULE (drgn_tools.taint.Taint attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.taint.Taint.FORCED_RMMOD">FORCED_RMMOD (drgn_tools.taint.Taint attribute)</a>
@@ -630,6 +765,18 @@
 </li>
       <li><a href="api.html#drgn_tools.bt.frame_name">frame_name() (in module drgn_tools.bt)</a>
 </li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits.FREEING">FREEING (drgn_tools.dm.DmFlagsBits attribute)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.dm.DmFlagsBitsOld.FREEING">(drgn_tools.dm.DmFlagsBitsOld attribute)</a>
+</li>
+      </ul></li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits.FROZEN">FROZEN (drgn_tools.dm.DmFlagsBits attribute)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.dm.DmFlagsBitsOld.FROZEN">(drgn_tools.dm.DmFlagsBitsOld attribute)</a>
+</li>
+      </ul></li>
   </ul></td>
 </tr></table>
 
@@ -660,6 +807,8 @@
 </li>
       <li><a href="api.html#drgn_tools.cpuinfo.get_itlb_multihit_mitigation">get_itlb_multihit_mitigation() (in module drgn_tools.cpuinfo)</a>
 </li>
+      <li><a href="api.html#drgn_tools.slabinfo.get_kmem_cache_slub_info">get_kmem_cache_slub_info() (in module drgn_tools.slabinfo)</a>
+</li>
       <li><a href="api.html#drgn_tools.cpuinfo.get_l1tf_mitigation">get_l1tf_mitigation() (in module drgn_tools.cpuinfo)</a>
 </li>
       <li><a href="api.html#drgn_tools.logging.get_logger">get_logger() (in module drgn_tools.logging)</a>
@@ -674,17 +823,35 @@
 </li>
       <li><a href="api.html#drgn_tools.mounts.get_mountinfo">get_mountinfo() (in module drgn_tools.mounts)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.locking.get_osq_owner_cpu">get_osq_owner_cpu() (in module drgn_tools.locking)</a>
+</li>
+      <li><a href="api.html#drgn_tools.partition.get_partinfo_from_blkdev_struct">get_partinfo_from_blkdev_struct() (in module drgn_tools.partition)</a>
+</li>
+      <li><a href="api.html#drgn_tools.partition.get_partinfo_from_hd_struct">get_partinfo_from_hd_struct() (in module drgn_tools.partition)</a>
+</li>
       <li><a href="api.html#drgn_tools.numastat.get_per_node_meminfo">get_per_node_meminfo() (in module drgn_tools.numastat)</a>
 </li>
       <li><a href="api.html#drgn_tools.buddyinfo.get_per_zone_buddyinfo">get_per_zone_buddyinfo() (in module drgn_tools.buddyinfo)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.task.get_pid">get_pid() (in module drgn_tools.task)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.get_ppid">get_ppid() (in module drgn_tools.task)</a>
 </li>
       <li><a href="api.html#drgn_tools.cpuinfo.get_retbleed_mitigation">get_retbleed_mitigation() (in module drgn_tools.cpuinfo)</a>
 </li>
       <li><a href="api.html#drgn_tools.task.get_runq_lag">get_runq_lag() (in module drgn_tools.task)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.get_rwsem_info">get_rwsem_info() (in module drgn_tools.locking)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.get_rwsem_owner">get_rwsem_owner() (in module drgn_tools.locking)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.get_rwsem_spinners_info">get_rwsem_spinners_info() (in module drgn_tools.locking)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.get_rwsem_waiter_type">get_rwsem_waiter_type() (in module drgn_tools.locking)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.get_rwsem_waiters_info">get_rwsem_waiters_info() (in module drgn_tools.locking)</a>
 </li>
       <li><a href="api.html#drgn_tools.cpuinfo.get_spectre_v1_mitigation">get_spectre_v1_mitigation() (in module drgn_tools.cpuinfo)</a>
 </li>
@@ -706,9 +873,13 @@
 </li>
       <li><a href="api.html#drgn_tools.task.get_task_arrival_time">get_task_arrival_time() (in module drgn_tools.task)</a>
 </li>
+      <li><a href="api.html#drgn_tools.task.get_task_rss">get_task_rss() (in module drgn_tools.task)</a>
+</li>
       <li><a href="api.html#drgn_tools.util.get_uts">get_uts() (in module drgn_tools.util)</a>
 </li>
       <li><a href="api.html#drgn_tools.virtio.get_virtio_dev_vrings">get_virtio_dev_vrings() (in module drgn_tools.virtio)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.get_vmem">get_vmem() (in module drgn_tools.task)</a>
 </li>
       <li><a href="api.html#drgn_tools.virtio.get_vring_info">get_vring_info() (in module drgn_tools.virtio)</a>
 </li>
@@ -728,6 +899,8 @@
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.scsi.host_module_name">host_module_name() (in module drgn_tools.scsi)</a>
+</li>
       <li><a href="api.html#drgn_tools.util.human_bps">human_bps() (in module drgn_tools.util)</a>
 </li>
       <li><a href="api.html#drgn_tools.util.human_bytes">human_bytes() (in module drgn_tools.util)</a>
@@ -756,15 +929,19 @@
 </li>
       <li><a href="api.html#drgn_tools.irq.irq_in_use">irq_in_use() (in module drgn_tools.irq)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.irq.irq_name_to_desc">irq_name_to_desc() (in module drgn_tools.irq)</a>
 </li>
       <li><a href="api.html#drgn_tools.irq.irq_to_desc">irq_to_desc() (in module drgn_tools.irq)</a>
 </li>
       <li><a href="api.html#drgn_tools.smp.is_call_single_queue_empty">is_call_single_queue_empty() (in module drgn_tools.smp)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.smp.is_cur_csd_pending">is_cur_csd_pending() (in module drgn_tools.smp)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.is_group_leader">is_group_leader() (in module drgn_tools.task)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.is_kthread">is_kthread() (in module drgn_tools.task)</a>
 </li>
       <li><a href="api.html#drgn_tools.block.is_mq">is_mq() (in module drgn_tools.block)</a>
 </li>
@@ -772,9 +949,17 @@
 </li>
       <li><a href="api.html#drgn_tools.bt.is_pt_regs">is_pt_regs() (in module drgn_tools.bt)</a>
 </li>
+      <li><a href="api.html#drgn_tools.locking.is_rwsem_reader_owned">is_rwsem_reader_owned() (in module drgn_tools.locking)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.is_rwsem_writer_owned">is_rwsem_writer_owned() (in module drgn_tools.locking)</a>
+</li>
       <li><a href="api.html#drgn_tools.workqueue.is_task_a_worker">is_task_a_worker() (in module drgn_tools.workqueue)</a>
 </li>
       <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.is_uek">is_uek (drgn_tools.debuginfo.KernelVersion attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.is_ueknext">is_ueknext (drgn_tools.debuginfo.KernelVersion attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.is_user">is_user() (in module drgn_tools.task)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -782,13 +967,21 @@
 <h2 id="K">K</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.module.ParamInfo.kernel_param">kernel_param (drgn_tools.module.ParamInfo attribute)</a>
+</li>
       <li><a href="api.html#drgn_tools.util.kernel_version">kernel_version() (in module drgn_tools.util)</a>
+</li>
+      <li><a href="api.html#drgn_tools.module.KernelModule">KernelModule (class in drgn_tools.module)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
-      <li><a href="api.html#drgn_tools.module.KernelModule">KernelModule (class in drgn_tools.module)</a>
-</li>
       <li><a href="api.html#drgn_tools.debuginfo.KernelVersion">KernelVersion (class in drgn_tools.debuginfo)</a>
+</li>
+      <li><a href="api.html#drgn_tools.slabinfo.kmem_cache_percpu">kmem_cache_percpu() (in module drgn_tools.slabinfo)</a>
+</li>
+      <li><a href="api.html#drgn_tools.slabinfo.kmem_cache_pernode">kmem_cache_pernode() (in module drgn_tools.slabinfo)</a>
+</li>
+      <li><a href="api.html#drgn_tools.slabinfo.kmem_cache_slub_info">kmem_cache_slub_info() (in module drgn_tools.slabinfo)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -806,6 +999,8 @@
 </li>
       <li><a href="api.html#drgn_tools.dentry.list_used_dentries_in_hashtable">list_used_dentries_in_hashtable() (in module drgn_tools.dentry)</a>
 </li>
+      <li><a href="api.html#drgn_tools.corelens.CorelensModule.live_ok">live_ok (drgn_tools.corelens.CorelensModule property)</a>
+</li>
       <li><a href="api.html#drgn_tools.taint.Taint.LIVEPATCH">LIVEPATCH (drgn_tools.taint.Taint attribute)</a>
 </li>
   </ul></td>
@@ -814,8 +1009,6 @@
 </li>
       <li><a href="api.html#drgn_tools.module.load_module_debuginfo">load_module_debuginfo() (in module drgn_tools.module)</a>
 </li>
-      <li><a href="api.html#drgn_tools.nvme.load_modules">load_modules() (in module drgn_tools.nvme)</a>
-</li>
       <li><a href="api.html#drgn_tools.virtio.load_virtio_mods">load_virtio_mods() (in module drgn_tools.virtio)</a>
 </li>
       <li><a href="api.html#drgn_tools.sys.loadavg_str">loadavg_str() (in module drgn_tools.sys)</a>
@@ -823,6 +1016,8 @@
       <li><a href="api.html#drgn_tools.sysctl.look_up_sysctl_entry">look_up_sysctl_entry() (in module drgn_tools.sysctl)</a>
 </li>
       <li><a href="api.html#drgn_tools.module.KernelModule.lookup_address">lookup_address() (drgn_tools.module.KernelModule class method)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dentry.ls">ls() (in module drgn_tools.dentry)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -838,6 +1033,8 @@
         <li><a href="api.html#drgn_tools.corelens.main">(in module drgn_tools.corelens)</a>
 </li>
       </ul></li>
+      <li><a href="api.html#drgn_tools.partition.PartInfo.major">major (drgn_tools.partition.PartInfo attribute)</a>
+</li>
       <li><a href="api.html#drgn_tools.corelens.make_runner">make_runner() (in module drgn_tools.corelens)</a>
 </li>
       <li><a href="api.html#drgn_tools.md.md_pending_writes">md_pending_writes() (in module drgn_tools.md)</a>
@@ -847,6 +1044,10 @@
       <li><a href="api.html#drgn_tools.md.md_pv_name">md_pv_name() (in module drgn_tools.md)</a>
 </li>
       <li><a href="api.html#drgn_tools.md.md_pv_pending_io">md_pv_pending_io() (in module drgn_tools.md)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBitsOld.MERGE_IS_OPTIONAL">MERGE_IS_OPTIONAL (drgn_tools.dm.DmFlagsBitsOld attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.partition.PartInfo.minor">minor (drgn_tools.partition.PartInfo attribute)</a>
 </li>
       <li>
     module
@@ -876,6 +1077,8 @@
 </li>
         <li><a href="api.html#module-drgn_tools.dentry">drgn_tools.dentry</a>
 </li>
+        <li><a href="api.html#module-drgn_tools.dm">drgn_tools.dm</a>
+</li>
         <li><a href="api.html#module-drgn_tools.ext4_dirlock">drgn_tools.ext4_dirlock</a>
 </li>
         <li><a href="api.html#module-drgn_tools.file">drgn_tools.file</a>
@@ -889,6 +1092,8 @@
         <li><a href="api.html#module-drgn_tools.locking">drgn_tools.locking</a>
 </li>
         <li><a href="api.html#module-drgn_tools.logging">drgn_tools.logging</a>
+</li>
+        <li><a href="api.html#module-drgn_tools.lsmod">drgn_tools.lsmod</a>
 </li>
         <li><a href="api.html#module-drgn_tools.md">drgn_tools.md</a>
 </li>
@@ -906,9 +1111,17 @@
 </li>
         <li><a href="api.html#module-drgn_tools.nvme">drgn_tools.nvme</a>
 </li>
+        <li><a href="api.html#module-drgn_tools.partition">drgn_tools.partition</a>
+</li>
         <li><a href="api.html#module-drgn_tools.printk">drgn_tools.printk</a>
 </li>
         <li><a href="api.html#module-drgn_tools.rds">drgn_tools.rds</a>
+</li>
+        <li><a href="api.html#module-drgn_tools.runq">drgn_tools.runq</a>
+</li>
+        <li><a href="api.html#module-drgn_tools.scsi">drgn_tools.scsi</a>
+</li>
+        <li><a href="api.html#module-drgn_tools.slabinfo">drgn_tools.slabinfo</a>
 </li>
         <li><a href="api.html#module-drgn_tools.smp">drgn_tools.smp</a>
 </li>
@@ -941,6 +1154,8 @@
 </li>
       <li><a href="api.html#drgn_tools.module.module_init_region">module_init_region() (in module drgn_tools.module)</a>
 </li>
+      <li><a href="api.html#drgn_tools.module.module_params">module_params() (in module drgn_tools.module)</a>
+</li>
       <li><a href="api.html#drgn_tools.module.module_percpu_region">module_percpu_region() (in module drgn_tools.module)</a>
 </li>
       <li><a href="api.html#drgn_tools.module.module_symbols">module_symbols() (in module drgn_tools.module)</a>
@@ -950,6 +1165,8 @@
       <li><a href="api.html#drgn_tools.module.ModuleLayout">ModuleLayout (class in drgn_tools.module)</a>
 </li>
       <li><a href="api.html#drgn_tools.mounts.mountinfo">mountinfo() (in module drgn_tools.mounts)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.mutex_is_locked">mutex_is_locked() (in module drgn_tools.locking)</a>
 </li>
       <li><a href="api.html#drgn_tools.locking.mutex_owner">mutex_owner() (in module drgn_tools.locking)</a>
 </li>
@@ -964,6 +1181,12 @@
       <ul>
         <li><a href="api.html#drgn_tools.module.KernelModule.name">(drgn_tools.module.KernelModule attribute)</a>
 </li>
+        <li><a href="api.html#drgn_tools.module.ParamInfo.name">(drgn_tools.module.ParamInfo attribute)</a>
+</li>
+        <li><a href="api.html#drgn_tools.partition.PartInfo.name">(drgn_tools.partition.PartInfo attribute)</a>
+</li>
+        <li><a href="api.html#drgn_tools.slabinfo.SlabCacheInfo.name">(drgn_tools.slabinfo.SlabCacheInfo attribute)</a>
+</li>
       </ul></li>
       <li><a href="api.html#drgn_tools.task.nanosecs_to_secs">nanosecs_to_secs() (in module drgn_tools.task)</a>
 </li>
@@ -973,7 +1196,17 @@
 </li>
       <li><a href="api.html#drgn_tools.nfs_tools.nfsshow">nfsshow() (in module drgn_tools.nfs_tools)</a>
 </li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits.NOFLUSH_SUSPENDING">NOFLUSH_SUSPENDING (drgn_tools.dm.DmFlagsBits attribute)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.dm.DmFlagsBitsOld.NOFLUSH_SUSPENDING">(drgn_tools.dm.DmFlagsBitsOld attribute)</a>
+</li>
+      </ul></li>
       <li><a href="api.html#drgn_tools.virtio.VirtioQueueInfo.nr_ent">nr_ent (drgn_tools.virtio.VirtioQueueInfo attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.partition.PartInfo.nr_sects">nr_sects (drgn_tools.partition.PartInfo attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.slabinfo.SlabCacheInfo.nr_slabs">nr_slabs (drgn_tools.slabinfo.SlabCacheInfo attribute)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -982,6 +1215,12 @@
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.module.KernelModule.obj">obj (drgn_tools.module.KernelModule attribute)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.partition.PartInfo.obj">(drgn_tools.partition.PartInfo attribute)</a>
+</li>
+      </ul></li>
+      <li><a href="api.html#drgn_tools.slabinfo.SlabCacheInfo.objsize">objsize (drgn_tools.slabinfo.SlabCacheInfo attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.ol_update">ol_update (drgn_tools.debuginfo.KernelVersion attribute)</a>
 </li>
@@ -995,7 +1234,11 @@
 </li>
       <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.original">original (drgn_tools.debuginfo.KernelVersion attribute)</a>
 </li>
+      <li><a href="api.html#drgn_tools.locking.osq_is_locked">osq_is_locked() (in module drgn_tools.locking)</a>
+</li>
       <li><a href="api.html#drgn_tools.taint.Taint.OVERRIDDEN_ACPI_TABLE">OVERRIDDEN_ACPI_TABLE (drgn_tools.taint.Taint attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.RwsemStateCode.OWNER_TYPE_UNKNOWN">OWNER_TYPE_UNKNOWN (drgn_tools.locking.RwsemStateCode attribute)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -1003,7 +1246,15 @@
 <h2 id="P">P</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.module.ParamInfo">ParamInfo (class in drgn_tools.module)</a>
+</li>
+      <li><a href="api.html#drgn_tools.module.KernelModule.params">params() (drgn_tools.module.KernelModule method)</a>
+</li>
       <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.parse">parse() (drgn_tools.debuginfo.KernelVersion class method)</a>
+</li>
+      <li><a href="api.html#drgn_tools.partition.PartInfo">PartInfo (class in drgn_tools.partition)</a>
+</li>
+      <li><a href="api.html#drgn_tools.util.per_cpu_owner">per_cpu_owner() (in module drgn_tools.util)</a>
 </li>
       <li><a href="api.html#drgn_tools.mm.AddrKind.PERCPU">PERCPU (drgn_tools.mm.AddrKind attribute)</a>
 </li>
@@ -1011,9 +1262,13 @@
 </li>
       <li><a href="api.html#drgn_tools.module.KernelModule.percpu_region">percpu_region() (drgn_tools.module.KernelModule method)</a>
 </li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits.POST_SUSPENDING">POST_SUSPENDING (drgn_tools.dm.DmFlagsBits attribute)</a>
+</li>
       <li><a href="api.html#drgn_tools.logging.PrependedLoggerAdapter">PrependedLoggerAdapter (class in drgn_tools.logging)</a>
 </li>
       <li><a href="api.html#drgn_tools.irq.print_all_irqs">print_all_irqs() (in module drgn_tools.irq)</a>
+</li>
+      <li><a href="api.html#drgn_tools.block.print_block_devs_info">print_block_devs_info() (in module drgn_tools.block)</a>
 </li>
       <li><a href="api.html#drgn_tools.cpuinfo.print_cpu_info">print_cpu_info() (in module drgn_tools.cpuinfo)</a>
 </li>
@@ -1029,9 +1284,19 @@
 </li>
       <li><a href="api.html#drgn_tools.irq.print_irqs_affinities">print_irqs_affinities() (in module drgn_tools.irq)</a>
 </li>
+      <li><a href="api.html#drgn_tools.lsmod.print_module_parameters">print_module_parameters() (in module drgn_tools.lsmod)</a>
+</li>
+      <li><a href="api.html#drgn_tools.lsmod.print_module_summary">print_module_summary() (in module drgn_tools.lsmod)</a>
+</li>
+      <li><a href="api.html#drgn_tools.rds.print_mr_list_head_info">print_mr_list_head_info() (in module drgn_tools.rds)</a>
+</li>
+      <li><a href="api.html#drgn_tools.partition.print_partition_info">print_partition_info() (in module drgn_tools.partition)</a>
+</li>
       <li><a href="api.html#drgn_tools.util.SimpleProgress.print_report">print_report() (drgn_tools.util.SimpleProgress method)</a>
 </li>
-      <li><a href="api.html#drgn_tools.table.print_row">print_row() (in module drgn_tools.table)</a>
+      <li><a href="api.html#drgn_tools.scsi.print_scsi_hosts">print_scsi_hosts() (in module drgn_tools.scsi)</a>
+</li>
+      <li><a href="api.html#drgn_tools.slabinfo.print_slab_info">print_slab_info() (in module drgn_tools.slabinfo)</a>
 </li>
       <li><a href="api.html#drgn_tools.sysctl.print_sysctl_table">print_sysctl_table() (in module drgn_tools.sysctl)</a>
 </li>
@@ -1069,6 +1334,8 @@
 </li>
       <li><a href="api.html#drgn_tools.rds.rds_get_ib_conn_info">rds_get_ib_conn_info() (in module drgn_tools.rds)</a>
 </li>
+      <li><a href="api.html#drgn_tools.rds.rds_get_mr_list_info">rds_get_mr_list_info() (in module drgn_tools.rds)</a>
+</li>
       <li><a href="api.html#drgn_tools.rds.rds_get_stats">rds_get_stats() (in module drgn_tools.rds)</a>
 </li>
       <li><a href="api.html#drgn_tools.rds.rds_ib_conn_ring_info">rds_ib_conn_ring_info() (in module drgn_tools.rds)</a>
@@ -1079,31 +1346,45 @@
 </li>
       <li><a href="api.html#drgn_tools.rds.rds_ip_state_list">rds_ip_state_list() (in module drgn_tools.rds)</a>
 </li>
+      <li><a href="api.html#drgn_tools.rds.rds_print_msg_queue">rds_print_msg_queue() (in module drgn_tools.rds)</a>
+</li>
+      <li><a href="api.html#drgn_tools.rds.rds_print_recv_msg_queue">rds_print_recv_msg_queue() (in module drgn_tools.rds)</a>
+</li>
+      <li><a href="api.html#drgn_tools.rds.rds_print_send_retrans_msg_queue">rds_print_send_retrans_msg_queue() (in module drgn_tools.rds)</a>
+</li>
       <li><a href="api.html#drgn_tools.rds.rds_sk_rcvbuf">rds_sk_rcvbuf() (in module drgn_tools.rds)</a>
 </li>
       <li><a href="api.html#drgn_tools.rds.rds_sk_sndbuf">rds_sk_sndbuf() (in module drgn_tools.rds)</a>
 </li>
       <li><a href="api.html#drgn_tools.rds.rds_sock_info">rds_sock_info() (in module drgn_tools.rds)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.rds.rds_stats">rds_stats() (in module drgn_tools.rds)</a>
 </li>
       <li><a href="api.html#drgn_tools.rds.RdsIbConnInfo">RdsIbConnInfo (class in drgn_tools.rds)</a>
 </li>
+      <li><a href="api.html#drgn_tools.locking.RwsemStateCode.READER_OWNED">READER_OWNED (drgn_tools.locking.RwsemStateCode attribute)</a>
+</li>
       <li><a href="api.html#drgn_tools.util.redirect_stdout">redirect_stdout() (in module drgn_tools.util)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.release">release (drgn_tools.debuginfo.KernelVersion attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.release_tuple">release_tuple (drgn_tools.debuginfo.KernelVersion attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.rds.report">report() (in module drgn_tools.rds)</a>
 </li>
       <li><a href="api.html#drgn_tools.block.request_target">request_target() (in module drgn_tools.block)</a>
+</li>
+      <li><a href="api.html#drgn_tools.partition.PartInfo.ro">ro (drgn_tools.partition.PartInfo attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.module.ModuleLayout.ro_after_init_size">ro_after_init_size (drgn_tools.module.ModuleLayout attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.module.ModuleLayout.ro_size">ro_size (drgn_tools.module.ModuleLayout attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.mm.AddrKind.RODATA">RODATA (drgn_tools.mm.AddrKind attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.table.Table.row">row() (drgn_tools.table.Table method)</a>
 </li>
       <li><a href="api.html#drgn_tools.block.rq_flags">rq_flags() (in module drgn_tools.block)</a>
 </li>
@@ -1113,7 +1394,13 @@
 </li>
       <li><a href="api.html#drgn_tools.block.rq_op_old">rq_op_old() (in module drgn_tools.block)</a>
 </li>
-      <li><a href="api.html#drgn_tools.block.rq_pending_time_ms">rq_pending_time_ms() (in module drgn_tools.block)</a>
+      <li><a href="api.html#drgn_tools.block.rq_pending_time_ns">rq_pending_time_ns() (in module drgn_tools.block)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.TaskRss.rss_anon">rss_anon (drgn_tools.task.TaskRss attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.TaskRss.rss_file">rss_file (drgn_tools.task.TaskRss attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.TaskRss.rss_shmem">rss_shmem (drgn_tools.task.TaskRss attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.corelens.CorelensModule.run">run() (drgn_tools.corelens.CorelensModule method)</a>
 
@@ -1121,7 +1408,15 @@
         <li><a href="api.html#drgn_tools.corelens.run">(in module drgn_tools.corelens)</a>
 </li>
       </ul></li>
+      <li><a href="api.html#drgn_tools.runq.run_queue">run_queue() (in module drgn_tools.runq)</a>
+</li>
+      <li><a href="api.html#drgn_tools.corelens.CorelensModule.run_when">run_when (drgn_tools.corelens.CorelensModule property)</a>
+</li>
       <li><a href="api.html#drgn_tools.task.runq_clock">runq_clock() (in module drgn_tools.task)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.rwsem_has_spinner">rwsem_has_spinner() (in module drgn_tools.locking)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.RwsemStateCode">RwsemStateCode (class in drgn_tools.locking)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -1134,6 +1429,10 @@
       <li><a href="api.html#drgn_tools.lock.scan_lock">scan_lock() (in module drgn_tools.lock)</a>
 </li>
       <li><a href="api.html#drgn_tools.lock.scan_mutex_lock">scan_mutex_lock() (in module drgn_tools.lock)</a>
+</li>
+      <li><a href="api.html#drgn_tools.lock.scan_osq_node">scan_osq_node() (in module drgn_tools.lock)</a>
+</li>
+      <li><a href="api.html#drgn_tools.lock.scan_rwsem_lock">scan_rwsem_lock() (in module drgn_tools.lock)</a>
 </li>
       <li><a href="api.html#drgn_tools.lock.scan_sem_lock">scan_sem_lock() (in module drgn_tools.lock)</a>
 </li>
@@ -1155,6 +1454,10 @@
 </li>
       <li><a href="api.html#drgn_tools.nvme.show_ctrl_info">show_ctrl_info() (in module drgn_tools.nvme)</a>
 </li>
+      <li><a href="api.html#drgn_tools.dm.show_dm">show_dm() (in module drgn_tools.dm)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.show_dm_table">show_dm_table() (in module drgn_tools.dm)</a>
+</li>
       <li><a href="api.html#drgn_tools.irq.show_each_cpu_irq_stats">show_each_cpu_irq_stats() (in module drgn_tools.irq)</a>
 </li>
       <li><a href="api.html#drgn_tools.nvme.show_firmware_info">show_firmware_info() (in module drgn_tools.nvme)</a>
@@ -1171,8 +1474,6 @@
 </li>
       <li><a href="api.html#drgn_tools.md.show_md_pv">show_md_pv() (in module drgn_tools.md)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.md.show_md_pv_badblocks">show_md_pv_badblocks() (in module drgn_tools.md)</a>
 </li>
       <li><a href="api.html#drgn_tools.nvme.show_msi_mask">show_msi_mask() (in module drgn_tools.nvme)</a>
@@ -1181,6 +1482,8 @@
 </li>
       <li><a href="api.html#drgn_tools.nvme.show_ns_info">show_ns_info() (in module drgn_tools.nvme)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.workqueue.show_one_worker_pool">show_one_worker_pool() (in module drgn_tools.workqueue)</a>
 </li>
       <li><a href="api.html#drgn_tools.workqueue.show_one_workqueue">show_one_workqueue() (in module drgn_tools.workqueue)</a>
@@ -1201,7 +1504,15 @@
 </li>
       <li><a href="api.html#drgn_tools.nfs_tools.show_rpc_xprts">show_rpc_xprts() (in module drgn_tools.nfs_tools)</a>
 </li>
+      <li><a href="api.html#drgn_tools.block.show_rq_issued_cpu">show_rq_issued_cpu() (in module drgn_tools.block)</a>
+</li>
+      <li><a href="api.html#drgn_tools.lock.show_rwsem_lock">show_rwsem_lock() (in module drgn_tools.lock)</a>
+</li>
       <li><a href="api.html#drgn_tools.lock.show_sem_lock">show_sem_lock() (in module drgn_tools.lock)</a>
+</li>
+      <li><a href="api.html#drgn_tools.dm.show_table_linear">show_table_linear() (in module drgn_tools.dm)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.show_taskinfo">show_taskinfo() (in module drgn_tools.task)</a>
 </li>
       <li><a href="api.html#drgn_tools.task.show_tasks_last_runtime">show_tasks_last_runtime() (in module drgn_tools.task)</a>
 </li>
@@ -1209,10 +1520,32 @@
 </li>
       <li><a href="api.html#drgn_tools.corelens.CorelensModule.skip_unless_have_kmod">skip_unless_have_kmod (drgn_tools.corelens.CorelensModule property)</a>
 </li>
+      <li><a href="api.html#drgn_tools.slabinfo.SlabCacheInfo">SlabCacheInfo (class in drgn_tools.slabinfo)</a>
+</li>
+      <li><a href="api.html#drgn_tools.slabinfo.slub_get_cpu_freelist_cnt">slub_get_cpu_freelist_cnt() (in module drgn_tools.slabinfo)</a>
+</li>
+      <li><a href="api.html#drgn_tools.slabinfo.slub_per_cpu_partial_free">slub_per_cpu_partial_free() (in module drgn_tools.slabinfo)</a>
+</li>
       <li><a href="api.html#drgn_tools.taint.Taint.SOFTLOCKUP">SOFTLOCKUP (drgn_tools.taint.Taint attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.slabinfo.SlabCacheInfo.ssize">ssize (drgn_tools.slabinfo.SlabCacheInfo attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.partition.PartInfo.start_sect">start_sect (drgn_tools.partition.PartInfo attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.util.SimpleProgress.step">step() (drgn_tools.util.SimpleProgress method)</a>
 </li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits.SUSPENDED">SUSPENDED (drgn_tools.dm.DmFlagsBits attribute)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.dm.DmFlagsBitsOld.SUSPENDED">(drgn_tools.dm.DmFlagsBitsOld attribute)</a>
+</li>
+      </ul></li>
+      <li><a href="api.html#drgn_tools.dm.DmFlagsBits.SUSPENDED_INTERNALLY">SUSPENDED_INTERNALLY (drgn_tools.dm.DmFlagsBits attribute)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.dm.DmFlagsBitsOld.SUSPENDED_INTERNALLY">(drgn_tools.dm.DmFlagsBitsOld attribute)</a>
+</li>
+      </ul></li>
       <li><a href="api.html#drgn_tools.module.KernelModule.symbols">symbols() (drgn_tools.module.KernelModule method)</a>
 </li>
   </ul></td>
@@ -1221,6 +1554,10 @@
 <h2 id="T">T</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.table.Table">Table (class in drgn_tools.table)</a>
+</li>
+      <li><a href="api.html#drgn_tools.locking.tail_osq_node_to_spinners">tail_osq_node_to_spinners() (in module drgn_tools.locking)</a>
+</li>
       <li><a href="api.html#drgn_tools.taint.Taint">Taint (class in drgn_tools.taint)</a>
 </li>
       <li><a href="api.html#drgn_tools.itertools.take">take() (in module drgn_tools.itertools)</a>
@@ -1231,7 +1568,13 @@
 </li>
       <li><a href="api.html#drgn_tools.task.task_lastrun2now">task_lastrun2now() (in module drgn_tools.task)</a>
 </li>
+      <li><a href="api.html#drgn_tools.task.task_state">task_state() (in module drgn_tools.task)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.task_state_constants">task_state_constants() (in module drgn_tools.task)</a>
+</li>
       <li><a href="api.html#drgn_tools.task.task_thread_info">task_thread_info() (in module drgn_tools.task)</a>
+</li>
+      <li><a href="api.html#drgn_tools.task.TaskRss">TaskRss (class in drgn_tools.task)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
@@ -1239,15 +1582,27 @@
 </li>
       <li><a href="api.html#drgn_tools.module.ModuleLayout.text_size">text_size (drgn_tools.module.ModuleLayout attribute)</a>
 </li>
-      <li><a href="api.html#drgn_tools.locking.timestamp_str">timestamp_str() (in module drgn_tools.locking)</a>
+      <li><a href="api.html#drgn_tools.util.timestamp_str">timestamp_str() (in module drgn_tools.util)</a>
 </li>
       <li><a href="api.html#drgn_tools.util.to_binary_units">to_binary_units() (in module drgn_tools.util)</a>
 </li>
+      <li><a href="api.html#drgn_tools.slabinfo.SlabCacheInfo.total">total (drgn_tools.slabinfo.SlabCacheInfo attribute)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.task.TaskRss.total">(drgn_tools.task.TaskRss property)</a>
+</li>
+      </ul></li>
       <li><a href="api.html#drgn_tools.module.ModuleLayout.total_size">total_size (drgn_tools.module.ModuleLayout attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.mm.totalram_pages">totalram_pages() (in module drgn_tools.mm)</a>
 </li>
       <li><a href="api.html#drgn_tools.util.type_exists">type_exists() (in module drgn_tools.util)</a>
+</li>
+      <li><a href="api.html#drgn_tools.util.type_has_member">type_has_member() (in module drgn_tools.util)</a>
+</li>
+      <li><a href="api.html#drgn_tools.util.type_lookup_conflict">type_lookup_conflict() (in module drgn_tools.util)</a>
+</li>
+      <li><a href="api.html#drgn_tools.module.ParamInfo.type_name">type_name (drgn_tools.module.ParamInfo attribute)</a>
 </li>
   </ul></td>
 </tr></table>
@@ -1257,12 +1612,16 @@
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.util.uek4_radix_tree_lookup">uek4_radix_tree_lookup() (in module drgn_tools.util)</a>
 </li>
+      <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.uek_version">uek_version (drgn_tools.debuginfo.KernelVersion attribute)</a>
+</li>
       <li><a href="api.html#drgn_tools.module.KernelModule.unified_symbols">unified_symbols() (drgn_tools.module.KernelModule method)</a>
 </li>
       <li><a href="api.html#drgn_tools.mm.AddrKind.UNKNOWN">UNKNOWN (drgn_tools.mm.AddrKind attribute)</a>
 </li>
   </ul></td>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.locking.RwsemStateCode.UNLOCKED">UNLOCKED (drgn_tools.locking.RwsemStateCode attribute)</a>
+</li>
       <li><a href="api.html#drgn_tools.taint.Taint.UNSIGNED_MODULE">UNSIGNED_MODULE (drgn_tools.taint.Taint attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.virtio.VirtioQueueInfo.used_idx">used_idx (drgn_tools.virtio.VirtioQueueInfo attribute)</a>
@@ -1279,7 +1638,13 @@
 <h2 id="V">V</h2>
 <table style="width: 100%" class="indextable genindextable"><tr>
   <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.module.ParamInfo.value">value (drgn_tools.module.ParamInfo attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.corelens.CorelensModule.verbose_args">verbose_args (drgn_tools.corelens.CorelensModule property)</a>
+</li>
       <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.version">version (drgn_tools.debuginfo.KernelVersion attribute)</a>
+</li>
+      <li><a href="api.html#drgn_tools.debuginfo.KernelVersion.version_tuple">version_tuple (drgn_tools.debuginfo.KernelVersion attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.virtio.virtio_devices_show">virtio_devices_show() (in module drgn_tools.virtio)</a>
 </li>
@@ -1287,12 +1652,12 @@
 </li>
       <li><a href="api.html#drgn_tools.virtio.VirtioQueueInfo">VirtioQueueInfo (class in drgn_tools.virtio)</a>
 </li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.mm.AddrKind.VMALLOC">VMALLOC (drgn_tools.mm.AddrKind attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.mm.AddrKind.VMEMMAP">VMEMMAP (drgn_tools.mm.AddrKind attribute)</a>
 </li>
-  </ul></td>
-  <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.virtio.VirtioQueueInfo.vq_address">vq_address (drgn_tools.virtio.VirtioQueueInfo attribute)</a>
 </li>
       <li><a href="api.html#drgn_tools.virtio.VirtioQueueInfo.vq_name">vq_name (drgn_tools.virtio.VirtioQueueInfo attribute)</a>
@@ -1313,6 +1678,18 @@
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.taint.Taint.WARN">WARN (drgn_tools.taint.Taint attribute)</a>
 </li>
+      <li><a href="api.html#drgn_tools.workqueue.workqueue_get_pwq">workqueue_get_pwq() (in module drgn_tools.workqueue)</a>
+</li>
+  </ul></td>
+  <td style="width: 33%; vertical-align: top;"><ul>
+      <li><a href="api.html#drgn_tools.table.FixedTable.write">write() (drgn_tools.table.FixedTable method)</a>
+
+      <ul>
+        <li><a href="api.html#drgn_tools.table.Table.write">(drgn_tools.table.Table method)</a>
+</li>
+      </ul></li>
+      <li><a href="api.html#drgn_tools.locking.RwsemStateCode.WRITER_OWNED">WRITER_OWNED (drgn_tools.locking.RwsemStateCode attribute)</a>
+</li>
   </ul></td>
 </tr></table>
 
@@ -1325,6 +1702,8 @@
   <td style="width: 33%; vertical-align: top;"><ul>
       <li><a href="api.html#drgn_tools.cpuinfo.x86_get_cpu_mitigations">x86_get_cpu_mitigations() (in module drgn_tools.cpuinfo)</a>
 </li>
+      <li><a href="api.html#drgn_tools.cpuinfo.x86_get_per_node_cpulist">x86_get_per_node_cpulist() (in module drgn_tools.cpuinfo)</a>
+</li>
   </ul></td>
 </tr></table>
 
@@ -1334,10 +1713,10 @@
           
         </div>
       </div>
-      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
         <div class="sphinxsidebarwrapper">
             <p class="logo"><a href="index.html">
-              <img class="logo" src="_static/drgn-tools.png" alt="Logo"/>
+              <img class="logo" src="_static/drgn-tools.png" alt="Logo of drgn-tools"/>
             </a></p>
 <h1 class="logo"><a href="index.html">drgn-tools</a></h1>
 
@@ -1354,6 +1733,7 @@
 <li class="toctree-l1"><a class="reference internal" href="code-quality.html">Contributing: Code Quality Guidelines</a></li>
 <li class="toctree-l1"><a class="reference internal" href="testing.html">Contributing: Testing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="corelens.html">CORELENS(1)</a></li>
 </ul>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="changelog.html">Changelog</a></li>
@@ -1366,7 +1746,7 @@
   </ul></li>
 </ul>
 </div>
-<div id="searchbox" style="display: none" role="search">
+<search id="searchbox" style="display: none" role="search">
   <h3 id="searchlabel">Quick search</h3>
     <div class="searchformwrapper">
     <form class="search" action="search.html" method="get">
@@ -1374,7 +1754,7 @@
       <input type="submit" value="Go" />
     </form>
     </div>
-</div>
+</search>
 <script>document.getElementById('searchbox').style.display = "block"</script>
 
 
@@ -1389,11 +1769,11 @@
       <div class="clearer"></div>
     </div>
     <div class="footer">
-      &copy;2023, Oracle and/or its affiliates.
+      &#169;2023, Oracle and/or its affiliates.
       
       |
-      Powered by <a href="http://sphinx-doc.org/">Sphinx 7.2.6</a>
-      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.13</a>
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 7.4.7</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 0.7.16</a>
       
     </div>
 

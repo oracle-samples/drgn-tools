@@ -17,6 +17,7 @@ Contents
    code-quality.rst
    testing.rst
    api.rst
+   corelens.rst
 
 .. toctree::
    :maxdepth: 1

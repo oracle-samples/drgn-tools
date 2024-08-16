@@ -1,0 +1,342 @@
+<HTML><HEAD><TITLE>Manpage of CORELENS</TITLE>
+</HEAD><BODY>
+<H1>CORELENS</H1>
+Section: Misc. Reference Manual Pages (1)<BR>Updated: 2024-04-19<BR><A HREF="#index">Index</A>
+<A HREF="/man/man2html">Return to Main Contents</A><HR>
+
+<P>
+
+<P>
+
+<A NAME="lbAB">&nbsp;</A>
+<H2>NAME</H2>
+
+<P>
+
+corelens - extract diagnostic info from the running kernel or core dump
+<P>
+
+<A NAME="lbAC">&nbsp;</A>
+<H2>SYNOPSIS</H2>
+
+<P>
+
+Generate a corelens report:
+<P>
+
+<DL COMPACT><DT><DD>
+<B>corelens</B> [-o OUT] <I>VMCORE</I> [-a | -A]
+<P>
+
+</DL>
+
+Run specified modules:
+<P>
+
+<DL COMPACT><DT><DD>
+<B>corelens</B> [-o OUT] <I>VMCORE</I> [-M MODULE [options] [-M MODULE ...]]
+<P>
+
+</DL>
+
+Get help:
+<P>
+
+<DL COMPACT><DT><DD>
+<B>corelens -h</B>
+<P>
+
+<B>corelens -L</B>
+<P>
+
+<B>corelens -M</B> <I>MODULE</I> <B>-h</B>
+<P>
+
+</DL>
+
+<A NAME="lbAD">&nbsp;</A>
+<H2>DESCRIPTION</H2>
+
+<P>
+
+Corelens is a tool which can extract diagnostic information from the Linux
+kernel image specified by <I>VMCORE</I>. To extract diagnostic information from the
+running kernel, &quot;/proc/kcore&quot; should be provided.  Its functionality is grouped
+into <I>modules</I>, each one producing diagnostic information about a specific
+kernel subsystem.
+<P>
+
+Corelens may be run in two modes: generating a report, or running specified
+modules. When generating a report, corelens will run a collection of default
+modules, with default arguments. Alternatively, the user may run a list of
+specified modules. Each module must be specified on the command line with
+<B>-M</B> <I>MODULE</I>, and any subsequent argument (up to the next <B>-M</B>) is handled by
+<I>MODULE</I>.
+<P>
+
+By default, corelens produces output on stdout. However, with <B>-o</B>, output may
+be stored in a directory, where each module's output is contained in a separate
+file. This mode is useful when preparing a report to send to Oracle Linux
+Support.
+<P>
+
+<A NAME="lbAE">&nbsp;</A>
+<H2>OPTIONS</H2>
+
+<P>
+
+<I>VMCORE</I>
+<DL COMPACT><DT><DD>
+The kernel image to run against. Specify &quot;/proc/kcore&quot; for the running
+kernel. This argument is required, unless using <B>-h</B> to get help, or
+<B>-L</B> to list corelens modules.
+<P>
+
+</DL>
+
+<B>--output-directory</B> <I>OUT</I>, <B>-o</B> <I>OUT</I>
+<DL COMPACT><DT><DD>
+Write each module's output to a correspondingly named file within the
+<I>OUT</I> directory. The directory <I>OUT</I> will be created if it does not
+exist.
+<P>
+
+</DL>
+
+<B>Mode selection:</B>
+<P>
+
+<DL COMPACT><DT><DD>
+The following options are mutually exclusive.
+<P>
+
+<B>-a</B>
+<DL COMPACT><DT><DD>
+When specified, this runs the default corelens report, which should be
+sufficient for most cases. All standard modules are selected to be run
+with their default arguments. Modules which are not applicable (e.g.
+because the subsystem is not loaded or active) are skipped.
+<P>
+
+</DL>
+
+<B>-A</B>
+<DL COMPACT><DT><DD>
+When specified, this runs the detailed corelens report. This selects all
+modules, including those which are not run by <B>-a</B>. These detailed
+modules may produce larger amounts of output, or require a longer
+runtime. The standard report provided by <B>-a</B> should be preferred.
+<P>
+
+</DL>
+
+<B>-M</B> <I>MODULE</I> [...]
+<DL COMPACT><DT><DD>
+Specify a corelens module to run, providing optional arguments to the
+module itself. All command-line arguments following this one are
+provided to the module, up to the next <B>-M</B> option.
+<P>
+
+As a special case, when using <B>-h</B> to get help on a module's
+output, <I>VMCORE</I> is not required.
+<P>
+
+</DL>
+
+<B>-L</B>
+<DL COMPACT><DT><DD>
+List all modules and exit. <I>VMCORE</I> is not required.
+<P>
+
+</DL>
+
+As a special case, when corelens is run without any of the above mode
+selection arguments, it runs the &quot;sys&quot; corelens module (as if the
+arguments provided were: <B>-M sys</B>).
+<P>
+
+</DL>
+
+<B>Debuginfo Selection:</B>
+<P>
+
+<DL COMPACT><DT><DD>
+The following options disable the standard behavior for searching for
+debuginfo, and manually provide it. They are not required. They are
+mutually exclusive to each other.
+<P>
+
+<B>--ctf</B> <I>CTF</I>
+<DL COMPACT><DT><DD>
+Corelens will manually load the CTF file <I>CTF</I>.
+<P>
+
+</DL>
+
+<B>--debuginfo</B> <I>DEBUGINFO</I>, <B>-d</B> <I>DEBUGINFO</I>
+<DL COMPACT><DT><DD>
+Corelens will search for DWARF debuginfo within the directory
+<I>DEBUGINFO</I>, which should contain a &quot;vmlinux&quot; file as well as
+&quot;.ko.debug&quot; files for each relevant kernel module.
+<P>
+
+</DL>
+
+</DL>
+
+<A NAME="lbAF">&nbsp;</A>
+<H2>DEBUGINFO</H2>
+
+<P>
+
+In order to produce diagnostic information, corelens requires some form of
+debugging information for <I>VMCORE</I>. There are two possibilities:
+<P>
+
+<B>DWARF</B>
+<DL COMPACT><DT><DD>
+DWARF information is the most detailed option, but it requires that the
+<B>debuginfo</B> package corresponding to <I>VMCORE</I> (or the running kernel) is
+installed. When DWARF information is available, corelens can provide
+more detailed stack traces, and some modules only work when DWARF is
+available.
+<P>
+
+</DL>
+
+<B>CTF</B>
+<DL COMPACT><DT><DD>
+CTF (Compact Type Format) is a lightweight type format. For Oracle UEK
+kernels (<B>kernel-uek</B>), CTF is always available.
+<P>
+
+</DL>
+
+Corelens automatically searches for debuginfo at startup. It prefers DWARF when
+available, and uses CTF as a second choice. The search may be overridden by
+using the options <B>--ctf</B> or <B>--debuginfo</B>.
+<P>
+
+<A NAME="lbAG">&nbsp;</A>
+<H2>MODULES</H2>
+
+<P>
+
+Corelens' functionality is divided into modules. Modules have a name and can
+accept command-line arguments. They are broken into three categories based on
+when they are run:
+<P>
+
+<DL COMPACT><DT><DD>
+1.
+
+
+Standard modules run whenever <B>-a</B> is specified
+</DL>
+
+<DL COMPACT><DT><DD>
+2.
+
+
+Detailed modules are run whenever <B>-A</B> is specified
+</DL>
+
+<DL COMPACT><DT><DD>
+3.
+
+
+Manual modules are only run when explicitly requested
+<P>
+</DL>
+
+<P>
+
+Some corelens modules will only run if a relevant kernel module is loaded.
+Others require DWARF debuginfo. Some modules may only run against core dumps
+(not /proc/kcore). Corelens will provide appropriate warnings or errors at
+runtime if these situations are encountered.
+<P>
+
+The full list of modules can be viewed by running <B>corelens -L</B>. To view more
+information about a specific module, including its command-line arguments, you
+can run <B>corelens -M</B> <I>MODULE</I> <B>-h</B>.
+<P>
+
+<A NAME="lbAH">&nbsp;</A>
+<H2>EXAMPLES</H2>
+
+<P>
+
+Run the &quot;sys&quot; module against the live kernel:
+<P>
+
+<PRE>
+<DL COMPACT><DT><DD>corelens /proc/kcore -M sys
+</PRE>
+
+</DL>
+
+<P>
+
+Run a default report against a live kernel, and store the report in a directory.
+Then create an archive for later transmission to Oracle Linux Support:
+<P>
+
+<PRE>
+<DL COMPACT><DT><DD>corelens /proc/kcore -a -o ./report
+tar -cvzf report.tar.gz ./report
+</PRE>
+
+</DL>
+
+<P>
+
+List all modules:
+<P>
+
+<PRE>
+<DL COMPACT><DT><DD>corelens -L
+</PRE>
+
+</DL>
+
+<P>
+
+Get help on the dentrycache module:
+<P>
+
+<PRE>
+<DL COMPACT><DT><DD>corelens -M dentrycache -h
+</PRE>
+
+</DL>
+
+<P>
+
+<A NAME="lbAI">&nbsp;</A>
+<H2>REPORTING BUGS</H2>
+
+<P>
+
+Please contact Oracle Linux Support to report any bugs for corelens.
+<P>
+
+<HR>
+<A NAME="index">&nbsp;</A><H2>Index</H2>
+<DL>
+<DT><A HREF="#lbAB">NAME</A><DD>
+<DT><A HREF="#lbAC">SYNOPSIS</A><DD>
+<DT><A HREF="#lbAD">DESCRIPTION</A><DD>
+<DT><A HREF="#lbAE">OPTIONS</A><DD>
+<DT><A HREF="#lbAF">DEBUGINFO</A><DD>
+<DT><A HREF="#lbAG">MODULES</A><DD>
+<DT><A HREF="#lbAH">EXAMPLES</A><DD>
+<DT><A HREF="#lbAI">REPORTING BUGS</A><DD>
+</DL>
+<HR>
+This document was created by
+<A HREF="/man/man2html">man2html</A>,
+using the manual pages.<BR>
+Time: 14:56:29 GMT, August 16, 2024
+</BODY>
+</HTML>

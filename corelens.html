@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>CORELENS(1) &#8212; drgn-tools v0.9.1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d1102ebc" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=12dfc556" />
+    <script src="_static/documentation_options.js?v=6677775b"></script>
+    <script src="_static/doctools.js?v=9a2dae69"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="icon" href="_static/drgn-tools.png"/>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Changelog" href="changelog.html" />
+    <link rel="prev" title="API Reference" href="api.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="corelens-1">
+<h1>CORELENS(1)<a class="headerlink" href="#corelens-1" title="Link to this heading">¶</a></h1>
+<h1>NAME</h1>
+<p>corelens - extract diagnostic info from the running kernel or core dump</p>
+<h1>SYNOPSIS</h1>
+<p>Generate a corelens report:</p>
+<blockquote>
+<p><strong>corelens</strong> [-o OUT] <em>VMCORE</em> [-a | -A]</p>
+</blockquote>
+<p>Run specified modules:</p>
+<blockquote>
+<p><strong>corelens</strong> [-o OUT] <em>VMCORE</em> [-M MODULE [options] [-M MODULE ...]]</p>
+</blockquote>
+<p>Get help:</p>
+<blockquote>
+<p><strong>corelens -h</strong></p>
+<p><strong>corelens -L</strong></p>
+<p><strong>corelens -M</strong> <em>MODULE</em> <strong>-h</strong></p>
+</blockquote>
+<h1>DESCRIPTION</h1>
+<p>Corelens is a tool which can extract diagnostic information from the Linux kernel image specified by <em>VMCORE</em>. To extract diagnostic information from the running kernel, "/proc/kcore" should be provided. Its functionality is grouped into <em>modules</em>, each one producing diagnostic information about a specific kernel subsystem.</p>
+<p>Corelens may be run in two modes: generating a report, or running specified modules. When generating a report, corelens will run a collection of default modules, with default arguments. Alternatively, the user may run a list of specified modules. Each module must be specified on the command line with <strong>-M</strong> <em>MODULE</em>, and any subsequent argument (up to the next <strong>-M</strong>) is handled by <em>MODULE</em>.</p>
+<p>By default, corelens produces output on stdout. However, with <strong>-o</strong>, output may be stored in a directory, where each module's output is contained in a separate file. This mode is useful when preparing a report to send to Oracle Linux Support.</p>
+<h1>OPTIONS</h1>
+<p><em>VMCORE</em></p>
+<blockquote>
+<p>The kernel image to run against. Specify "/proc/kcore" for the running kernel. This argument is required, unless using <strong>-h</strong> to get help, or <strong>-L</strong> to list corelens modules.</p>
+</blockquote>
+<p><strong>--output-directory</strong> <em>OUT</em>, <strong>-o</strong> <em>OUT</em></p>
+<blockquote>
+<p>Write each module's output to a correspondingly named file within the <em>OUT</em> directory. The directory <em>OUT</em> will be created if it does not exist.</p>
+</blockquote>
+<p><strong>Mode selection:</strong></p>
+<blockquote>
+<p>The following options are mutually exclusive.</p>
+<p><strong>-a</strong></p>
+<blockquote>
+<p>When specified, this runs the default corelens report, which should be sufficient for most cases. All standard modules are selected to be run with their default arguments. Modules which are not applicable (e.g. because the subsystem is not loaded or active) are skipped.</p>
+</blockquote>
+<p><strong>-A</strong></p>
+<blockquote>
+<p>When specified, this runs the detailed corelens report. This selects all modules, including those which are not run by <strong>-a</strong>. These detailed modules may produce larger amounts of output, or require a longer runtime. The standard report provided by <strong>-a</strong> should be preferred.</p>
+</blockquote>
+<p><strong>-M</strong> <em>MODULE</em> [...]</p>
+<blockquote>
+<p>Specify a corelens module to run, providing optional arguments to the module itself. All command-line arguments following this one are provided to the module, up to the next <strong>-M</strong> option.</p>
+<p>As a special case, when using <strong>-h</strong> to get help on a module's output, <em>VMCORE</em> is not required.</p>
+</blockquote>
+<p><strong>-L</strong></p>
+<blockquote>
+<p>List all modules and exit. <em>VMCORE</em> is not required.</p>
+</blockquote>
+<p>As a special case, when corelens is run without any of the above mode selection arguments, it runs the "sys" corelens module (as if the arguments provided were: <strong>-M sys</strong>).</p>
+</blockquote>
+<p><strong>Debuginfo Selection:</strong></p>
+<blockquote>
+<p>The following options disable the standard behavior for searching for debuginfo, and manually provide it. They are not required. They are mutually exclusive to each other.</p>
+<p><strong>--ctf</strong> <em>CTF</em></p>
+<blockquote>
+<p>Corelens will manually load the CTF file <em>CTF</em>.</p>
+</blockquote>
+<p><strong>--debuginfo</strong> <em>DEBUGINFO</em>, <strong>-d</strong> <em>DEBUGINFO</em></p>
+<blockquote>
+<p>Corelens will search for DWARF debuginfo within the directory <em>DEBUGINFO</em>, which should contain a "vmlinux" file as well as ".ko.debug" files for each relevant kernel module.</p>
+</blockquote>
+</blockquote>
+<h1>DEBUGINFO</h1>
+<p>In order to produce diagnostic information, corelens requires some form of debugging information for <em>VMCORE</em>. There are two possibilities:</p>
+<p><strong>DWARF</strong></p>
+<blockquote>
+<p>DWARF information is the most detailed option, but it requires that the <strong>debuginfo</strong> package corresponding to <em>VMCORE</em> (or the running kernel) is installed. When DWARF information is available, corelens can provide more detailed stack traces, and some modules only work when DWARF is available.</p>
+</blockquote>
+<p><strong>CTF</strong></p>
+<blockquote>
+<p>CTF (Compact Type Format) is a lightweight type format. For Oracle UEK kernels (<strong>kernel-uek</strong>), CTF is always available.</p>
+</blockquote>
+<p>Corelens automatically searches for debuginfo at startup. It prefers DWARF when available, and uses CTF as a second choice. The search may be overridden by using the options <strong>--ctf</strong> or <strong>--debuginfo</strong>.</p>
+<h1>MODULES</h1>
+<p>Corelens' functionality is divided into modules. Modules have a name and can accept command-line arguments. They are broken into three categories based on when they are run:</p>
+<blockquote>
+<p>1. Standard modules run whenever <strong>-a</strong> is specified</p>
+</blockquote>
+<blockquote>
+<p>2. Detailed modules are run whenever <strong>-A</strong> is specified</p>
+</blockquote>
+<blockquote>
+<p>3. Manual modules are only run when explicitly requested</p>
+</blockquote>
+<p>Some corelens modules will only run if a relevant kernel module is loaded. Others require DWARF debuginfo. Some modules may only run against core dumps (not /proc/kcore). Corelens will provide appropriate warnings or errors at runtime if these situations are encountered.</p>
+<p>The full list of modules can be viewed by running <strong>corelens -L</strong>. To view more information about a specific module, including its command-line arguments, you can run <strong>corelens -M</strong> <em>MODULE</em> <strong>-h</strong>.</p>
+<h1>EXAMPLES</h1>
+<p>Run the "sys" module against the live kernel:</p>
+<pre><code>corelens /proc/kcore -M sys</code></pre>
+<p>Run a default report against a live kernel, and store the report in a directory. Then create an archive for later transmission to Oracle Linux Support:</p>
+<pre><code>corelens /proc/kcore -a -o ./report
+tar -cvzf report.tar.gz ./report</code></pre>
+<p>List all modules:</p>
+<pre><code>corelens -L</code></pre>
+<p>Get help on the dentrycache module:</p>
+<pre><code>corelens -M dentrycache -h</code></pre>
+<h1>REPORTING BUGS</h1>
+<p>Please contact Oracle Linux Support to report any bugs for corelens.</p>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="index.html">
+              <img class="logo" src="_static/drgn-tools.png" alt="Logo of drgn-tools"/>
+            </a></p>
+<h1 class="logo"><a href="index.html">drgn-tools</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="installing.html">Installing drgn-tools</a></li>
+<li class="toctree-l1"><a class="reference internal" href="code-quality.html">Contributing: Code Quality Guidelines</a></li>
+<li class="toctree-l1"><a class="reference internal" href="testing.html">Contributing: Testing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API Reference</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">CORELENS(1)</a></li>
+</ul>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="changelog.html">Changelog</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="api.html" title="previous chapter">API Reference</a></li>
+      <li>Next: <a href="changelog.html" title="next chapter">Changelog</a></li>
+  </ul></li>
+</ul>
+</div>
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2023, Oracle and/or its affiliates.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 7.4.7</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 0.7.16</a>
+      
+      |
+      <a href="_sources/corelens.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
