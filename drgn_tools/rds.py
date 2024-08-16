@@ -1479,8 +1479,8 @@ def rds_get_mr_list_info(
     Print the MR list info
 
     :param prog_or_obj: drgn program or ``struct rds_ib_device`` Object
-    :prarm dev_ptr: ``struct rds_ib_device`` address as an integer.
-    returns: None
+    :param dev_ptr: ``struct rds_ib_device`` address as an integer.
+    :returns: None
     """
 
     if isinstance(prog_or_obj, Program):
