@@ -4,7 +4,10 @@
 # Note: manual pages are written in the scd format, but rather than depend on
 # scdoc for the RPM build, we simply include the resulting roff files in git.
 
-all: corelens.1
+all: corelens.1 corelens.1.html
 
 %: %.scd
 	scdoc < $< > $@
+
+%.html: %
+	pandoc -f man -t html $< > $@
