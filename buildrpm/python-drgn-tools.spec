@@ -1,7 +1,7 @@
 # Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 Name:           python-drgn-tools
-Version:        0.9.1
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -61,6 +61,9 @@ rm %{buildroot}/usr/bin/DRGN
 %{_mandir}/man1/corelens.1.gz
 
 %changelog
+* Tue Aug 27 2024 Stephen Brennan <stephen.s.brennan@oracle.com> - 1.1.0-1
+- Update to 1.1.0
+
 * Mon Apr 22 2024 Stephen Brennan <stephen.s.brennan@oracle.com> - 0.9.1-1
 - Update to 0.9.1
 
