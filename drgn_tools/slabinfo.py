@@ -4,13 +4,16 @@
 Helper to view slabinfo data
 """
 import argparse
+from typing import List
 from typing import NamedTuple
 from typing import Set
 from typing import Tuple
 
 from drgn import cast
+from drgn import FaultError
 from drgn import Object
 from drgn import Program
+from drgn import ProgramFlags
 from drgn import Type
 from drgn.helpers.linux.cpumask import for_each_present_cpu
 from drgn.helpers.linux.list import list_for_each_entry
@@ -40,6 +43,8 @@ class SlabCacheInfo(NamedTuple):
     """Slab size"""
     name: str
     """Name of the slab cache"""
+    freelist_corrupt_cpus: List[int]
+    """A list of CPUs for which the freelist was found to be corrupt"""
 
 
 def _slab_type(prog: Program) -> Type:
@@ -204,19 +209,41 @@ def slub_per_cpu_partial_free(cpu_partial: Object) -> int:
     return partial_free
 
 
-def kmem_cache_slub_info(cache: Object) -> Tuple[int, int]:
+class _CpuSlubWrapper:
+    def __init__(self, obj):
+        self._obj = obj
+
+    def __getattr__(self, key):
+        if key == "cpu_slab":
+            raise AttributeError("CpuSlubWrapper!")
+        return self._obj.__getattribute__(key)
+
+
+def kmem_cache_slub_info(cache: Object) -> Tuple[int, int, List[int]]:
     """
     For given kmem_cache object, parse through each cpu
     and get number of total slabs and free objects
 
+    If the CPU freelist was corrupt, then we do our best effort to count free
+    objects, but we may undercount them. We set the corruption flag when this
+    happens.
+
     :param: ``struct kmem_cache`` drgn object
-    :returns: total slabs, free objects
+    :returns: total slabs, free objects, corruption instances
     """
     prog = cache.prog_
     use_slab = _has_struct_slab(prog)
 
     total_slabs = objects = free_objects = 0
-    slub_helper = _get_slab_cache_helper(cache)
+
+    # The "cpu_slab" variable is used by the slab helper to preload the percpu
+    # freelists. Not only does this duplicate work we're about to do, but also
+    # corrupt slab caches will crash this function before we can detect which
+    # CPU is corrupt. Pretend we have no "cpu_slab" variable when getting the
+    # helper. This depends on implementation details: we will improve the helper
+    # upstream to avoid this for the future.
+    slub_helper = _get_slab_cache_helper(_CpuSlubWrapper(cache))
+    corrupt = []
 
     for cpuid in for_each_present_cpu(prog):
         per_cpu_slab = per_cpu_ptr(cache.cpu_slab, cpuid)
@@ -237,15 +264,25 @@ def kmem_cache_slub_info(cache: Object) -> Tuple[int, int]:
             objects = 0
 
         free_objects += objects - page_inuse
-        cpu_free_objects = slub_get_cpu_freelist_cnt(cpu_freelist, slub_helper)
-        free_objects += cpu_free_objects
+
+        # Easily the most common form of corruption in the slab allocator comes
+        # from use after free, which overwrites the freelist pointer and causes
+        # a fault error. Catch this and report it for later.
+        try:
+            cpu_free_objects = slub_get_cpu_freelist_cnt(
+                cpu_freelist, slub_helper
+            )
+        except FaultError:
+            corrupt.append(cpuid)
+        else:
+            free_objects += cpu_free_objects
 
         partial_frees = slub_per_cpu_partial_free(cpu_partial)
         free_objects += partial_frees
 
         total_slabs += 1
 
-    return total_slabs, free_objects
+    return total_slabs, free_objects, corrupt
 
 
 def get_kmem_cache_slub_info(cache: Object) -> SlabCacheInfo:
@@ -255,7 +292,7 @@ def get_kmem_cache_slub_info(cache: Object) -> SlabCacheInfo:
     :param cache: ``struct kmem_cache`` drgn object
     :returns: a :class:`SlabCacheInfo` with statistics about the cache
     """
-    total_slabs, free_objects = kmem_cache_slub_info(cache)
+    total_slabs, free_objects, corrupt = kmem_cache_slub_info(cache)
     (
         nr_slabs,
         nr_total_objs,
@@ -280,6 +317,7 @@ def get_kmem_cache_slub_info(cache: Object) -> SlabCacheInfo:
         total_slabs,
         ssize,
         cache.name.string_().decode("utf-8"),
+        corrupt,
     )
 
 
@@ -296,18 +334,41 @@ def print_slab_info(prog: Program) -> None:
             "NAME",
         ]
     )
+    corruption = []
     for cache in for_each_slab_cache(prog):
         slabinfo = get_kmem_cache_slub_info(cache)
+        maybe_asterisk = ""
+        if slabinfo.freelist_corrupt_cpus:
+            maybe_asterisk = "*"
+            corruption.append(slabinfo)
         table.row(
             slabinfo.cache.value_(),
             slabinfo.objsize,
-            slabinfo.allocated,
+            f"{slabinfo.allocated}{maybe_asterisk}",
             slabinfo.total,
             slabinfo.nr_slabs,
             f"{int(slabinfo.ssize / 1024)}k",
             slabinfo.name,
         )
     table.write()
+
+    if corruption:
+        if prog.flags & ProgramFlags.IS_LIVE:
+            print(
+                "NOTE: freelist corruption was detected. This is not "
+                "necessarily an error, as live systems may encounter race "
+                "conditions."
+            )
+        else:
+            print(
+                "WARNING: freelist corruption was detected. It is likely that "
+                "a use-after-free bug occurred."
+            )
+        table = FixedTable(["CACHE:<24s", "CORRUPT CPUS"])
+        for slabinfo in corruption:
+            cpus = ", ".join(map(str, slabinfo.freelist_corrupt_cpus))
+            table.row(slabinfo.name, cpus)
+        table.write()
 
 
 class SlabInfo(CorelensModule):

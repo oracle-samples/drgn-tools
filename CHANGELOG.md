@@ -1,10 +1,64 @@
 Changelog
 =========
 
+Release Cycle
+-------------
+
+Prior to v1, the version numbers loosely followed the rule that new features
+would bump the minor version level, and bug fix releases would bump the patch
+version level.
+
+Beginning with v1, a new scheme is adopted which allows for a "development"
+version, and a stable version. Using the version numbers `x.y.z`, we have:
+
+1. The **development** version is of the form `x.0.z`, where `x` represents the
+   major version under development. Each release is performed by incrementing
+   `z`, the patch level, regardless of the type of changes. The development
+   version ends with the release of the "stable" version of `x.1.0`. The
+   development version is maintained on the `main` branch.
+2. The **stable** version is of the form `x.y.z`, where `y >= 1`, and `x` is of
+   course the major version. The "stable" versions are the only ones which are
+   released to Oracle Linux as RPMs. Releases will generally increment `z`, the
+   patch version, for bug fix releases. It's possible that in rare cases, we
+   will increment `y` for backports, in cases where we want to backport a module
+   to the stable release. The stable version is maintained in a branch named
+   `stable/vX`, where `X` is replaced with the major version number (e.g.
+   `stable/v1`).
+
+The stable version is maintained in parallel as the development version is
+developed. Fixes in the stable release must first be present in the development
+release (and all newer stable releases, if applicable).
+
+For the most part, regular maintenance of the stable version will end with the
+release of the next stable version, but maintenance may continue at our
+discretion.
+
+Examples:
+
+- `1.1.0` - the initial public release of the `1.x` stable series.
+- `1.1.1` - the first bugfix release of the `1.x` stable series.
+- `2.0.0` - the initial development version of the `2.x`.
+- `2.0.1` - an incremental development release in `2.x` development. It may
+  contain bug fixes or new features.
+- `2.1.0` - the initial public release of the `2.x` stable series.
+
+
 Unreleased
 ----------
 
 Changes which are committed to git, but not yet released, may appear here.
+
+1.1.0 - Tue, Aug 27, 2023
+-------------------------
+
+This is the first public release of drgn-tools!
+
+* Fixes for the irq, workqueue, bt, & nfs_tools modules.
+* Add ls and fsnotify modules.
+* Added new helpers for tasks & task states.
+* Basic functionality for running on UEK-NEXT (unsupported).
+* RPM name updated to "drgn-tools".
+* Support for CTF debuginfo added for the locks module.
 
 0.9.1 - Mon, Apr 22, 2023
 -------------------------
