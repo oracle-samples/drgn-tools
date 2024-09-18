@@ -3,6 +3,7 @@
 """
 Helpers for sysctl.
 """
+import argparse
 from stat import S_ISDIR
 from stat import S_ISLNK
 from types import MappingProxyType
@@ -18,11 +19,19 @@ from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.rbtree import rbtree_inorder_for_each
 
+from drgn_tools.corelens import CorelensModule
 
-def get_sysctl_table(prog: Program) -> MappingProxyType:
+
+MAX_ELEMENTS = 10
+
+
+def get_sysctl_table(
+    prog: Program, limit: int = MAX_ELEMENTS
+) -> MappingProxyType:
     """
     Get the sysctl table.
 
+    :param limit: int
     :returns: sysctl table as a read-only dictionary, where keys are
       procnames and values are their data
     """
@@ -33,20 +42,21 @@ def get_sysctl_table(prog: Program) -> MappingProxyType:
         root_dir = prog["sysctl_table_root"].default_set.dir
         __process_dir(prog, root_dir, sysctl_table)
         for key, value in sysctl_table.items():
-            sysctl_table[key] = get_data_entry(prog, value)
+            sysctl_table[key] = get_data_entry(prog, value, limit)
         cache["sysctl_table"] = MappingProxyType(sysctl_table)
 
     return cache["sysctl_table"]
 
 
-def print_sysctl_table(prog: Program) -> None:
+def print_sysctl_table(prog: Program, limit: int = MAX_ELEMENTS) -> None:
     """
-    Print the sysctl table.
+    Print the sysctl table.  Set limit to dump first <limit> elements in a list of each entry.
 
+    :param limit: int
     :param sysctl_table: a cached dictionary
     """
 
-    sysctl_table = get_sysctl_table(prog)
+    sysctl_table = get_sysctl_table(prog, limit)
     for key, value in sysctl_table.items():
         print("{} = {}".format(key, value))
 
@@ -140,11 +150,14 @@ def __find_entry(
     return (None, None)
 
 
-def get_data_entry(prog: Program, ct: Object) -> Any:
+def get_data_entry(
+    prog: Program, ct: Object, limit: int = MAX_ELEMENTS
+) -> Any:
     """
     Extract the data of a ct a control table entry value given procname.
 
     :param ct: ``struct ctl_table``
+    :param limit: int
     :returns: the ctl_table data
     """
 
@@ -205,9 +218,9 @@ def get_data_entry(prog: Program, ct: Object) -> Any:
             iv = iv // 1000
         out.append(iv)
         data += interval
-    # print first 5 elements
-    if len(out) > 5:
-        out = out[:5] + ["... %d more elements" % (len(out) - 5)]
+    # print first <limit> elements
+    if len(out) > limit:
+        out = out[:limit] + ["... %d more elements" % (len(out) - limit)]
     return out
 
 
@@ -216,3 +229,23 @@ def __decode_sysctl_string(data: bytes) -> str:
 
     bytes_before_nul = data.split(b"\x00", 1)[0]
     return bytes_before_nul.decode("ascii", errors="backslashreplace")
+
+
+class SysCtl(CorelensModule):
+    """
+    Corelens Module for sysctl
+    """
+
+    name = "sysctl"
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--limit",
+            "-l",
+            type=int,
+            default=MAX_ELEMENTS,
+            help="list at most first <limit> elements for each entry, MAX_ELEMENTS=10 by default",
+        )
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        print_sysctl_table(prog, args.limit)
