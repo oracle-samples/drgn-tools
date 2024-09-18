@@ -26,14 +26,22 @@ def for_each_dm_hash(prog: Program) -> Iterable[Tuple[Object, str, str]]:
         for hc in list_for_each_entry(
             "struct hash_cell", head.address_of_(), "name_list"
         ):
-            yield hc.md, hc.name.string_().decode(), hc.uuid.string_().decode()
+            uuid = ""
+            if hc.uuid:
+                uuid = hc.uuid.string_().decode()
+
+            yield hc.md, hc.name.string_().decode(), uuid
 
 
 def for_each_dm_rbtree(prog: Program) -> Iterable[Tuple[Object, str, str]]:
     for hc in rbtree_inorder_for_each_entry(
         "struct hash_cell", prog["name_rb_tree"], "name_node"
     ):
-        yield hc.md, hc.name.string_().decode(), hc.uuid.string_().decode()
+        uuid = ""
+        if hc.uuid:
+            uuid = hc.uuid.string_().decode()
+
+        yield hc.md, hc.name.string_().decode(), uuid
 
 
 def for_each_dm(prog: Program) -> Iterable[Tuple[Object, str, str]]:
