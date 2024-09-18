@@ -33,4 +33,4 @@ drgn_tools/_version.py:
 .PHONY: rsync
 rsync: drgn_tools/_version.py
 	@if [ -z "$(TARGET)" ]; then echo "error: TARGET unspecified. Either set it in config.mk, or use\nmake TARGET=hostname rsync"; exit 1; fi
-	rsync -avz --exclude "__pycache__" --exclude ".git" --exclude ".mypy_cache" ./drgn_tools $(TARGET):drgn_tools/
+	rsync -avz --exclude "__pycache__" --exclude ".git" --exclude ".mypy_cache" ./drgn_tools $(TARGET)
