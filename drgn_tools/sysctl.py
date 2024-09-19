@@ -22,7 +22,7 @@ from drgn.helpers.linux.rbtree import rbtree_inorder_for_each
 from drgn_tools.corelens import CorelensModule
 
 
-MAX_ELEMENTS = 10
+MAX_ELEMENTS = 100
 
 
 def get_sysctl_table(
@@ -170,8 +170,16 @@ def get_data_entry(
     except LookupError:
         pass
 
+    sys_text_info = {
+        "proc_dostring",
+        "proc_dostring_coredump",
+        "proc_do_uts_string",
+        "devkmsg_sysctl_set_loglvl",
+        "proc_do_large_bitmap",
+        "proc_watchdog_cpumask",
+    }
     # for the cases where the data encoded is a text string
-    if phandler_name == "proc_dostring":
+    if phandler_name in sys_text_info:
         return __decode_sysctl_string(prog.read(ct.data, maxlen))
     if phandler_name == "cdrom_sysctl_info":
         idstr = __decode_sysctl_string(prog.read(ct.data, maxlen))
@@ -228,7 +236,7 @@ def __decode_sysctl_string(data: bytes) -> str:
     """Decode bytes to readable string"""
 
     bytes_before_nul = data.split(b"\x00", 1)[0]
-    return bytes_before_nul.decode("ascii", errors="backslashreplace")
+    return bytes_before_nul.decode("ascii", errors="ignore")
 
 
 class SysCtl(CorelensModule):
@@ -244,7 +252,7 @@ class SysCtl(CorelensModule):
             "-l",
             type=int,
             default=MAX_ELEMENTS,
-            help="list at most first <limit> elements for each entry, MAX_ELEMENTS=10 by default",
+            help="list at most first <limit> elements for each entry, print all by default",
         )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
