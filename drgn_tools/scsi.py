@@ -56,6 +56,28 @@ def host_module_name(shost: Object) -> str:
     return name
 
 
+def for_each_scsi_host_device(
+    prog: Program, shost: Object
+) -> Iterator[Object]:
+    """
+    Get a list of scsi_devices asscociated with an Scsi_Host
+    :returns: a iterator of ``struct scsi_device``
+    """
+    return list_for_each_entry(
+        "struct scsi_device", shost.__devices.address_of_(), "siblings"
+    )
+
+
+def get_scsi_device_name(prog: Program, sdev: Object) -> str:
+    """
+    Get the device name associated with scsi_device.
+    :return ``str``
+    """
+    rq = sdev.request_queue
+    dev = container_of(rq.kobj.parent, "struct device", "kobj")
+    return dev.kobj.name.string_().decode()
+
+
 def print_scsi_hosts(prog: Program) -> None:
     """
     Prints scsi host information
