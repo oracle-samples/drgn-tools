@@ -10,15 +10,41 @@ from typing import Tuple
 from drgn import cast
 from drgn import Object
 from drgn import Program
+from drgn.helpers.linux.list import list_first_entry_or_null
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.rbtree import rbtree_inorder_for_each_entry
 
+from drgn_tools.block import blkdev_devt_str
 from drgn_tools.block import blkdev_name
+from drgn_tools.block import blkdev_ro
+from drgn_tools.block import blkdev_size
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.table import print_table
 from drgn_tools.util import BitNumberFlags
+from drgn_tools.util import has_member
 from drgn_tools.util import kernel_version
+
+
+def dm_ro(dm: Object) -> bool:
+    if has_member(dm, "bdev"):
+        bdev = dm.bdev
+    else:
+        bdev = dm.disk.part0
+    ro = blkdev_ro(bdev)
+    if ro == -1:
+        gendisk = dm.disk
+        return gendisk.part0.policy
+    else:
+        return bool(ro)
+
+
+def dm_size(dm: Object) -> int:
+    if has_member(dm, "bdev"):
+        bdev = dm.bdev
+    else:
+        bdev = dm.disk.part0
+    return blkdev_size(bdev)
 
 
 def for_each_dm_hash(prog: Program) -> Iterable[Tuple[Object, str, str]]:
@@ -136,34 +162,144 @@ def show_table_linear(dm: Object, name: str) -> None:
         target = table.targets[tid]
         dev = cast("struct linear_c *", target.private)
         print(
-            "%s: %d %d linear %d:%d [%s] %d"
+            "%s: %d %d linear %s [%s] %d"
             % (
                 name,
                 int(target.begin),
                 int(target.len),
-                dev.dev.bdev.bd_dev >> 20,
-                dev.dev.bdev.bd_dev & 0xFFFFF,
+                blkdev_devt_str(dev.dev.bdev),
                 blkdev_name(dev.dev.bdev),
                 dev.start,
             )
         )
 
 
+def show_multipath_pg(pg: Object) -> str:
+    pg_cfg = "%s %d " % (pg.ps.type.name.string_().decode(), pg.nr_pgpaths)
+    for pgpath in list_for_each_entry(
+        "struct pgpath", pg.pgpaths.address_of_(), "list"
+    ):
+        bdev = pgpath.path.dev.bdev
+        pg_cfg += "%s [%s] " % (
+            blkdev_devt_str(bdev),
+            bdev.bd_disk.disk_name.string_().decode(),
+        )
+    return pg_cfg
+
+
+def show_table_multipath(dm: Object, name: str) -> None:
+    """
+    Dump dm table for multipath devices
+
+    The output format is this:
+    name: start_sec, lenght, "multipath", "1 queue_if_no_path" or 0,
+    hw handler name & parameters or 0, next priority group number,
+    iterate each pg using this format
+    (path_selector_type, path_num, iterate_each_path(dev_t, disk name))
+    """
+    msg = ensure_debuginfo(dm.prog_, ["dm_multipath"])
+    if msg:
+        print(msg)
+        return
+    table = dm_table(dm)
+    target = table.targets
+    line = "%s: %d %d multipath " % (name, target.begin, target.len)
+
+    # multipath flags
+    multipath = cast("struct multipath *", target.private)
+    if has_member(multipath, "queue_if_no_path"):
+        line += "1 queue_if_no_path " if multipath.queue_if_no_path else "0 "
+    elif multipath.flags & 7:
+        line += "1 queue_if_no_path "
+    else:
+        line += "0 "
+
+    # hardware handler parameters
+    handler = []
+    if multipath.hw_handler_name:
+        handler.append(multipath.hw_handler_name.string_().decode())
+        if multipath.hw_handler_params:
+            for param in multipath.hw_handler_params.split(" "):
+                handler.append(param)
+    line += "%d " % len(handler)
+    for param in handler:
+        line += "%s " % str(param)
+    line += "%d " % multipath.nr_priority_groups
+
+    # next priority group number
+    next_pg_num = 1
+    if multipath.current_pg:
+        next_pg_num = multipath.current_pg.pg_num
+    else:
+        pg = list_first_entry_or_null(
+            multipath.priority_groups.address_of_(),
+            "struct priority_group",
+            "list",
+        )
+        if pg:
+            next_pg_num = pg.pg_num
+    line += "%d " % next_pg_num
+
+    # priority groups
+    for pg in list_for_each_entry(
+        "struct priority_group",
+        multipath.priority_groups.address_of_(),
+        "list",
+    ):
+        line += show_multipath_pg(pg)
+    print(line)
+
+
+def show_table_snapshot(dm: Object, name: str) -> None:
+    msg = ensure_debuginfo(dm.prog_, ["dm_snapshot"])
+    if msg:
+        print(msg)
+        return
+
+    table = dm_table(dm)
+    for tid in range(table.num_targets):
+        target = table.targets[tid]
+        snapshot = cast("struct dm_snapshot *", target.private)
+        print(
+            "%s: %d %d %s %s %s %s %s %s %d"
+            % (
+                name,
+                target.begin,
+                target.len,
+                target.type.name.string_().decode(),
+                snapshot.origin.name.string_().decode(),
+                blkdev_devt_str(snapshot.origin.bdev),
+                snapshot.cow.name.string_().decode(),
+                blkdev_devt_str(snapshot.cow.bdev),
+                snapshot.store.type.name.string_().decode(),
+                snapshot.store.chunk_size,
+            )
+        )
+
+
 dmtable_handler = {
     "linear": show_table_linear,
+    "multipath": show_table_multipath,
+    "snapshot": show_table_snapshot,
+    "snapshot-merge": show_table_snapshot,
 }
 
 
 def show_dm_table(prog: Program) -> None:
+    msg = ensure_debuginfo(prog, ["dm_mod"])
+    if msg:
+        print(msg)
+        return
+
     for dm, name, uuid in for_each_dm(prog):
         target_name = dm_target_name(dm)
         if target_name == "None":
-            print("dm %s doesn't have a target" % hex(dm.value_()))
+            print("%s %s doesn't have a target" % (name, hex(dm.value_())))
             continue
         elif target_name not in dmtable_handler.keys():
             print(
-                "dm %s used non-support target %s"
-                % (hex(dm.value_()), target_name)
+                "%s %s used non-support target %s"
+                % (name, hex(dm.value_()), target_name)
             )
             continue
         else:
