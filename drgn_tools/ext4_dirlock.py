@@ -65,7 +65,7 @@ long I/O latency, you should review iostat from oswatcher for more details.
     dentry      : 0xffff9bd0bd8a3a40
     inode       : 0xffff9bd9d09611e8
     Size        : 21835776
-    Blocks      : 42728
+    Sectors     : 42728
     Inode Lock  : Command          Pid      Status Lastrun2now(ms)
     Lock owner  : ohasd.bin        106479   D      259
     Lock waiter :
@@ -152,7 +152,7 @@ def ext4_dirlock_scan(prog: drgn.Program, stacktrace: bool = False) -> None:
         print("%-12s: 0x%x" % ("dentry", dentry.value_()))
         print("%-12s: 0x%x" % ("inode", inode.value_()))
         print("%-12s: %d" % ("Size", inode.i_size.value_()))
-        print("%-12s: %d" % ("Blocks", inode.i_blocks.value_()))
+        print("%-12s: %d" % ("Sectors", inode.i_blocks.value_()))
         print(
             "%-12s: %d"
             % ("subdirs", count(list_for_each(dentry.d_subdirs.address_of_())))
