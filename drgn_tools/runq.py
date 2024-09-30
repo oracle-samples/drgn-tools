@@ -70,7 +70,7 @@ def _print_cfs_runq(runqueue: Object) -> None:
 def run_queue(prog: Program, min_run_time_seconds: int = 0) -> None:
     """
     Print tasks which are in the RT and CFS runqueues on each CPU. Specify min_run_time_seconds to x to only print
-    processes running more than x seconds.
+    processes running more than x seconds. Set skip_swapper = True to not include swapper process in the ouput.
 
     :param prog: drgn program
     :param min_run_time_seconds: int
@@ -84,11 +84,12 @@ def run_queue(prog: Program, min_run_time_seconds: int = 0) -> None:
         comm = escape_ascii_string(curr_task.comm.string_())
         pid = curr_task.pid.value_()
         run_time = task_lastrun2now(curr_task)
+        prio = curr_task.prio.value_()
         if run_time < min_run_time_seconds * 1e9:
             continue
         print(f"CPU {cpus} RUNQUEUE: {runqueue.address_of_().value_():x}")
         print(
-            f"  CURRENT:   PID: {pid:<6d}  TASK: {curr_task_addr:x}"
+            f"  CURRENT:   PID: {pid:<6d}  TASK: {curr_task_addr:x}  PRIO: {prio}"
             f'  COMMAND: "{comm}"',
             f"  RUNTIME: {timestamp_str(run_time)}",
         )
