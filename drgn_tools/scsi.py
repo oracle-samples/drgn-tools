@@ -8,6 +8,7 @@ from typing import Iterator
 
 import drgn
 from drgn import container_of
+from drgn import FaultError
 from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
@@ -20,9 +21,9 @@ from drgn_tools.util import has_member
 
 def for_each_scsi_host(prog: Program) -> Iterator[Object]:
     """
-    Iterates through all scsi hosts and returns a
+    Iterate through all scsi hosts and returns an
     iterator.
-    :returns: a iterator of ``struct Scsi_Host *``
+    :returns: an iterator of ``struct Scsi_Host *``
     """
     class_in_private = prog.type("struct device_private").has_member(
         "knode_class"
@@ -54,6 +55,31 @@ def host_module_name(shost: Object) -> str:
     except drgn.FaultError:
         name = "unknown"
     return name
+
+
+def for_each_scsi_host_device(
+    prog: Program, shost: Object
+) -> Iterator[Object]:
+    """
+    Get a list of scsi_device associated with a Scsi_Host.
+    :returns: an iterator of ``struct scsi_device *``
+    """
+    return list_for_each_entry(
+        "struct scsi_device", shost.__devices.address_of_(), "siblings"
+    )
+
+
+def scsi_device_name(prog: Program, sdev: Object) -> str:
+    """
+    Get the device name associated with scsi_device.
+    :return ``str``
+    """
+    rq = sdev.request_queue
+    dev = container_of(rq.kobj.parent, "struct device", "kobj")
+    try:
+        return dev.kobj.name.string_().decode()
+    except FaultError:
+        return ""
 
 
 def print_scsi_hosts(prog: Program) -> None:
