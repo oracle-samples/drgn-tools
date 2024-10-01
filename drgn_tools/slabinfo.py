@@ -6,7 +6,6 @@ Helper to view slabinfo data
 import argparse
 from typing import List
 from typing import NamedTuple
-from typing import Set
 from typing import Tuple
 
 from drgn import cast
@@ -26,6 +25,34 @@ from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import FixedTable
 
 
+class FreelistError(Exception):
+    """Base class for errors processing SLUB freelists"""
+
+    cpu: int
+    message: str
+
+
+class FreelistFaultError(FreelistError):
+    """Encountered translation fault while processing freelist"""
+
+    def __init__(self, cpu):
+        self.message = f"translation fault in freelist of cpu {cpu}"
+        super().__init__(self, self.message)
+        self.cpu = cpu
+
+
+class FreelistDuplicateError(FreelistError):
+    """Encountered duplicate entry while processing freelist"""
+
+    ptr: int
+
+    def __init__(self, cpu, ptr):
+        self.message = f"duplicate freelist entry on cpu {cpu}: {ptr:016x}"
+        super().__init__(self, self.message)
+        self.cpu = cpu
+        self.ptr = ptr
+
+
 class SlabCacheInfo(NamedTuple):
     """Describes summary information about a slab cache"""
 
@@ -43,8 +70,8 @@ class SlabCacheInfo(NamedTuple):
     """Slab size"""
     name: str
     """Name of the slab cache"""
-    freelist_corrupt_cpus: List[int]
-    """A list of CPUs for which the freelist was found to be corrupt"""
+    freelist_errors: List[FreelistError]
+    """A list of errors due to freelist corruption"""
 
 
 def _slab_type(prog: Program) -> Type:
@@ -170,7 +197,7 @@ def collect_node_info(cache: Object) -> Tuple[int, int, int, int, int]:
 
 
 def slub_get_cpu_freelist_cnt(
-    cpu_freelist: Object, slub_helper: Object
+    cpu_freelist: Object, slub_helper: Object, cpu: int
 ) -> int:
     """
     Get number of elements in percpu freelist
@@ -180,10 +207,16 @@ def slub_get_cpu_freelist_cnt(
     :param slub_helper: slab cache helper object
     :returns: the count of per cpu free objects
     """
-    cpu_free_set: Set[int] = set()
-    slub_helper._slub_get_freelist(cpu_freelist, cpu_free_set)
+    free = set()
+    ptr = cpu_freelist.value_()
+    freelist_offset = slub_helper._slab_cache.offset.value_()
+    while ptr:
+        if ptr in free:
+            raise FreelistDuplicateError(cpu, ptr)
+        free.add(ptr)
+        ptr = slub_helper._freelist_dereference(ptr + freelist_offset)
 
-    return len(cpu_free_set)
+    return len(free)
 
 
 def slub_per_cpu_partial_free(cpu_partial: Object) -> int:
@@ -219,7 +252,9 @@ class _CpuSlubWrapper:
         return self._obj.__getattribute__(key)
 
 
-def kmem_cache_slub_info(cache: Object) -> Tuple[int, int, List[int]]:
+def kmem_cache_slub_info(
+    cache: Object,
+) -> Tuple[int, int, List[FreelistError]]:
     """
     For given kmem_cache object, parse through each cpu
     and get number of total slabs and free objects
@@ -243,7 +278,7 @@ def kmem_cache_slub_info(cache: Object) -> Tuple[int, int, List[int]]:
     # helper. This depends on implementation details: we will improve the helper
     # upstream to avoid this for the future.
     slub_helper = _get_slab_cache_helper(_CpuSlubWrapper(cache))
-    corrupt = []
+    corrupt: List[FreelistError] = []
 
     for cpuid in for_each_present_cpu(prog):
         per_cpu_slab = per_cpu_ptr(cache.cpu_slab, cpuid)
@@ -270,10 +305,12 @@ def kmem_cache_slub_info(cache: Object) -> Tuple[int, int, List[int]]:
         # a fault error. Catch this and report it for later.
         try:
             cpu_free_objects = slub_get_cpu_freelist_cnt(
-                cpu_freelist, slub_helper
+                cpu_freelist, slub_helper, cpuid
             )
         except FaultError:
-            corrupt.append(cpuid)
+            corrupt.append(FreelistFaultError(cpuid))
+        except FreelistDuplicateError as e:
+            corrupt.append(e)
         else:
             free_objects += cpu_free_objects
 
@@ -292,7 +329,7 @@ def get_kmem_cache_slub_info(cache: Object) -> SlabCacheInfo:
     :param cache: ``struct kmem_cache`` drgn object
     :returns: a :class:`SlabCacheInfo` with statistics about the cache
     """
-    total_slabs, free_objects, corrupt = kmem_cache_slub_info(cache)
+    total_slabs, free_objects, errors = kmem_cache_slub_info(cache)
     (
         nr_slabs,
         nr_total_objs,
@@ -317,7 +354,7 @@ def get_kmem_cache_slub_info(cache: Object) -> SlabCacheInfo:
         total_slabs,
         ssize,
         cache.name.string_().decode("utf-8"),
-        corrupt,
+        errors,
     )
 
 
@@ -338,7 +375,7 @@ def print_slab_info(prog: Program) -> None:
     for cache in for_each_slab_cache(prog):
         slabinfo = get_kmem_cache_slub_info(cache)
         maybe_asterisk = ""
-        if slabinfo.freelist_corrupt_cpus:
+        if slabinfo.freelist_errors:
             maybe_asterisk = "*"
             corruption.append(slabinfo)
         table.row(
@@ -362,12 +399,12 @@ def print_slab_info(prog: Program) -> None:
         else:
             print(
                 "WARNING: freelist corruption was detected. It is likely that "
-                "a use-after-free bug occurred."
+                "a use-after-free or double-free bug occurred."
             )
-        table = FixedTable(["CACHE:<24s", "CORRUPT CPUS"])
+        table = FixedTable(["CACHE:<24s", "CPU", "ERROR"])
         for slabinfo in corruption:
-            cpus = ", ".join(map(str, slabinfo.freelist_corrupt_cpus))
-            table.row(slabinfo.name, cpus)
+            for error in slabinfo.freelist_errors:
+                table.row(slabinfo.name, error.cpu, error.message)
         table.write()
 
 
