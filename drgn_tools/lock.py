@@ -35,6 +35,7 @@ from typing import Tuple
 from drgn import Object
 from drgn import Program
 from drgn import StackFrame
+from drgn.helpers.common import identify_address
 from drgn.helpers.linux.cpumask import for_each_present_cpu
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import find_task
@@ -110,6 +111,14 @@ def scan_osq_node(prog: Program, verbosity: int = 0) -> None:
                     bt(prog, cpu=cpu)
 
 
+def _addr_info(prog: Program, addr: int):
+    info = identify_address(prog, addr)
+    if info:
+        return f" ({info})"
+    else:
+        return ""
+
+
 def scan_mutex_lock(
     prog: Program,
     stack: bool,
@@ -147,7 +156,8 @@ def scan_mutex_lock(
 
         struct_owner = mutex_owner(prog, mutex)
         index = 0
-        print(f"Mutex: 0x{mutex_addr:x}")
+        addr_info = _addr_info(prog, mutex_addr)
+        print(f"Mutex: 0x{mutex_addr:x}{addr_info}")
         if struct_owner:
             print(
                 "Mutex OWNER:",
@@ -207,7 +217,8 @@ def show_sem_lock(
         seen_sems.add(semaddr)
 
         index = 0
-        print(f"Semaphore: 0x{semaddr:x}")
+        addr_info = _addr_info(prog, semaddr)
+        print(f"Semaphore: 0x{semaddr:x}{addr_info}")
         print(
             "Semaphore WAITERS (Index, cpu, comm, pid, state, wait time (d hr:min:sec:ms)):"
         )
@@ -254,7 +265,8 @@ def show_rwsem_lock(
         seen_rwsems.add(rwsemaddr)
 
         index = 0
-        print(f"Rwsem: ({rwsem.type_.type_name()})0x{rwsem.value_():x}")
+        addr_info = _addr_info(prog, rwsem.value_())
+        print(f"Rwsem: 0x{rwsem.value_():x}{addr_info}")
         if rwsem_has_spinner(rwsem):
             get_rwsem_spinners_info(rwsem, stack)
         else:
