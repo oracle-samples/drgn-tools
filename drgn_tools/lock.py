@@ -148,15 +148,18 @@ def scan_mutex_lock(
         struct_owner = mutex_owner(prog, mutex)
         index = 0
         print(f"Mutex: 0x{mutex_addr:x}")
-        print(
-            "Mutex OWNER:",
-            struct_owner.comm.string_().decode("utf-8"),
-            "PID :",
-            struct_owner.pid.value_(),
-        )
-        if stack:
-            bt(struct_owner)
-            print("")
+        if struct_owner:
+            print(
+                "Mutex OWNER:",
+                struct_owner.comm.string_().decode("utf-8"),
+                "PID :",
+                struct_owner.pid.value_(),
+            )
+            if stack:
+                bt(struct_owner)
+                print("")
+        else:
+            print("Mutex OWNER: NULL")
 
         print(
             "Mutex WAITERS (Index, cpu, comm, pid, state, wait time (d hr:min:sec:ms)):"
