@@ -18,10 +18,6 @@ BuildRequires:  python%{python3_pkgversion}-wheel
 
 %global python_wheelname drgn_tools-%{version}-py3-none-any.whl
 
-# The drgn dependency can be fulfilled by drgn with, or without, CTF support.
-# However, drgn-tools is tied to specific drgn releases.
-Requires:       drgn >= 0.0.25, drgn < 0.0.30
-
 %global _description %{expand:
 drgn-tools extends the drgn debugger with scripts & helpers developed by the
 Oracle Linux Sustaining team. It provides a program called "corelens" which
@@ -31,6 +27,9 @@ a running kernel image (via /proc/kcore).}
 
 %package -n     drgn-tools
 Summary:        %{summary}
+# The drgn dependency can be fulfilled by drgn with, or without, CTF support.
+# However, drgn-tools is tied to specific drgn releases.
+Requires:       drgn >= 0.0.25, drgn < 0.0.30
 %description -n drgn-tools %{_description}
 
 %prep
