@@ -63,7 +63,7 @@ class LockUp(CorelensModule):
         parser.add_argument(
             "--time",
             "-t",
-            type=int,
+            type=float,
             default=0,
             help="list all the processes that have been running more than <time> seconds",
         )
