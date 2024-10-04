@@ -3,14 +3,19 @@
 """
 Helper for iscsi
 """
+import argparse
 from typing import Iterator
 
 from drgn import container_of
 from drgn import Object
 from drgn import Program
+from drgn import sizeof
+from drgn.helpers.common import escape_ascii_string
 from drgn.helpers.linux.list import list_for_each_entry
 
+from drgn_tools.corelens import CorelensModule
 from drgn_tools.scsi import host_module_name
+from drgn_tools.table import print_dictionary
 from drgn_tools.table import print_table
 from drgn_tools.util import has_member
 
@@ -60,7 +65,7 @@ def for_each_iscsi_host_device(prog: Program) -> Iterator[Object]:
             yield dev
 
 
-def for_each_iscsi_host(prog: Program) -> Iterator[Object]:
+def for_each_scsi_host(prog: Program) -> Iterator[Object]:
     """
     Iterates through all iscsi host devices and returns a
     iterator of their hosts.
@@ -77,28 +82,34 @@ def for_each_iscsi_session(prog: Program) -> Iterator[Object]:
     :returns: a iterator of ``struct iscsi_session *``
 
     """
-    for h in for_each_iscsi_host(prog):
-        yield __get_iscsi_session(h)
+    for h in for_each_scsi_host(prog):
+        yield __get_iscsi_session(prog, h)
 
 
-def __get_iscsi_session(iscsi_host: Object) -> Object:
+def __get_iscsi_session(prog: Program, Scsi_Host: Object) -> Object:
     """
     Get the associated session given the scsi host.
     returns: ``struct iscsi_session *``
     """
-    return container_of(iscsi_host, "struct iscsi_session", "host")
+    iscsi_sw_tcp_host_addr = (
+        Scsi_Host.value_()
+        + sizeof(prog.type("struct Scsi_Host"))
+        + sizeof(prog.type("struct iscsi_host"))
+    )
+    iscsi_sw_tcp_host = Object(
+        prog, "struct iscsi_sw_tcp_host", address=iscsi_sw_tcp_host_addr
+    )
+
+    return iscsi_sw_tcp_host.session
 
 
-def print_iscsi_hosts(prog: Program) -> None:
+def print_iscsi_table(prog: Program) -> None:
     """
-    Prints iscsi information
-
-    TODO: we need to retrieve data from iscsi_session and dump them as the ones we get from "iscsiadm -m session -P 3".
-    However, most of the fields in iscsi_session seem empty. We need to figure out why. May need to rework on __get_iscsi_session.
+    Prints basic iscsi information
     """
     output = [
         [
-            "ISCSI_HOST",
+            "SCSI_HOST",
             "NAME",
             "DRIVER",
             "Busy",
@@ -108,7 +119,7 @@ def print_iscsi_hosts(prog: Program) -> None:
             "ISCSI_SESSION",
         ]
     ]
-    for shost in for_each_iscsi_host(prog):
+    for shost in for_each_scsi_host(prog):
         """
         Since 6eb045e092ef ("scsi: core: avoid host-wide host_busy counter for scsi_mq"),
         host_busy is no longer a member of struct Scsi_Host.
@@ -126,7 +137,49 @@ def print_iscsi_hosts(prog: Program) -> None:
                 shost.host_blocked.counter.value_(),
                 shost.host_failed.value_(),
                 shost.shost_state.format_(type_name=False),
-                hex(__get_iscsi_session(shost).value_()),
+                hex(__get_iscsi_session(prog, shost).value_()),
             ]
         )
     print_table(output)
+
+
+def print_iscsi_report(prog) -> None:
+    """
+    Prints a comprehensive report including iscsi table and session stats. More info can be added later if needed.
+    """
+    print_iscsi_table(prog)
+    print()
+    output = {}
+
+    for session in for_each_iscsi_session(prog):
+        print("**********")
+        conn = session.leadconn
+
+        persistent_address = escape_ascii_string(
+            conn.persistent_address.string_()
+        )
+        persistent_port = int(conn.persistent_port)
+        output["Session"] = hex(session.value_())
+        output["SID"] = str(int(session.cls_session.sid))
+        output["Persistent Portal"] = f"{persistent_address}:{persistent_port}"
+        output["Iface Name"] = escape_ascii_string(session.ifacename.string_())
+        output["Initiatorname"] = escape_ascii_string(
+            session.initiatorname.string_()
+        )
+        output["Targetname"] = escape_ascii_string(
+            session.targetname.string_()
+        )
+
+        print_dictionary(output)
+        print()
+
+
+class IscsiDump(CorelensModule):
+    """
+    Dump iscsi info
+    """
+
+    name = "iscsi"
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        print_iscsi_report(prog)

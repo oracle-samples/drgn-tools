@@ -4,4 +4,4 @@ from drgn_tools import iscsi
 
 
 def test_iscsi(prog):
-    iscsi.print_iscsi_hosts(prog)
+    iscsi.print_iscsi_report(prog)
