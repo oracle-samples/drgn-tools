@@ -17,4 +17,4 @@ def test_list_dentries_in_hashtable(prog):
 
 
 def test_ls(prog):
-    dentry.ls(prog, "/")
+    dentry.ls(prog, "/", None, 0)
