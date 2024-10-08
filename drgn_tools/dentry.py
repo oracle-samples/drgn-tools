@@ -381,24 +381,44 @@ def __file_type(mode: Object) -> str:
     return "UNKN"
 
 
-def ls(prog: Program, directory: str, count: bool = False) -> None:
+def ls(
+    prog: Program,
+    directory: str,
+    parent_dentry: Object,
+    depth: int,
+    count: bool = False,
+) -> None:
     """
     Print dentry children, like the ls command
     :param directory: directory to print children of
     :param count: when true, only print counts (not the full contents)
     """
-    dentries = dentry_for_each_child(path_lookup(prog, directory).dentry)
+    if depth < 0:
+        return
 
+    subdirs = []
+    dentries = dentry_for_each_child(
+        parent_dentry if parent_dentry else path_lookup(prog, directory).dentry
+    )
+
+    print(f"{directory}:")
     pos = neg = 0
     for i, dentry in enumerate(dentries):
+        dentry_type = "positive"
         path = dentry_path_any_mount(dentry).decode()
         if dentry_is_negative(dentry):
             neg += 1
+            dentry_type = "negative"
         else:
+            if stat.S_ISDIR(int(dentry.d_inode.i_mode)):
+                subdirs.append([path, dentry])
             pos += 1
         if not count:
-            print(f"{i:05d} {path}")
-    print(f"{pos} positive, {neg} negative dentries")
+            print(f"\t{i:05d} {path} ({dentry_type})")
+    print(f"\t{pos} positive, {neg} negative dentries")
+
+    for dir in subdirs:
+        ls(prog, dir[0], dir[1], depth - 1, count)
 
 
 class Ls(CorelensModule):
@@ -411,6 +431,14 @@ class Ls(CorelensModule):
     run_when = "never"
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
+        def non_negative_int(value):
+            ivalue = int(value)
+            if ivalue < 0:
+                raise argparse.ArgumentTypeError(
+                    f"Invalid depth value: {value}. Depth must be a non-negative integer."
+                )
+            return ivalue
+
         parser.add_argument(
             "directory",
             type=str,
@@ -422,9 +450,16 @@ class Ls(CorelensModule):
             action="store_true",
             help="only print counts, rather than every element",
         )
+        parser.add_argument(
+            "--depth",
+            "-d",
+            type=non_negative_int,
+            default=0,
+            help="Print the dentries of subdirectories recursively up to the specified depth.",
+        )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
-        ls(prog, args.directory, count=args.count)
+        ls(prog, args.directory, None, depth=args.depth, count=args.count)
 
 
 class DentryCache(CorelensModule):
