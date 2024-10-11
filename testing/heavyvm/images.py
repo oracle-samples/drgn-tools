@@ -1,4 +1,4 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 Describes the "heavy" images used for running tests
@@ -37,28 +37,28 @@ CONFIGURATIONS = [
     # OL9: UEK 7
     ImageInfo(
         9,
-        2,
+        4,
         7,
         "x86_64",
-        "https://yum.oracle.com/ISOS/OracleLinux/OL9/u1/x86_64/OracleLinux-R9-U1-x86_64-boot-uek.iso",  # noqa
-        [],
+        "https://yum.oracle.com/ISOS/OracleLinux/OL9/u4/x86_64/OracleLinux-R9-U4-x86_64-boot-uek.iso",  # noqa
+        ["drgn-0.0.29-1.0.1.el9.x86_64.rpm"],
     ),
     # OL8: UEK 6-7
     ImageInfo(
         8,
-        8,
+        10,
         7,
         "x86_64",
-        "https://yum.oracle.com/ISOS/OracleLinux/OL8/u7/x86_64/x86_64-boot-uek.iso",  # noqa
-        [],
+        "https://yum.oracle.com/ISOS/OracleLinux/OL8/u10/x86_64/OracleLinux-R8-U10-x86_64-boot-uek.iso",  # noqa
+        ["drgn-0.0.29-1.0.1.el8.x86_64.rpm"],
     ),
     ImageInfo(
         8,
-        8,
+        10,
         6,
         "x86_64",
-        "https://yum.oracle.com/ISOS/OracleLinux/OL8/u7/x86_64/x86_64-boot-uek.iso",  # noqa
-        [],
+        "https://yum.oracle.com/ISOS/OracleLinux/OL8/u10/x86_64/OracleLinux-R8-U10-x86_64-boot-uek.iso",  # noqa
+        ["drgn-0.0.29-1.0.1.el8.x86_64.rpm"],
     ),
     # OL7: UEK 4-6
     ImageInfo(
@@ -67,7 +67,7 @@ CONFIGURATIONS = [
         6,
         "x86_64",
         "https://yum.oracle.com/ISOS/OracleLinux/OL7/u9/x86_64/x86_64-boot-uek.iso",  # noqa
-        ["drgn-0.0.25-1.0.2.el7.x86_64.rpm"],
+        ["drgn-0.0.29-1.0.1.el7.x86_64.rpm"],
     ),
     ImageInfo(
         7,
@@ -75,7 +75,7 @@ CONFIGURATIONS = [
         5,
         "x86_64",
         "https://yum.oracle.com/ISOS/OracleLinux/OL7/u9/x86_64/x86_64-boot-uek.iso",  # noqa
-        ["drgn-0.0.25-1.0.2.el7.x86_64.rpm"],
+        ["drgn-0.0.29-1.0.1.el7.x86_64.rpm"],
     ),
     ImageInfo(
         7,
@@ -83,7 +83,7 @@ CONFIGURATIONS = [
         4,
         "x86_64",
         "https://yum.oracle.com/ISOS/OracleLinux/OL7/u9/x86_64/x86_64-boot-uek.iso",  # noqa
-        ["drgn-0.0.25-1.0.2.el7.x86_64.rpm"],
+        ["drgn-0.0.29-1.0.1.el7.x86_64.rpm"],
     ),
 ]
 NAME_TO_CONFIGURATION = {i.name: i for i in CONFIGURATIONS}
