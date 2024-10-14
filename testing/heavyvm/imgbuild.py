@@ -278,10 +278,7 @@ def run_post_install(ctx: Context) -> None:
         # Starting in OL9, it looks like fio engines are packaged separately
         install_packages.append("fio-engine-libaio")
 
-    # Install drgn either from Yum repo (OL8+, or from RPMs hosted on kickstart
-    # server)
-    if ctx.image_info.ol >= 8:
-        install_packages.append("drgn")
+    # Install drgn from RPMs hosted on kickstart server
     for filename in ctx.image_info.rpms:
         install_packages.append(ctx.ks_srv.url_for(Path(filename).absolute()))
 

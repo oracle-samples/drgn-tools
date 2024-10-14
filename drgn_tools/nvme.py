@@ -215,7 +215,12 @@ def for_each_msi_desc(pdev: Object) -> Iterable[Object]:
         # structure.
         list = pdev.dev.msi.data.list
 
-    if list is not None:
+    # Unfortunately, some of the commits below (which switch to an xarray) have
+    # been backported without deleting the list_heads above. This leaves a valid
+    # list in these structures, but with null next/prev fields. Detect NULL
+    # entries here and assume that's the case, falling through to the xarray
+    # case.
+    if list is not None and list.next:
         return list_for_each_entry(
             "struct msi_desc", list.address_of_(), "list"
         )
