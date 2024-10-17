@@ -61,7 +61,7 @@ def do_test(
     print("=" * 30 + f" TESTING {ident} W/ {kind} " + "=" * 30)
 
     cmd = [
-        "python3",
+        sys.executable,
         "-m",
         "pytest",
     ]
