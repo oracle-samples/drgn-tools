@@ -90,6 +90,7 @@ class TestRunner:
 
     _vms_up: bool
     _ssh: t.Dict[str, SSHClient]
+    _xml: JUnitXml
 
     def _section_start(
         self, name: str, text: str, collapsed: bool = False
@@ -164,6 +165,7 @@ class TestRunner:
         self.overlay_dir = overlay_dir or self.image_dir
         self._vms_up = False
         self._ssh = {}
+        self._xml = JUnitXml()
         self.images = images or []
         if self.vm_info_file.exists():
             with self.vm_info_file.open() as f:
@@ -257,11 +259,12 @@ class TestRunner:
         xmldata = sftp.file("/root/test/test.xml").read()
         return JUnitXml.fromstring(xmldata)
 
-    def run_test(self, cmd: str) -> int:
+    def run_test(self, cmd: str, ctf: bool = False) -> int:
         fail_list = []
-        xml = JUnitXml()
         for vm in self.vms.values():
             slug = f"ol{vm.ol_version[0]}uek{vm.uek_version}"
+            if ctf:
+                slug += "_CTF"
             self._section_start(
                 f"test_{slug}", f"Running test on {slug}", collapsed=True
             )
@@ -273,7 +276,7 @@ class TestRunner:
             else:
                 print("Failed.")
                 fail_list.append(vm.name)
-            xml += self._get_result_xml(vm)
+            self._xml += self._get_result_xml(vm)
             self._section_end(f"test_{slug}")
         if fail_list:
             print(
@@ -286,7 +289,7 @@ class TestRunner:
         output = Path("heavyvm.xml")
         if output.exists():
             output.unlink()
-        xml.write(str(output))
+        self._xml.write(str(output))
         return len(fail_list)
 
 
@@ -330,11 +333,14 @@ def main():
     )
     with r:
         r.copy_extract_files(args.tarball)
-        sys.exit(
-            r.run_test(
-                "cd /root/test && python3 -m pytest --junitxml=test.xml -o junit_logging=all tests"
-            )
+        test_cmd = (
+            "cd /root/test && "
+            "python3 -m pytest --junitxml test.xml -o junit_logging=all tests"
         )
+        fail_count = 0
+        fail_count += r.run_test(test_cmd)
+        fail_count += r.run_test(test_cmd + " --ctf", ctf=True)
+        sys.exit(fail_count)
 
 
 if __name__ == "__main__":
