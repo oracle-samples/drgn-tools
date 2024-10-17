@@ -363,8 +363,6 @@ def run_tests_commands(
             "-m",
             "pytest",
             "tests",
-            "--cov=drgn_tools",
-            "--cov=tests",
             "-rP",
         ]
         if ctf:
