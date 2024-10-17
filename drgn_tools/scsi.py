@@ -3,6 +3,7 @@
 """
 Helper to print scsi hosts
 """
+import argparse
 from typing import Iterator
 
 import drgn
@@ -11,6 +12,7 @@ from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
 
+from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_table
 from drgn_tools.util import has_member
 
@@ -80,3 +82,14 @@ def print_scsi_hosts(prog: Program) -> None:
             ]
         )
     print_table(output)
+
+
+class ScsiInfo(CorelensModule):
+    """
+    Corelens Module for scsi device information
+    """
+
+    name = "scsiinfo"
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        print_scsi_hosts(prog)
