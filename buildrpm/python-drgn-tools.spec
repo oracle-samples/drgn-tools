@@ -35,10 +35,8 @@ Requires:       drgn >= 0.0.25, drgn < 0.0.30
 %prep
 %autosetup -n drgn-tools-%{version}
 echo '__version__ = "%{version}"' > drgn_tools/_version.py
-rm -rf drgn_tools/v2/
 
 %build
-export DRGN_TOOLS_V2_OMIT=1
 %py3_build_wheel
 
 

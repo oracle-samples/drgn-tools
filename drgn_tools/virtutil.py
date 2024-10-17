@@ -3,10 +3,14 @@
 """
 Utilities for virtualization
 """
+import argparse
+
 from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.cpumask import for_each_possible_cpu
 from drgn.helpers.linux.percpu import per_cpu
+
+from drgn_tools.corelens import CorelensModule
 
 
 def get_platform_arch(prog: Program) -> str:
@@ -77,3 +81,18 @@ def show_platform(prog: Program) -> None:
     """
     platform = get_platform(prog)
     print(platform)
+
+
+class VirtUtil(CorelensModule):
+    """
+    This module contains helper regarding virtualization.
+    Current functionality are :
+    cpu hotplug state
+    platform type, which includes architecture and hypervisor type
+    """
+
+    name = "virt"
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        show_platform(prog)
+        return

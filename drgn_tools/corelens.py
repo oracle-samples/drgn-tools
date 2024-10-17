@@ -257,17 +257,7 @@ def all_corelens_modules() -> Dict[str, CorelensModule]:
     # modules, but for now, we just import everything in drgn_tools so we can
     # be confident we have them all.
     paths = [str(Path(__file__).parent)]
-    mods = list(pkgutil.iter_modules(path=paths, prefix="drgn_tools."))
-    try:
-        import drgn_tools.v2  # noqa
-
-        paths = [str(Path(__file__).parent / "v2")]
-        mods.extend(
-            list(pkgutil.iter_modules(path=paths, prefix="drgn_tools.v2."))
-        )
-    except ModuleNotFoundError:
-        pass
-    for mod in mods:
+    for mod in pkgutil.iter_modules(path=paths, prefix="drgn_tools."):
         importlib.import_module(mod.name)
 
     subclasses = collections.deque(CorelensModule.__subclasses__())
