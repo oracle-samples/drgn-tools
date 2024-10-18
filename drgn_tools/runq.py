@@ -11,6 +11,8 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
 
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.task import task_lastrun2now
+from drgn_tools.util import timestamp_str
 
 # List runqueus per cpu
 
@@ -67,18 +69,26 @@ def _print_cfs_runq(runqueue: Object) -> None:
 
 def run_queue(prog: Program) -> None:
     """
-    Print tasks which are in the RT and CFS runqueues on each CPU
+    Print tasks which are in the RT and CFS runqueues on each CPU.
+    processes running more than x seconds.
+
+    :param prog: drgn program
     """
 
     # _cpu = drgn.helpers.linux.cpumask.for_each_online_cpu(prog)
     for cpus in for_each_online_cpu(prog):
         runqueue = per_cpu(prog["runqueues"], cpus)
-        comm = escape_ascii_string(runqueue.curr.comm.string_())
-        pid = runqueue.curr.pid.value_()
+        curr_task_addr = runqueue.curr.value_()
+        curr_task = runqueue.curr[0]
+        comm = escape_ascii_string(curr_task.comm.string_())
+        pid = curr_task.pid.value_()
+        run_time = task_lastrun2now(curr_task)
+        prio = curr_task.prio.value_()
         print(f"CPU {cpus} RUNQUEUE: {runqueue.address_of_().value_():x}")
         print(
-            f"  CURRENT:   PID: {pid:<6d}  TASK: {runqueue.curr.value_():x}"
-            f'  COMMAND: "{comm}"',
+            f"  CURRENT:   PID: {pid:<6d}  TASK: {curr_task_addr:x}  PRIO: {prio}"
+            f'  COMMAND: "{comm}"'
+            f"  RUNTIME: {timestamp_str(run_time)}",
         )
         # RT PRIO_ARRAY
         _print_rt_runq(runqueue)
