@@ -1,7 +1,7 @@
 # Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 Name:           python-drgn-tools
-Version:        1.1.0
+Version:        1.1.1
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -60,6 +60,13 @@ rm %{buildroot}/usr/bin/DRGN
 %{_mandir}/man1/corelens.1.gz
 
 %changelog
+* Wed Oct 30 2024 Stephen Brennan <stephen.s.brennan@oracle.com> - 1.1.1-1
+- Fix crash for NULL mutex owner in corelens "lock" module [Orabug: 37186686]
+- Fix crash for NULL hc.uuid in dm helper [Orabug: 37170994]
+- Handle circular freelists in slabinfo [Orabug: 37170864]
+- Fix missing drgn dependency for OL8 [Orabug: 37126783]
+- Add support for drgn 0.0.29
+
 * Tue Aug 27 2024 Stephen Brennan <stephen.s.brennan@oracle.com> - 1.1.0-1
 - Update to 1.1.0
 
