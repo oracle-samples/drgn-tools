@@ -23,9 +23,7 @@ from drgn_tools.debuginfo import KernelVersion
 CORE_DIR = Path.cwd() / "testdata/vmcores"
 
 
-def vmcore_test(
-    vmcore: str, ctf: bool = False, coverage: bool = False, host_ol: int = 9
-) -> str:
+def vmcore_test(vmcore: str, ctf: bool = False, host_ol: int = 9) -> str:
     uname = CORE_DIR / vmcore / "UTS_RELEASE"
     with uname.open() as f:
         release = f.read().strip()
@@ -50,13 +48,10 @@ def vmcore_test(
             f"--vmcore-dir={str(CORE_DIR)}",
         ],
         ctf=ctf,
-        coverage=coverage,
     )
 
 
-def do_test(
-    ident: str, args: List[str], ctf: bool = False, coverage: bool = False
-) -> str:
+def do_test(ident: str, args: List[str], ctf: bool = False) -> str:
     kind = "CTF" if ctf else "DWARF"
     print("=" * 30 + f" TESTING {ident} W/ {kind} " + "=" * 30)
 
@@ -65,11 +60,6 @@ def do_test(
         "-m",
         "pytest",
     ]
-    if coverage:
-        cmd += [
-            "--cov=drgn_tools",
-            "--cov-append",
-        ]
     if ctf:
         cmd.append("--ctf")
 
@@ -81,9 +71,7 @@ def do_test(
         return "pass"
 
 
-def live_test(
-    ctf: bool = False, coverage: bool = False, host_ol: int = 9
-) -> str:
+def live_test(ctf: bool = False, host_ol: int = 9) -> str:
     release = os.uname().release
     kind = "CTF" if ctf else "DWARF"
     kver = KernelVersion.parse(release)
@@ -102,7 +90,7 @@ def live_test(
         path = f"/usr/lib/debug/lib/modules/{release}/vmlinux"
     if not os.path.exists(path):
         return f"skip ({kind} not available)"
-    return do_test("LIVE", [], ctf=ctf, coverage=coverage)
+    return do_test("LIVE", [], ctf=ctf)
 
 
 def osrelease() -> Dict[str, str]:
@@ -138,16 +126,6 @@ def main() -> None:
         dest="live",
         action="store_false",
         help="do not run live kernel test",
-    )
-    parser.add_argument(
-        "--coverage",
-        action="store_true",
-        help="run code coverage (requires pytest-cov)",
-    )
-    parser.add_argument(
-        "--xml",
-        action="store_true",
-        help="collect output in XML (requires junitparser)",
     )
     parser.add_argument(
         "--core-dir",
@@ -188,35 +166,28 @@ def main() -> None:
 
     print(cores)
 
-    if args.coverage:
-        cov = Path.cwd() / ".coverage"
-        if cov.is_file():
-            cov.unlink()
-
     fail = False
     results = defaultdict(list)
     for core in cores:
         if args.dwarf:
-            res = vmcore_test(core, coverage=args.coverage, host_ol=ol_ver)
+            res = vmcore_test(core, host_ol=ol_ver)
             results[res].append(f"{core} (DWARF)")
             if "fail" in res or "error" in res:
                 fail = True
 
         if args.ctf:
-            res = vmcore_test(
-                core, ctf=True, coverage=args.coverage, host_ol=ol_ver
-            )
+            res = vmcore_test(core, ctf=True, host_ol=ol_ver)
             results[res].append(f"{core} (CTF)")
             if "fail" in res or "error" in res:
                 fail = True
 
     if args.live:
-        res = live_test(coverage=args.coverage, host_ol=ol_ver)
+        res = live_test(host_ol=ol_ver)
         results[res].append("live (DWARF)")
         if "fail" in res or "error" in res:
             fail = True
 
-        res = live_test(ctf=True, coverage=args.coverage, host_ol=ol_ver)
+        res = live_test(ctf=True, host_ol=ol_ver)
         results[res].append("live (CTF)")
         if "fail" in res or "error" in res:
             fail = True
