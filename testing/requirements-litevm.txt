@@ -1,0 +1,3 @@
+# Requirements for running the litevm tests.
+# Used in Github CI.
+pytest

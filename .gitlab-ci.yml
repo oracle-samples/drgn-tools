@@ -4,11 +4,11 @@ vmtest:
   # time.
   resource_group: VM
   script:
-    - rm -rf .tox
+    - python -m venv venv --system-site-packages
+    - venv/bin/pip install -r testing/requirements-heavyvm.txt
     - git archive HEAD -o archive.tar.gz
-    - tox -e runner --notest
     - mkdir -p tmp/overlays tmp/info
-    - tox -e runner -- python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz
+    - venv/bin/python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz
   artifacts:
     when: always
     paths:
@@ -18,9 +18,9 @@ vmtest:
 
 vmcore DWARF:
   script:
-    - rm -rf .tox
-    - tox -e runner --notest
-    - tox -e runner -- python -m testing.vmcore test -e py39 -j 4 --core-directory /var/drgn-tools/vmcores
+    - python -m venv venv --system-site-packages
+    - venv/bin/pip install -r testing/requirements-vmcore.txt
+    - venv/bin/python -m testing.vmcore test -j 4 --core-directory /var/drgn-tools/vmcores
   artifacts:
     when: always
     paths:
@@ -30,9 +30,9 @@ vmcore DWARF:
 
 vmcore CTF:
   script:
-    - rm -rf .tox
-    - tox -e runner --notest
-    - tox -e runner -- python -m testing.vmcore test -e py39 -j 4 --ctf --core-directory /var/drgn-tools/vmcores
+    - python -m venv venv --system-site-packages
+    - venv/bin/pip install -r testing/requirements-vmcore.txt
+    - venv/bin/python -m testing.vmcore test -j 4 --ctf --core-directory /var/drgn-tools/vmcores
   artifacts:
     when: always
     paths:

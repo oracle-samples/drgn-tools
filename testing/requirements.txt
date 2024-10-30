@@ -1,6 +1,0 @@
-oci>=2.23.2,!=2.118.1
-oci-cli
-paramiko
-rich
-types-paramiko
-junitparser==3.1.0
