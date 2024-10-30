@@ -20,11 +20,19 @@ jobs:
       - name: Run pre-commit hooks
         run: pre-commit run --all-files --show-diff-on-failure
   test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
-        # OL7 and OL8 use 3.6. OL9 uses 3.9. Also test on the latest.
-        python-minor: ["6", "9", "12"]
+        # Our minimum supported version of Python is 3.6, used by Oracle Linux 7
+        # & 8. Ideally we would run tests on that, along with Python 3.9 for
+        # Oracle Linux 9, and maybe Python 3.12 for an upcoming Oracle Linux 10.
+        # However, practicality rules here. The binutils provided in Ubuntu
+        # 20.04 is not recent enough for our libctf usage, but 20.04 is the only
+        # remaining Ubuntu image with Python 3.6 available in Github actions.
+        # So we have to eliminate Python 3.6 from our test matrix. Other CI
+        # tests do run on Python 3.6, and there is the "vermin" pre-commit hook
+        # which detects code incompatible with 3.6.
+        python-minor: ["9", "12"]
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +43,10 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install qemu-kvm zstd gzip bzip2 cpio busybox-static fio
+          sudo apt-get install qemu-kvm zstd gzip bzip2 cpio busybox-static fio \
+                               autoconf automake check gcc git liblzma-dev \
+                               libelf-dev libdw-dev libtool make pkgconf zlib1g-dev \
+                               binutils-dev
           sudo wget -O /usr/bin/rpm2cpio https://github.com/rpm-software-management/rpm/raw/rpm-4.19.0-release/scripts/rpm2cpio.sh
           echo '0403da24a797ccfa0cfd37bd4a6d6049370b9773e558da6173ae6ad25f97a428 /usr/bin/rpm2cpio' | sha256sum -c -
           sudo chmod 755 /usr/bin/rpm2cpio
@@ -45,6 +56,13 @@ jobs:
         run: |
           python -m venv venv
           venv/bin/pip install -r testing/requirements-litevm.txt
+          venv/bin/pip install setuptools
+      - name: Build and install drgn with CTF support
+        run: |
+          cd ..
+          git clone https://github.com/brenns10/drgn -b ctf_0.0.29
+          cd drgn
+          ../drgn-tools/venv/bin/python setup.py install
       - name: Run tests
         run: |
-          venv/bin/python -m testing.litevm.vm --delete-after-test
+          venv/bin/python -m testing.litevm.vm --delete-after-test --with-ctf
