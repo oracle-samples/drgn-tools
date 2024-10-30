@@ -12,7 +12,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from itertools import combinations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict
@@ -296,9 +295,6 @@ def find_vmlinuz(release: str, root_dir: Path) -> Path:
 def run_vm(kernel: TestKernel, extract_dir: Path, commands: List[List[str]]):
     release = kernel.latest_release()
     extract_dir = extract_dir / release
-    if not extract_dir.is_dir():
-        extract_rpms(kernel.get_rpms(), extract_dir, kernel)
-
     script = ""
     if commands:
         for argv in commands:
@@ -391,28 +387,35 @@ def main():
             "-rP",
         ]
     ctf_enabled = [False]
-    if args.ctf:
+    if args.with_ctf:
         ctf_enabled.append(True)
-    for k, ctf in combinations(TEST_KERNELS, ctf_enabled):
-        k.cache_dir = args.yum_cache_dir
+    for k in TEST_KERNELS:
         if args.kernel and not fnmatch.fnmatch(k.slug(), args.kernel):
             continue
-        if ctf:
-            section_name = f"uek{k.uek_ver}_CTF"
-            section_text = f"Run tests on UEK{k.uek_ver} with CTF"
-            # add the CTF argument here
-            run_cmd = cmd + ["--ctf"]
-        else:
-            section_name = f"uek{k.uek_ver}"
-            section_text = f"Run tests on UEK{k.uek_ver}"
-            run_cmd = cmd
-        with ci_section(section_name, section_text):
+
+        # Fetch the Yum index and RPMs in the CI section that says so.
+        k.cache_dir = args.yum_cache_dir
+        with ci_section(f"uek{k.uek_ver}_fetch", f"Fetching UEK {k.uek_ver}"):
             release = k.latest_release()
             extract_dir = args.extract_dir / release
-            run_vm(k, args.extract_dir, [run_cmd])
-            if args.delete_after_test:
-                shutil.rmtree(extract_dir)
-                k.delete_cache()
+            if not extract_dir.is_dir():
+                extract_rpms(k.get_rpms(), extract_dir, k)
+
+        for ctf in ctf_enabled:
+            if ctf:
+                section_name = f"uek{k.uek_ver}_CTF"
+                section_text = f"Run tests on UEK{k.uek_ver} with CTF"
+                # add the CTF argument here
+                run_cmd = cmd + ["--ctf"]
+            else:
+                section_name = f"uek{k.uek_ver}"
+                section_text = f"Run tests on UEK{k.uek_ver}"
+                run_cmd = cmd
+            with ci_section(section_name, section_text):
+                run_vm(k, args.extract_dir, [run_cmd])
+        if args.delete_after_test:
+            shutil.rmtree(extract_dir)
+            k.delete_cache()
 
 
 if __name__ == "__main__":
