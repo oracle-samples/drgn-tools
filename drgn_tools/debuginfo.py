@@ -675,7 +675,9 @@ class CtfCompatibility(enum.Enum):
             return cls.NO
 
         # Prior to UEK4, it is untested and will not be tested.
-        if kver.uek_version < 4:
+        # UEK4 itself has broken CTF data (e.g. struct page) and this means that
+        # a large majority of helpers cannot function.
+        if kver.uek_version <= 4:
             return cls.NO
 
         # The OL7 libctf version does not support CTF generated for kernels on
@@ -705,9 +707,7 @@ class CtfCompatibility(enum.Enum):
             6: (2136, 312, 2),
             7: (3, 60, 2),
         }
-        if kver.uek_version == 4:
-            return cls.LIMITED_PROC
-        elif (
+        if (
             kver.uek_version < 8
             and kver.release_tuple < kallsyms_backport[kver.uek_version]
         ):
