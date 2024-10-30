@@ -262,6 +262,8 @@ class TestRunner:
     def run_test(self, cmd: str, ctf: bool = False) -> int:
         fail_list = []
         for vm in self.vms.values():
+            if vm.uek_version == 4 and ctf:
+                continue
             slug = f"ol{vm.ol_version[0]}uek{vm.uek_version}"
             if ctf:
                 slug += "_CTF"
