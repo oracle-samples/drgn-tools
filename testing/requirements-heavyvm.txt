@@ -1,0 +1,5 @@
+# Requirements for running the heavyvm tests.
+# Used in Gitlab CI.
+junitparser
+paramiko
+pytest

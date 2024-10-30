@@ -26,23 +26,8 @@ jobs:
         # OL7 and OL8 use 3.6. OL9 uses 3.9. Also test on the latest.
         python-minor: ["6", "9", "12"]
       fail-fast: false
-    env:
-      # Manually set the tox environment list to the Python version.
-      # As a result, we should set "skip missing interpreters" to false,
-      # so that we fail if the test doesn't run.
-      TOX_OVERRIDE: "tox.envlist=py3${{ matrix.python-minor }}"
-      TOX_SKIP_MISSING_INTERPRETERS: "false"
     steps:
       - uses: actions/checkout@v4
-      # If we rely on using the same Python version for tox as we do for the
-      # testing version of Python, we end up getting different versions of tox
-      # with different behavior. Let's setup a well-defined python version for
-      # tox and use that. We need to place this one before the regular python
-      # setup so that the regular python takes precedence.
-      - name: Set up Python for Tox
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.12
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -58,11 +43,8 @@ jobs:
         # Pinned virtualenv and tox are for the last versions which support
         # detecting Python 3.6 and running tests on it.
         run: |
-          python3.12 -m pip install --user --break-system-packages 'virtualenv<20.22.0' 'tox<4.5.0'
-          sed -i 's/sitepackages = true/sitepackages = false/' tox.ini
-          tox list
-          tox --notest
-          tox -e runner --notest
+          python -m venv venv
+          venv/bin/pip install -r testing/requirements-litevm.txt
       - name: Run tests
         run: |
-          tox -e runner -- python -m testing.litevm.vm --delete-after-test --python-version 3${{ matrix.python-minor }}
+          venv/bin/python -m testing.litevm.vm --delete-after-test

@@ -18,7 +18,6 @@ from tempfile import NamedTemporaryFile
 from threading import Event
 from typing import Any
 from typing import List
-from typing import Optional
 from typing import Tuple
 
 import oci.config
@@ -283,7 +282,6 @@ def _skip_ctf(ctf: bool, uname: str) -> bool:
 
 def test(
     vmcore_list: List[str],
-    env: Optional[str] = None,
     ctf: bool = False,
     parallel: int = 1,
 ) -> None:
@@ -300,13 +298,6 @@ def test(
     skipped = []
     xml = JUnitXml()
 
-    tox_cmd = ["tox"]
-    if env:
-        tox_cmd += ["-e", env]
-    # Initialize the virtualenv once, and then tell tox not to do it again.
-    subprocess.run(tox_cmd + ["--notest"])
-    tox_cmd.append("--skip-pkg-install")
-
     with ExitStack() as es:
         pool = es.enter_context(ThreadPoolExecutor(max_workers=parallel))
         futures = []
@@ -322,8 +313,10 @@ def test(
                 NamedTemporaryFile("w", suffix=".xml", delete=False)
             )
             xml_run.close()  # not deleted until context is ended
-            cmd = tox_cmd + [
-                "--",
+            cmd = [
+                sys.executable,
+                "-m",
+                "pytest",
                 f"--vmcore={core_name}",
                 f"--vmcore-dir={str(CORE_DIR)}",
                 f"--junitxml={xml_run.name}",
@@ -367,7 +360,7 @@ def get_client() -> ObjectStorageClient:
     except ConfigFileNotFound:
         sys.exit(
             "error: You need to configure OCI!\n"
-            'Try running ".tox/runner/bin/oci setup bootstrap"'
+            'Try running "oci setup bootstrap"'
         )
 
 
@@ -403,12 +396,6 @@ def main():
         "use fnmmatch patterns to specify several cores at once.",
     )
     parser.add_argument(
-        "--tox-env",
-        "-e",
-        default=None,
-        help="run tests within this tox environment",
-    )
-    parser.add_argument(
         "--ctf",
         action="store_true",
         help="Use CTF debuginfo for tests rather than DWARF (skips vmcores "
@@ -436,7 +423,6 @@ def main():
     elif args.action == "test":
         test(
             args.vmcore,
-            env=args.tox_env,
             ctf=args.ctf,
             parallel=args.parallel,
         )
