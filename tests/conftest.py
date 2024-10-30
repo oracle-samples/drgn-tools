@@ -35,6 +35,9 @@ def prog() -> drgn.Program:
         try:
             from drgn.helpers.linux.ctf import load_ctf
 
+            # CTF_FILE may be None here, in which case the default CTF file
+            # location is used (similar to below, where default DWARF debuginfo
+            # is loaded if we don't have a path).
             load_ctf(p, path=CTF_FILE)
             p.cache["using_ctf"] = True
         except ModuleNotFoundError:
@@ -133,8 +136,12 @@ def pytest_configure(config):
         CORE_DIR = Path(core_dir)
     vmcore = config.getoption("vmcore")
     CTF = config.getoption("ctf")
-    debuginfo_kind = "DWARF"
+    debuginfo_kind = "CTF" if CTF else "DWARF"
     if vmcore:
+        # With vmcore tests, we need to manually find the debuginfo alongside
+        # the vmcore in the same directory. For heavyvm or litevm tests, the
+        # debuginfo is installed to the default locations, so we don't need any
+        # logic for them.
         VMCORE_NAME = vmcore
         vmcore_dir = CORE_DIR / vmcore
         vmcore_file = vmcore_dir / "vmcore"
@@ -152,7 +159,6 @@ def pytest_configure(config):
                     returncode=1,
                 )
             CTF_FILE = str(ctf_file)
-            debuginfo_kind = "CTF"
         else:
             vmlinux_file = vmcore_dir / "vmlinux"
             if not vmcore_file.is_file() or not vmlinux_file.is_file():
@@ -168,7 +174,7 @@ def pytest_configure(config):
         sys.version_info.major,
         sys.version_info.minor,
         sys.version_info.micro,
-        f"vmcore {vmcore}" if vmcore else "live",
+        f"vmcore {vmcore}" if vmcore else f"live {os.uname().release}",
         debuginfo_kind,
     )
     if CTF:
