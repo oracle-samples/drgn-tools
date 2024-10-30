@@ -12,15 +12,15 @@ PYTHON ?= python3
 
 .PHONY: litevm-test
 litevm-test:
-	tox --notest
-	-tox -e runner -- python -m testing.litevm.vm
+	$(PYTHON) -m testing.litevm.vm
 
 
 .PHONY: vmcore-test
 vmcore-test:
-	-tox -e runner -- python -m testing.vmcore test
+	$(PYTHON) -m testing.vmcore test
 
 
+.PHONY: test
 test: litevm-test vmcore-test
 
 .PHONY: docs
@@ -28,7 +28,7 @@ docs:
 	@$(PYTHON) -m tox -e docs
 
 drgn_tools/_version.py:
-	python setup.py -V
+	$(PYTHON) setup.py -V
 
 .PHONY: rsync
 rsync: drgn_tools/_version.py

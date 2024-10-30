@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from itertools import combinations
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Dict
@@ -345,36 +346,6 @@ def run_vm(kernel: TestKernel, extract_dir: Path, commands: List[List[str]]):
         sys.exit(1)
 
 
-def run_tests_commands(
-    pyver: Optional[str], ctf: bool = False
-) -> List[List[str]]:
-    tox = Path(__file__).parent.parent.parent / ".tox"
-    commands = []
-    for venv in tox.iterdir():
-        if not venv.is_dir():
-            continue
-        if not venv.name.startswith("py"):
-            continue
-        pytest = venv / "bin/pytest"
-        if not pytest.exists():
-            continue
-        cmd = [
-            str(venv / "bin/python"),
-            "-m",
-            "pytest",
-            "tests",
-            "-rP",
-        ]
-        if ctf:
-            cmd.append("--ctf")
-        if pyver and venv.name.endswith(pyver):
-            return [cmd]
-        commands.append(cmd)
-    if pyver:
-        raise Exception(f"Could not find python version {pyver}")
-    return commands
-
-
 def main():
     parser = argparse.ArgumentParser(description="Lite VM Runner")
     parser.add_argument(
@@ -394,13 +365,9 @@ def main():
         help="Match against the given kernel (eg *uek6*)",
     )
     parser.add_argument(
-        "--python-version",
-        help="Only run against one python version in tox env",
-    )
-    parser.add_argument(
-        "--ctf",
+        "--with-ctf",
         action="store_true",
-        help="Use CTF debuginfo for tests rather than DWARF",
+        help="Run tests with CTF in addition to DWARF",
     )
     parser.add_argument(
         "--delete-after-test",
@@ -414,21 +381,35 @@ def main():
     )
     args = parser.parse_args()
     if args.command:
-        if args.python_version:
-            sys.exit("Cannot specify --python-version and custom command")
-        commands = [args.command]
+        cmd = args.command
     else:
-        commands = run_tests_commands(args.python_version, args.ctf)
-    for k in TEST_KERNELS:
+        cmd = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests",
+            "-rP",
+        ]
+    ctf_enabled = [False]
+    if args.ctf:
+        ctf_enabled.append(True)
+    for k, ctf in combinations(TEST_KERNELS, ctf_enabled):
         k.cache_dir = args.yum_cache_dir
         if args.kernel and not fnmatch.fnmatch(k.slug(), args.kernel):
             continue
-        section_name = f"uek{k.uek_ver}"
-        section_text = f"Run tests on UEK{k.uek_ver}"
+        if ctf:
+            section_name = f"uek{k.uek_ver}_CTF"
+            section_text = f"Run tests on UEK{k.uek_ver} with CTF"
+            # add the CTF argument here
+            run_cmd = cmd + ["--ctf"]
+        else:
+            section_name = f"uek{k.uek_ver}"
+            section_text = f"Run tests on UEK{k.uek_ver}"
+            run_cmd = cmd
         with ci_section(section_name, section_text):
             release = k.latest_release()
             extract_dir = args.extract_dir / release
-            run_vm(k, args.extract_dir, commands)
+            run_vm(k, args.extract_dir, [run_cmd])
             if args.delete_after_test:
                 shutil.rmtree(extract_dir)
                 k.delete_cache()
