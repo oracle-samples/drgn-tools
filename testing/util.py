@@ -2,9 +2,11 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import os
 import time
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator
+from typing import Optional
 
 BASE_DIR = (Path(__file__).parent.parent / "testdata").absolute()
 """
@@ -70,3 +72,25 @@ def ci_section(
         yield
     finally:
         ci_section_end(name)
+
+
+def combine_junit_xml(
+    main: Optional[ET.ElementTree],
+    new: ET.ElementTree,
+) -> ET.ElementTree:
+    """
+    Combine the JUnit XML files created by pytest. While we could use the
+    "junitxml" PyPI package for this, all we really need to know about JUnit XML
+    is that there is a root element named "testsuites", child elements of tag
+    type "testsuite", and then children of type "testcase".
+
+    So, to combine two files, just add its test cases into the root element.
+    """
+    if main is None:
+        return new
+
+    assert main.getroot().tag == "testsuites"
+    assert new.getroot().tag == "testsuites"
+
+    main.getroot().extend(new.getroot())
+    return main

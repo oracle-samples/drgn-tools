@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
@@ -21,7 +22,6 @@ from typing import List
 from typing import Tuple
 
 import oci.config
-from junitparser import JUnitXml
 from oci.exceptions import ConfigFileNotFound
 from oci.object_storage import ObjectStorageClient
 from oci.object_storage import UploadManager
@@ -36,6 +36,7 @@ from rich.progress import TransferSpeedColumn
 
 from drgn_tools.debuginfo import CtfCompatibility
 from drgn_tools.debuginfo import KernelVersion
+from testing.util import combine_junit_xml
 
 CORE_DIR = Path.cwd() / "testdata/vmcores"
 
@@ -250,7 +251,7 @@ def upload_all(client: ObjectStorageClient, core: str) -> None:
 
 def _test_job(
     core_name: str, cmd: List[str], xml: str
-) -> Tuple[str, bool, JUnitXml]:
+) -> Tuple[str, bool, ET.ElementTree]:
     # Runs the test silently, but prints the stdout/stderr on failure.
     with NamedTemporaryFile("w+t") as f:
         print(f"Begin testing {core_name}")
@@ -262,7 +263,7 @@ def _test_job(
             sys.stdout.write(f.read())
         runtime = time.time() - start
         print(f"Completed testing {core_name} in {runtime:.1f}")
-        run_data = JUnitXml.fromfile(xml)
+        run_data = ET.parse(xml)
     return (core_name, res.returncode == 0, run_data)
 
 
@@ -296,7 +297,7 @@ def test(
     failed = []
     passed = []
     skipped = []
-    xml = JUnitXml()
+    xml = None
 
     with ExitStack() as es:
         pool = es.enter_context(ThreadPoolExecutor(max_workers=parallel))
@@ -334,13 +335,14 @@ def test(
 
         for future in futures:
             core_name, test_passed, run_data = future.result()
-            xml += run_data
+            xml = combine_junit_xml(xml, run_data)
             if test_passed:
                 passed.append(core_name)
             else:
                 failed.append(core_name)
 
-    xml.write("vmcore.xml")
+    if xml is not None:
+        xml.write("vmcore.xml")
     print("Complete test logs: vmcore.xml")
     print("Vmcore Test Summary -- Passed:")
     print("\n".join(f"- {n}" for n in passed))
