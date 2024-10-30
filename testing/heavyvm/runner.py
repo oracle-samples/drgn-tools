@@ -7,9 +7,9 @@ import sys
 import tempfile
 import time
 import typing as t
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from junitparser import JUnitXml
 from paramiko.client import AutoAddPolicy
 from paramiko.client import SSHClient
 
@@ -20,6 +20,7 @@ from testing.heavyvm.qemu import UnixSocketRepl
 from testing.util import BASE_DIR
 from testing.util import ci_section_end
 from testing.util import ci_section_start
+from testing.util import combine_junit_xml
 
 
 @dataclasses.dataclass
@@ -90,7 +91,7 @@ class TestRunner:
 
     _vms_up: bool
     _ssh: t.Dict[str, SSHClient]
-    _xml: JUnitXml
+    _xml: t.Optional[ET.ElementTree]
 
     def _section_start(
         self, name: str, text: str, collapsed: bool = False
@@ -165,7 +166,7 @@ class TestRunner:
         self.overlay_dir = overlay_dir or self.image_dir
         self._vms_up = False
         self._ssh = {}
-        self._xml = JUnitXml()
+        self._xml = None
         self.images = images or []
         if self.vm_info_file.exists():
             with self.vm_info_file.open() as f:
@@ -250,14 +251,10 @@ class TestRunner:
             print("Result:\n" + result)
         self._section_end("run_cmd")
 
-    def _get_result_xml(self, info: VmInfo) -> JUnitXml:
+    def _get_result_xml(self, info: VmInfo) -> ET.ElementTree:
         ssh_client = self._get_ssh(info)
         sftp = ssh_client.open_sftp()
-        # This XML contains an encoding declaration, and if we decode it, that
-        # will trigger an error in the xml module. Leave it as bytes, even
-        # though the JUnitXml.fromstring() function insists it takes a str.
-        xmldata = sftp.file("/root/test/test.xml").read()
-        return JUnitXml.fromstring(xmldata)
+        return ET.parse(sftp.file("/root/test/test.xml"))
 
     def run_test(self, cmd: str, ctf: bool = False) -> int:
         fail_list = []
@@ -278,7 +275,7 @@ class TestRunner:
             else:
                 print("Failed.")
                 fail_list.append(vm.name)
-            self._xml += self._get_result_xml(vm)
+            self._xml = combine_junit_xml(self._xml, self._get_result_xml(vm))
             self._section_end(f"test_{slug}")
         if fail_list:
             print(
@@ -291,7 +288,8 @@ class TestRunner:
         output = Path("heavyvm.xml")
         if output.exists():
             output.unlink()
-        self._xml.write(str(output))
+        if self._xml is not None:
+            self._xml.write(str(output))
         return len(fail_list)
 
 
