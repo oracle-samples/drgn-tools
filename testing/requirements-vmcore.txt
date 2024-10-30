@@ -1,0 +1,7 @@
+# Requirements for running the vmcore tests.
+# Used in Gitlab CI.
+junitparser
+pytest
+# Packages required to manage (upload & download) vmcores for tests
+oci
+rich
