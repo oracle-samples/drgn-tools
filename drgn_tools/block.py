@@ -11,6 +11,7 @@ from typing import Tuple
 
 import drgn
 from drgn import cast
+from drgn import container_of
 from drgn import Object
 from drgn import TypeKind
 from drgn.helpers.common.format import decode_enum_type_flags
@@ -56,13 +57,36 @@ def blkdev_ro(bdev: Object) -> int:
     :param bdev: ``struct block_device *``
     :returns: 1 if readonly, 0 if readwrite, -1 if unknown
     """
-    if has_member(bdev, "bd_read_only"):
-        return bool(bdev.bd_read_only.value_())
+    if has_member(bdev, "__bd_flags"):
+        # v6.10: 01e198f01d55 ("bdev: move ->bd_read_only to ->__bd_flags")
+        BD_READ_ONLY = 1 << 8
+        return int(bool(bdev.__bd_flags.counter & BD_READ_ONLY))
+    elif has_member(bdev, "bd_read_only"):
+        # v5.11: 83950d359010 ("block: move the policy field to struct
+        # block_device")
+        return int(bool(bdev.bd_read_only.value_()))
     # "bd_part" is NULL if bdev was not opened yet.
     if bdev.bd_part:
-        return bdev.bd_part.policy != 0
+        return int(bdev.bd_part.policy != 0)
     else:
         return -1
+
+
+def BD_INODE(bdev: Object) -> Object:
+    """
+    Return the inode associated with a block device. Analogous to the kernel
+    function of the same name.
+
+    :param bdev: ``struct block_device *``
+    :returns: ``struct inode *``
+    """
+    if has_member(bdev, "bd_inode"):
+        return bdev.bd_inode
+    else:
+        # v6.10: 203c1ce0bb06 ("RIP ->bd_inode")
+        return container_of(
+            bdev, "struct bdev_inode", "bdev"
+        ).vfs_inode.address_of_()
 
 
 def blkdev_size(bdev: Object) -> int:
@@ -72,7 +96,7 @@ def blkdev_size(bdev: Object) -> int:
     :param bdev: ``struct block_device *``
     :returns: device size
     """
-    return int(bdev.bd_inode.i_size)
+    return BD_INODE(bdev).i_size.value_()
 
 
 def blkdev_name(bdev: Object) -> str:
@@ -84,6 +108,9 @@ def blkdev_name(bdev: Object) -> str:
     """
     if has_member(bdev, "bd_partno"):
         partno = int(bdev.bd_partno)
+    elif has_member(bdev, "__bd_flags"):
+        # v6.10: 1116b9fa15c0 ("bdev: infrastructure for flags")
+        partno = int(bdev.__bd_flags.counter & 0xFF)
     else:
         partno = int(bdev.bd_part.partno)
 
