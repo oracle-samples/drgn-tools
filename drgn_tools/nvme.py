@@ -48,12 +48,19 @@ def show_ns_info(prog: Program) -> None:
         else:
             refcount = nvme_ns.kref.refcount.counter.value_()
 
+        # In commit b4c1f33a5d59 ("nvme: reorganize nvme_ns_head fields"),
+        # pi_type was moved to the nvme_ns_head structure.
+        if hasattr(nvme_ns, "pi_type"):
+            pi_type = nvme_ns.pi_type.value_()
+        else:
+            pi_type = nvme_ns.head.pi_type.value_()
+
         rows.append(
             [
                 nvme_ns.disk.disk_name.string_().decode(),
                 "{:x}".format(nvme_ns.value_()),
                 refcount,
-                nvme_ns.pi_type.value_(),
+                pi_type,
                 nvme_ns.flags.value_(),
             ]
         )
