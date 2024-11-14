@@ -120,12 +120,9 @@ def find_pt_regs(trace: drgn.StackTrace) -> t.Optional[drgn.Object]:
             except KeyError:
                 continue
             except Exception as e:
-                # In this case, drgn misbehaves on a type of DWARF opcode
-                # which it couldn't handle anyway. The proper way to handle
-                # it is to treat it as an absent variable. Normally, we
-                # still print absent variables (since it helps to have their
-                # type info). In this case we'll just bite the bullet and
-                # skip printing the variable altogether.
+                # When drgn doesn't understand a DWARF expression opcode, it
+                # raises this error. Some instances of this have been caught and
+                # fixed, but in general this catch is a good thing to keep.
                 # https://github.com/osandov/drgn/issues/233
                 # https://github.com/osandov/drgn/issues/374
                 if "unknown DW" in str(e):
@@ -357,23 +354,18 @@ def print_frames(
                     )
                 )
 
-        # This requires drgn 0.0.22+.
         for local in frame.locals():
             try:
                 val = frame[local]
             except KeyError:
                 continue
             except Exception as e:
-                # In this case, drgn misbehaves on a type of DWARF opcode
-                # which it couldn't handle anyway. The proper way to handle
-                # it is to treat it as an absent variable. Normally, we
-                # still print absent variables (since it helps to have their
-                # type info). In this case we'll just bite the bullet and
-                # skip printing the variable altogether.
-                # TODO: when v0.0.23 is released, assuming it contains
-                # the fix for the below bug, drop this exception handler.
+                # When drgn doesn't understand a DWARF expression opcode, it
+                # raises this error. Some instances of this have been caught and
+                # fixed, but in general this catch is a good thing to keep.
                 # https://github.com/osandov/drgn/issues/233
-                if "unknown DWARF expression opcode" in str(e):
+                # https://github.com/osandov/drgn/issues/374
+                if "unknown DW" in str(e):
                     continue
                 else:
                     raise
