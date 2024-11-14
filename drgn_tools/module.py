@@ -22,15 +22,9 @@ from drgn import sizeof
 from drgn import Symbol
 from drgn import SymbolBinding
 from drgn import SymbolKind
+from drgn.helpers.common import escape_ascii_string
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.rbtree import rb_find
-
-try:
-    # drgn v0.21.0+
-    from drgn.helpers.common import escape_ascii_string
-except ImportError:
-    # drgn <v0.21.0
-    from drgn.helpers import escape_ascii_string
 
 from drgn_tools.debuginfo import fetch_debuginfo
 from drgn_tools.debuginfo import find_debuginfo
