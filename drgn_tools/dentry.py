@@ -80,6 +80,8 @@ def dentry_path_any_mount(dentry: Object) -> bytes:
 
     :param dentry: ``struct dentry *``
     """
+    # TODO: drgn 0.0.29: this can be replaced with d_path()
+    # See osandov/drgn#426.
     dentry = dentry.read_()
     d_op = dentry.d_op.read_()
     if d_op and d_op.d_dname:
