@@ -125,6 +125,11 @@ def fsnotify_mark_object(mark: Object) -> Tuple[str, Object]:
         # object"), there were direct pointers in the connector.
         if hasattr(conn, "inode"):
             return "inode", conn.inode
+        elif conn.obj.type_.type_name() == "void *":
+            # Since 687c217c6aa2 ("fsnotify: pass object pointer and type to
+            # fsnotify mark helpers"), the "obj" pointer is just a plain pointer
+            # to the object in question.
+            return "inode", cast("struct inode *", conn.obj)
         return "inode", container_of(
             conn.obj, "struct inode", "i_fsnotify_marks"
         )
@@ -133,6 +138,12 @@ def fsnotify_mark_object(mark: Object) -> Tuple[str, Object]:
         # object"), there were direct pointers in the connector.
         if hasattr(conn, "vfsmount"):
             return "vfsmount", conn.vfsmount
+        elif conn.obj.type_.type_name() == "void *":
+            # Since 687c217c6aa2 ("fsnotify: pass object pointer and type to
+            # fsnotify mark helpers"), the "obj" pointer is just a plain pointer
+            # to the struct vfsmount, which we still need to turn into a struct
+            # mount.
+            return "vfsmount", container_of(conn.obj, "struct mount", "mnt")
         return "vfsmount", container_of(
             conn.obj, "struct mount", "mnt_fsnotify_marks"
         )
@@ -140,6 +151,12 @@ def fsnotify_mark_object(mark: Object) -> Tuple[str, Object]:
         # The "sb" object type was not present when 36f10f55ff1d2 ("fsnotify:
         # let connector point to an abstract object") so it will never have an
         # "sb" field.
+        if conn.obj.type_.type_name() == "void *":
+            # Since 687c217c6aa2 ("fsnotify: pass object pointer and type to
+            # fsnotify mark helpers"), the "obj" pointer is just a plain pointer
+            # to the struct vfsmount, which we still need to turn into a struct
+            # mount.
+            return "sb", cast("struct super_block *", conn.obj)
         return "sb", container_of(
             conn.obj, "struct super_block", "s_fsnotify_marks"
         )
