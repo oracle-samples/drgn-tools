@@ -76,6 +76,17 @@ def get_partinfo_from_hd_struct(part: Object) -> PartInfo:
     )
 
 
+def get_partition_info(part: Object) -> PartInfo:
+    """
+    Returns partition info from ``struct hd_struct`` or ``struct block_device``
+    depending on the kernel version.
+    """
+    if "block_device" in part.type_.type_name():
+        return get_partinfo_from_blkdev_struct(part)
+    else:
+        return get_partinfo_from_hd_struct(part)
+
+
 def print_partition_info(prog: Program) -> None:
     """
     Prints partition information
@@ -100,10 +111,7 @@ def print_partition_info(prog: Program) -> None:
             else:
                 part_is_blkdev = 0
                 table.header[-1] = "HD STRUCT"
-        if part_is_blkdev == 1:
-            info = get_partinfo_from_blkdev_struct(part)
-        else:
-            info = get_partinfo_from_hd_struct(part)
+        info = get_partition_info(part)
         table.row(*info._replace(obj=info.obj.value_()))
 
     table.write()
