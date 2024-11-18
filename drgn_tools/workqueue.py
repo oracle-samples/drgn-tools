@@ -451,11 +451,18 @@ def show_pwq(pwq: Object) -> None:
 
     print(f"pwq: ({pwq.type_.type_name()})0x{pwq.value_():x}")
     print("pool id:", pwq.pool.id.value_())
+    # v6.9: a045a272d887 ("workqueue: Move pwq->max_active to wq->max_active")
+    # Note that this commit appears to have been backported into stable trees,
+    # and then also reverted...
+    if hasattr(pwq, "max_active"):
+        max_active = pwq.max_active
+    else:
+        max_active = pwq.wq.max_active
     print(
         "active/max_active ",
         pwq.nr_active.value_(),
         "/",
-        pwq.max_active.value_(),
+        max_active.value_(),
     )
     print(f"refcnt: {pwq.refcnt.value_()} Mayday: {mayday}")
 
