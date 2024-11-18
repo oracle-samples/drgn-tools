@@ -22,14 +22,17 @@ def get_mountinfo(prog: drgn.Program) -> List[List[str]]:
     mounts = prog["init_task"].nsproxy.mnt_ns
     for mnt in drgn.helpers.linux.fs.for_each_mount(mounts):
         devname = mnt.mnt_devname
-        fstype = mnt.mnt.mnt_sb.s_type.name
+        sb = mnt.mnt.mnt_sb
+        fstype = sb.s_type.name.string_()
+        if sb.s_subtype:
+            fstype += b"." + sb.s_subtype.string_()
         mntpt = drgn.helpers.linux.fs.d_path(
             mnt.mnt_parent.mnt.address_of_(), mnt.mnt_mountpoint
         )
 
         mount_stats = [
             devname.string_().decode("utf-8"),
-            fstype.string_().decode("utf-8"),
+            fstype.decode("utf-8"),
             mntpt.decode("utf-8"),
         ]
         mount_table.append(mount_stats)
