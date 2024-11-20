@@ -20,7 +20,7 @@ vmcore DWARF:
   script:
     - python -m venv venv --system-site-packages
     - venv/bin/pip install -r testing/requirements-vmcore.txt
-    - venv/bin/python -m testing.vmcore test -j 4 --core-directory /var/drgn-tools/vmcores
+    - venv/bin/python -m testing.vmcore.test -j 4 --core-directory /var/drgn-tools/vmcores
   artifacts:
     when: always
     paths:
@@ -32,7 +32,7 @@ vmcore CTF:
   script:
     - python -m venv venv --system-site-packages
     - venv/bin/pip install -r testing/requirements-vmcore.txt
-    - venv/bin/python -m testing.vmcore test -j 4 --ctf --core-directory /var/drgn-tools/vmcores
+    - venv/bin/python -m testing.vmcore.test -j 4 --ctf --core-directory /var/drgn-tools/vmcores
   artifacts:
     when: always
     paths:
