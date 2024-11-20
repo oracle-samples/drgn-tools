@@ -207,13 +207,13 @@ manage your vmcores locally without needing to use OCI object storage.
 Assuming you have created the necessary directories and files, you can use the
 following to run tests:
 
-    python -m testing.vmcore test
+    python -m testing.vmcore.test
 
 If you've configured OCI and your `VMCORE_*` variables, then you can use the
 uploader to upload a specific vmcore, or download all vmcores.
 
-    python -m testing.vmcore upload --upload-core $name
-    python -m testing.vmcore downoad
+    python -m testing.vmcore.manage upload --upload-core $name
+    python -m testing.vmcore.manage downoad
 
 Vmcores
 -------
