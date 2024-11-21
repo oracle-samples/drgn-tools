@@ -91,6 +91,7 @@ def test(
                 sys.executable,
                 "-m",
                 "pytest",
+                "tests/",
                 f"--vmcore={core_name}",
                 f"--vmcore-dir={str(CORE_DIR)}",
                 f"--junitxml={xml_run.name}",
