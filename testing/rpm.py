@@ -59,6 +59,7 @@ def do_test(ident: str, args: List[str], ctf: bool = False) -> str:
         sys.executable,
         "-m",
         "pytest",
+        "tests/",
     ]
     if ctf:
         cmd.append("--ctf")
