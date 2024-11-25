@@ -10,16 +10,41 @@ Linux memcg subsystem.
 from typing import Iterator
 
 from drgn import cast
+from drgn import container_of
 from drgn import FaultError
 from drgn import Object
 from drgn import Program
+from drgn.helpers.common.format import decode_enum_type_flags
 from drgn.helpers.linux import cgroup_path
 from drgn.helpers.linux import css_for_each_descendant_pre
-from drgn.helpers.linux import dentry_path
 from drgn.helpers.linux import find_slab_cache
 from drgn.helpers.linux import for_each_page
+from drgn.helpers.linux import inode_path
 from drgn.helpers.linux import kernfs_path
 from drgn.helpers.linux import slab_cache_for_each_allocated_object
+
+from drgn_tools.dentry import dentry_path_any_mount
+
+# cgroup subsystem id for memory cgroup, from kernel/cgroup/cgroup.c
+_MEMORY_CGRP_ID = 4
+
+
+def decode_css_flags(css: Object) -> str:
+    """
+    Get a human-readable representation of cgroup_subsys_state.flags
+
+    :param css: ``struct cgroup_subsys_state *``
+    """
+    CSS_DYING = css.prog_["CSS_DYING"]
+    flags = css.flags.value_()
+    if not flags:
+        # There is no dedicated flag value to indicate a zombie cgroup.
+        # A css.flags value of 0 indicates that cgroup destruction is
+        # complete but cgroup object has not been fully freed because
+        # of being pinned by some other object
+        return "ZOMBIE"
+
+    return decode_enum_type_flags(flags, CSS_DYING.type_, False)
 
 
 def for_each_kernfs_node(prog: Program) -> Iterator[Object]:
@@ -39,12 +64,13 @@ def dump_memcgroup_hierarchy(prog: Program) -> None:
     """
     Dump hierarchy of active mem cgroups.
     """
-    cgroup_subsys = prog["cgroup_subsys"][4]
+    cgroup_subsys = prog["cgroup_subsys"][_MEMORY_CGRP_ID]
     css = cgroup_subsys.root.cgrp.self.address_of_()
     print(f"dumping: {cgroup_subsys.name.string_().decode()} hierarchy")
     for pos in css_for_each_descendant_pre(css):
+        cgroup_state = decode_css_flags(pos)
         print(
-            f"path: {cgroup_path(pos.cgroup).decode()} flags: 0x{pos.flags.value_():x}"
+            f"path: {cgroup_path(pos.cgroup).decode()} state: {cgroup_state}"
         )
 
 
@@ -77,7 +103,7 @@ def kernfs_node_of_memcgroup(kn: Object) -> bool:
     if kernfs_node_of_cgroup(kn):
         prog = kn.prog_
         cgrp = Object(prog, "struct cgroup", address=kn.priv.value_())
-        return prog["cgroup_subsys"][4].root == cgrp.root
+        return prog["cgroup_subsys"][_MEMORY_CGRP_ID].root == cgrp.root
     else:
         return False
 
@@ -100,7 +126,7 @@ def get_num_active_mem_cgroups(prog: Program) -> int:
     """
     Get number of active mem cgroups.
     """
-    mem_cgroup_subsys = prog["cgroup_subsys"][4]
+    mem_cgroup_subsys = prog["cgroup_subsys"][_MEMORY_CGRP_ID]
     # add 1 to number of active memcgroups to account for root memcgroup
     return mem_cgroup_subsys.root.cgrp.nr_descendants.value_() + 1
 
@@ -109,7 +135,7 @@ def get_num_dying_mem_cgroups(prog: Program) -> int:
     """
     Get number of inactive or dying mem cgroups.
     """
-    mem_cgroup_subsys = prog["cgroup_subsys"][4]
+    mem_cgroup_subsys = prog["cgroup_subsys"][_MEMORY_CGRP_ID]
     return mem_cgroup_subsys.root.cgrp.nr_dying_descendants.value_()
 
 
@@ -128,7 +154,7 @@ def dump_page_cache_pages_pinning_cgroups(prog: Program, max_pages: int = 0):
 
     """
     PG_slab_mask = 1 << prog.constant("PG_slab")
-    mem_cgroup_root = prog["cgroup_subsys"][4].root
+    mem_cgroup_root = prog["cgroup_subsys"][_MEMORY_CGRP_ID].root
     total_count = 0
     found_count = 0
     for page in for_each_page(prog):
@@ -155,12 +181,15 @@ def dump_page_cache_pages_pinning_cgroups(prog: Program, max_pages: int = 0):
                 cgrp = cgroup_subsys_state.cgroup
                 address_space = page.mapping
                 inode = address_space.host
-                dentry_addr = inode.i_dentry.first.value_() - 0xB0
-                if dentry_addr <= 0:
+                if inode_path(inode) is None:
                     continue
-                dentry = Object(prog, "struct dentry", address=dentry_addr)
+                dentry = container_of(
+                    inode.i_dentry.first, "struct dentry", "d_u.d_alias"
+                )
+                path = dentry_path_any_mount(dentry).decode()
+                cgroup_state = decode_css_flags(cgrp.self.address_of_())
                 print(
-                    f"page: 0x{page.value_():x} cgroup: {cgroup_path(cgrp).decode()} flags: {cgrp.self.flags.value_()} dpath: {dentry_path(dentry.address_of_()).decode()}\n"
+                    f"page: 0x{page.value_():x} cgroup: {cgroup_path(cgrp).decode()} state: {cgroup_state} path: {path}\n"
                 )
                 if max_pages and found_count == max_pages:
                     break
