@@ -67,13 +67,12 @@ def _print_cfs_runq(runqueue: Object) -> None:
         print("     [no tasks queued]")
 
 
-def run_queue(prog: Program, min_run_time_seconds: int = 0) -> None:
+def run_queue(prog: Program) -> None:
     """
-    Print tasks which are in the RT and CFS runqueues on each CPU. Specify min_run_time_seconds to x to only print
+    Print tasks which are in the RT and CFS runqueues on each CPU.
     processes running more than x seconds.
 
     :param prog: drgn program
-    :param min_run_time_seconds: int
     """
 
     # _cpu = drgn.helpers.linux.cpumask.for_each_online_cpu(prog)
@@ -85,8 +84,6 @@ def run_queue(prog: Program, min_run_time_seconds: int = 0) -> None:
         pid = curr_task.pid.value_()
         run_time = task_lastrun2now(curr_task)
         prio = curr_task.prio.value_()
-        if run_time < min_run_time_seconds * 1e9:
-            continue
         print(f"CPU {cpus} RUNQUEUE: {runqueue.address_of_().value_():x}")
         print(
             f"  CURRENT:   PID: {pid:<6d}  TASK: {curr_task_addr:x}  PRIO: {prio}"
