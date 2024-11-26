@@ -7,6 +7,7 @@ Kernfs_memcg
 The ``drgn.helpers.linux.kernfs_memcg`` module provides helpers for working with the
 Linux memcg subsystem.
 """
+import argparse
 from typing import Iterator
 
 from drgn import cast
@@ -23,6 +24,7 @@ from drgn.helpers.linux import inode_path
 from drgn.helpers.linux import kernfs_path
 from drgn.helpers.linux import slab_cache_for_each_allocated_object
 
+from drgn_tools.corelens import CorelensModule
 from drgn_tools.dentry import dentry_path_any_mount
 
 # cgroup subsystem id for memory cgroup, from kernel/cgroup/cgroup.c
@@ -143,14 +145,16 @@ def get_num_dying_mem_cgroups(prog: Program) -> int:
 # but if max_pages is specified then we bail out
 # after getting those many pages or scanning all
 # pages , whichever happens first
-def dump_page_cache_pages_pinning_cgroups(prog: Program, max_pages: int = 0):
+def dump_page_cache_pages_pinning_cgroups(
+    prog: Program, max_pages: int = 10000
+):
     """
-    Dump all page-cache pages that have reference to a mem-cgroup.
+    Dump page-cache pages that have reference to a mem-cgroup.
     The ouput also contains information such as the cgroup that is pinned, its flags
     (to indicate current state of cgroup) and file cached by this page.
 
-    :params: max_pages: specify how many pages to find. For default (0) all such pages
-    are listed.
+    :params: max_pages: specify how many pages to find. By default first 10000 such
+    pages are listed. Use 0 to list all such pages.
 
     """
     PG_slab_mask = 1 << prog.constant("PG_slab")
@@ -199,3 +203,22 @@ def dump_page_cache_pages_pinning_cgroups(prog: Program, max_pages: int = 0):
     print(
         f"Scanned {total_count} pages, found {found_count} pages with memory cgroup refs."
     )
+
+
+class PagesPinningMemcgroups(CorelensModule):
+    """Print information related to pages, that are pinning memcgroup(s)"""
+
+    name = "kernfs_memcg"
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--max",
+            "-m",
+            type=int,
+            default=10000,
+            help="Maximum number of pages to show. By default first 10000 such pages are shown.\
+                  Use 0 to list all such pages.",
+        )
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        dump_page_cache_pages_pinning_cgroups(prog, max_pages=args.max)
