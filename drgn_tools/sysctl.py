@@ -1,8 +1,9 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
-Helpers for sysctl.
+Helpers for sysctl. Further improvements are still needed to cover more corner cases and stay consistent with sysctl command output.
 """
+import argparse
 from stat import S_ISDIR
 from stat import S_ISLNK
 from types import MappingProxyType
@@ -17,6 +18,11 @@ from drgn import FaultError
 from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.rbtree import rbtree_inorder_for_each
+
+from drgn_tools.corelens import CorelensModule
+
+
+MAX_ELEMENTS = 100
 
 
 def get_sysctl_table(prog: Program) -> MappingProxyType:
@@ -157,8 +163,16 @@ def get_data_entry(prog: Program, ct: Object) -> Any:
     except LookupError:
         pass
 
+    sys_text_info = {
+        "proc_dostring",
+        "proc_dostring_coredump",
+        "proc_do_uts_string",
+        "devkmsg_sysctl_set_loglvl",
+        "proc_do_large_bitmap",
+        "proc_watchdog_cpumask",
+    }
     # for the cases where the data encoded is a text string
-    if phandler_name == "proc_dostring":
+    if phandler_name in sys_text_info:
         return __decode_sysctl_string(prog.read(ct.data, maxlen))
     if phandler_name == "cdrom_sysctl_info":
         idstr = __decode_sysctl_string(prog.read(ct.data, maxlen))
@@ -205,9 +219,7 @@ def get_data_entry(prog: Program, ct: Object) -> Any:
             iv = iv // 1000
         out.append(iv)
         data += interval
-    # print first 5 elements
-    if len(out) > 5:
-        out = out[:5] + ["... %d more elements" % (len(out) - 5)]
+
     return out
 
 
@@ -215,4 +227,15 @@ def __decode_sysctl_string(data: bytes) -> str:
     """Decode bytes to readable string"""
 
     bytes_before_nul = data.split(b"\x00", 1)[0]
-    return bytes_before_nul.decode("ascii", errors="backslashreplace")
+    return bytes_before_nul.decode("ascii", errors="ignore")
+
+
+class SysCtl(CorelensModule):
+    """
+    Print out sysctl entries.
+    """
+
+    name = "sysctl"
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        print_sysctl_table(prog)
