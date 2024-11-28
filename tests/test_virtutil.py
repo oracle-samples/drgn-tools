@@ -6,3 +6,5 @@ from drgn_tools import virtutil
 def test_virtutil(prog):
     virtutil.show_cpuhp_state(prog)
     virtutil.show_platform(prog)
+    virtutil.print_vm_list(prog)
+    virtutil.print_vcpu_list(prog)
