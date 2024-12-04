@@ -507,11 +507,11 @@ class KernelVersion(NamedTuple):
         :returns: A ``KernelVersion`` with fields parsed
         """
         version_re = re.compile(
-            r"(?P<version>\d+\.\d+\.\d+)-(?P<release>[0-9.-]+)"
-            r"(?P<extraversion1>\.[0-9a-zA-Z._]+?)?"
+            r"(?P<version>\d+\.\d+\.\d+)-(?P<release>\w+(?:\.\w+)*)"
             r"\.el(?P<ol_version>\d+)(?P<extra>uek|ueknext|_(?P<update>\d+)|)"
             r"(?P<extraversion2>\.[0-9a-zA-Z._]+?)?"
-            r"\.(?P<arch>.+)"
+            r"\.(?P<arch>.+)",
+            re.ASCII,
         )
         match = version_re.fullmatch(original)
         if not match:
@@ -521,9 +521,22 @@ class KernelVersion(NamedTuple):
         version_tuple = tuple(
             int(g) for g in re.split("[.-]", match["version"])
         )
-        release_tuple = tuple(
-            int(g) for g in re.split("[.-]", match["release"])
-        )
+        # The release string is complicated. Normally there are two parts: a
+        # release that is a normal version number (digits separated by dots),
+        # and then an optional extra component that could contain text. By
+        # convention, all the numeric elements get looped into the "release" and
+        # the remaining elements are the "extraversion".
+        release_elements = []
+        extraversion_elements = []
+        elements = list(match["release"].split("."))
+        for i, group in enumerate(elements):
+            try:
+                release_elements.append(int(group))
+            except ValueError:
+                extraversion_elements.extend(elements[i:])
+                break
+        release_tuple = tuple(release_elements)
+        extraversion = ".".join(extraversion_elements)
         update = None
         if match["update"]:
             update = int(match["update"])
@@ -540,13 +553,13 @@ class KernelVersion(NamedTuple):
         return cls(
             match["version"],
             version_tuple,
-            match["release"],
+            ".".join(str(n) for n in release_elements),
             release_tuple,
             int(match.group("ol_version")),
             update,
             match["arch"],
             original,
-            match["extraversion1"] or "",
+            extraversion,
             match["extraversion2"] or "",
             is_uek,
             uek_ver,
