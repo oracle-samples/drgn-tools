@@ -49,6 +49,14 @@ def test_luci_versions():
 
 
 def test_uek_versions():
+    # A made-up UEK8 OL10 version to make sure we are ready:
+    parse_check_fields(
+        "6.12.0-2.132.1.el10uek.x86_64",
+        version="6.12.0",
+        release="2.132.1",
+        ol_version=10,
+        uek_version=8,
+    )
     # UEK7, OL9
     parse_check_fields(
         "5.15.0-101.103.2.1.el9uek.x86_64",
@@ -153,6 +161,15 @@ def test_rhck():
 
 
 def test_uek_aarch64():
+    # A made-up UEK8 OL10 version to make sure we are ready:
+    parse_check_fields(
+        "6.12.0-2.132.1.el10uek.aarch64",
+        version="6.12.0",
+        release="2.132.1",
+        ol_version=10,
+        uek_version=8,
+        arch="aarch64",
+    )
     # OL8/9 + UEK7 is the main target
     parse_check_fields(
         "5.15.0-104.119.4.2.el9uek.aarch64",
