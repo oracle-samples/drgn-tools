@@ -14,11 +14,35 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.rbtree import rbtree_inorder_for_each_entry
 
 from drgn_tools.block import blkdev_name
+from drgn_tools.block import blkdev_ro
+from drgn_tools.block import blkdev_size
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.table import print_table
 from drgn_tools.util import BitNumberFlags
+from drgn_tools.util import has_member
 from drgn_tools.util import kernel_version
+
+
+def dm_ro(dm: Object) -> bool:
+    if has_member(dm, "bdev"):
+        bdev = dm.bdev
+    else:
+        bdev = dm.disk.part0
+    ro = blkdev_ro(bdev)
+    if ro == -1:
+        gendisk = dm.disk
+        return bool(gendisk.part0.policy)
+    else:
+        return bool(ro)
+
+
+def dm_size(dm: Object) -> int:
+    if has_member(dm, "bdev"):
+        bdev = dm.bdev
+    else:
+        bdev = dm.disk.part0
+    return blkdev_size(bdev)
 
 
 def for_each_dm_hash(prog: Program) -> Iterable[Tuple[Object, str, str]]:
