@@ -13,9 +13,9 @@ from drgn import Type
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.block import blkdev_name
-from drgn_tools.block import blkdev_ro
-from drgn_tools.block import blkdev_size
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.dm import dm_ro
+from drgn_tools.dm import dm_size
 from drgn_tools.dm import dm_table
 from drgn_tools.dm import dm_target_name
 from drgn_tools.dm import for_each_dm
@@ -265,17 +265,8 @@ def show_multipath(prog: Program, dm: Object) -> None:
         )
     print("Current path = %s" % curr_dev_name)
     print("hw_handler_name = %s" % hw_handler)
-    if has_member(dm, "bdev"):
-        bdev = dm.bdev
-    else:
-        bdev = dm.disk.part0
-    permission = blkdev_ro(bdev)
-    if permission == -1:
-        gendisk = dm.disk
-        print("Permission = %s" % ("ro" if gendisk.part0.policy else "rw"))
-    else:
-        print("Permission = %s" % ("ro" if permission else "rw"))
-    print("Size = %u" % blkdev_size(bdev))
+    print("Permission = %s" % ("ro" if dm_ro(dm) else "rw"))
+    print("Size = %u" % dm_size(dm))
     show_priority_groups(prog, multipath)
 
 
