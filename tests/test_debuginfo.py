@@ -19,12 +19,50 @@ def parse_check_fields(name: str, **kwargs: Any):
         assert getattr(ver, field_name) == value
 
 
+def test_luci_versions():
+    # A standard UEK-next version string
+    parse_check_fields(
+        "6.11.0-0.el9ueknext.x86_64",
+        version="6.11.0",
+        release="0",
+        ol_version=9,
+        is_ueknext=True,
+    )
+    # The 6.8-era version without the "ueknext" in the extra.
+    parse_check_fields(
+        "6.8.0-2.el9uek.x86_64",
+        version="6.8.0",
+        release="2",
+        ol_version=9,
+        is_ueknext=True,
+    )
+    # Here's a fun one without a release string, but with an extraversion thrown
+    # in.
+    parse_check_fields(
+        "6.11.0-testingspecial.el9uek.rc1.x86_64",
+        version="6.11.0",
+        release="",
+        ol_version=9,
+        extraversion1="testingspecial",
+        extraversion2=".rc1",
+    )
+
+
 def test_uek_versions():
+    # A made-up UEK8 OL10 version to make sure we are ready:
+    parse_check_fields(
+        "6.12.0-2.132.1.el10uek.x86_64",
+        version="6.12.0",
+        release="2.132.1",
+        ol_version=10,
+        uek_version=8,
+    )
     # UEK7, OL9
     parse_check_fields(
         "5.15.0-101.103.2.1.el9uek.x86_64",
         release="101.103.2.1",
         ol_version=9,
+        uek_version=7,
     )
 
     # UEK7, OL8
@@ -33,6 +71,7 @@ def test_uek_versions():
         version="5.15.0",
         release="101.103.2.1",
         ol_version=8,
+        uek_version=7,
     )
 
     # UEK6, OL8
@@ -41,6 +80,7 @@ def test_uek_versions():
         version="5.4.17",
         release="2136.323.7",
         ol_version=8,
+        uek_version=6,
     )
 
     # UEK6, OL7
@@ -49,6 +89,7 @@ def test_uek_versions():
         version="5.4.17",
         release="2136.323.7",
         ol_version=7,
+        uek_version=6,
     )
 
     # An older UEK6
@@ -57,6 +98,7 @@ def test_uek_versions():
         version="5.4.17",
         release="2006.5",
         ol_version=8,
+        uek_version=6,
     )
 
     # UEK5, OL7
@@ -65,6 +107,7 @@ def test_uek_versions():
         version="4.14.35",
         release="2047.528.2.1",
         ol_version=7,
+        uek_version=5,
     )
 
     # UEK4, OL7
@@ -73,6 +116,7 @@ def test_uek_versions():
         version="4.1.12",
         release="124.48.6",
         ol_version=7,
+        uek_version=4,
     )
 
 
@@ -117,12 +161,22 @@ def test_rhck():
 
 
 def test_uek_aarch64():
+    # A made-up UEK8 OL10 version to make sure we are ready:
+    parse_check_fields(
+        "6.12.0-2.132.1.el10uek.aarch64",
+        version="6.12.0",
+        release="2.132.1",
+        ol_version=10,
+        uek_version=8,
+        arch="aarch64",
+    )
     # OL8/9 + UEK7 is the main target
     parse_check_fields(
         "5.15.0-104.119.4.2.el9uek.aarch64",
         version="5.15.0",
         release="104.119.4.2",
         ol_version=9,
+        uek_version=7,
         arch="aarch64",
     )
     parse_check_fields(
@@ -130,6 +184,7 @@ def test_uek_aarch64():
         version="5.15.0",
         release="106.125.1",
         ol_version=8,
+        uek_version=7,
         arch="aarch64",
     )
     # no rhck for aarch64
