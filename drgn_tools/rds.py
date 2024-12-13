@@ -1540,7 +1540,7 @@ class Rds(CorelensModule):
     """Print info about RDS devices, sockets, connections, and stats"""
 
     name = "rds"
-    skip_unless_have_kmod = "rds"
+    skip_unless_have_kmods = ["rds"]
 
     # We access information from the following modules #
     debuginfo_kmods = ["mlx5_core", "mlx4_core", "mlx5_ib", "mlx4_ib"]

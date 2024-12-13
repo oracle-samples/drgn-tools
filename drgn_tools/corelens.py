@@ -95,15 +95,15 @@ class CorelensModule(abc.ABC):
         pass
 
     @property
-    def skip_unless_have_kmod(self) -> Optional[str]:
+    def skip_unless_have_kmods(self) -> Optional[List[str]]:
         """
-        If specified, skip this when the kmod is not present in the kernel
+        If specified, skip this when the kmods are not present in the kernel
 
-        This field, when specified, is a string naming a kernel module (referred
+        This field, when specified, is a list of strings naming kernel modules (referred
         to as kmod in these docs to avoid confusing with "corelens module").
-        This kmod is expected to signify the presence of the subsystem that this
-        module is dealing with. If the kmod is not loaded in the kernel, then
-        this module is skipped by corelens. If the kmod is loaded, but no
+        This kmod(s) is expected to signify the presence of the subsystem that this
+        module is dealing with. If the kmod(s) is not loaded in the kernel, then
+        this module is skipped by corelens. If the kmod(s) is loaded, but no
         debuginfo is present, the module is skipped and an error is raised.
         """
         return None
@@ -116,7 +116,7 @@ class CorelensModule(abc.ABC):
         This field, when specified, is a list of strings. Each string could be a
         kmod name, or a :mod:`fnmatch` pattern which matches several kmods.
 
-        Unlike :attr:`skip_unless_have_kmod`, we don't require that the kmods
+        Unlike :attr:`skip_unless_have_kmods`, we don't require that the kmods
         here are loaded. Instead, we just require that *if* the modules are
         loaded, they must have debuginfo present.
 
@@ -198,10 +198,11 @@ class CorelensModule(abc.ABC):
             notes.append("Requires DWARF debuginfo.")
         if not self.live_ok:
             notes.append("Live kernel not supported.")
-        if self.skip_unless_have_kmod:
+        if self.skip_unless_have_kmods:
             notes.append(
-                f'Skipped unless "{self.skip_unless_have_kmod}" '
-                "kernel module is loaded."
+                "Skipped unless '{}' kernel module(s) are loaded.".format(
+                    ", ".join(self.skip_unless_have_kmods)
+                )
             )
         if self.run_when == "verbose":
             notes.append("Detailed module (runs with -A)")
@@ -460,13 +461,14 @@ def _check_module_debuginfo(
     for mod, args in candidate_modules:
         # Corelens modules that depend on a particular subsystem module being
         # present, should should be skipped if it is not present.
-        if mod.skip_unless_have_kmod is not None and (
-            mod.skip_unless_have_kmod not in all_kmod_names
+        if mod.skip_unless_have_kmods is not None and (
+            not all(m in all_kmod_names for m in mod.skip_unless_have_kmods)
         ):
             if warn_not_present:
                 warnings.append(
-                    f"{mod.name} skipped because '{mod.skip_unless_have_kmod}'"
-                    " was not loaded in the kernel"
+                    "{} skipped because '{}' was (were) not (all) loaded in the kernel".format(
+                        mod.name, ", ".join(mod.skip_unless_have_kmods)
+                    )
                 )
             continue
 
@@ -493,12 +495,13 @@ def _check_module_debuginfo(
             modules_to_run.append((mod, args))
             continue
 
-        if mod.skip_unless_have_kmod is not None and (
-            mod.skip_unless_have_kmod not in loaded_kmods
+        if mod.skip_unless_have_kmods is not None and (
+            not all(m in loaded_kmods for m in mod.skip_unless_have_kmods)
         ):
             errors.append(
-                f"{mod.name} skipped because '{mod.skip_unless_have_kmod}'"
-                " did not have debuginfo loaded"
+                "{} skipped because '{}' did not have (all) debuginfo loaded".format(
+                    mod.name, ", ".join(mod.skip_unless_have_kmods)
+                )
             )
             continue
         skip = False

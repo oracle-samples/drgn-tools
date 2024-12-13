@@ -912,7 +912,7 @@ class NfsShow(CorelensModule):
     name = "nfsshow"
 
     # there's no point in running unless the nfs module is loaded
-    skip_unless_have_kmod = "nfs"
+    skip_unless_have_kmods = ["nfs"]
 
     # we need sunrpc, and all nfs related debuginfo loaded
     debuginfo_kmods = ["sunrpc", "nfs", "nfs*"]
