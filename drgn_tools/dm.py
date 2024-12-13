@@ -318,7 +318,7 @@ class Dm(CorelensModule):
     """Display info about device mapper devices"""
 
     name = "dm"
-    skip_unless_have_kmod = "dm_mod"
+    skip_unless_have_kmods = ["dm_mod"]
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         show_dm(prog)

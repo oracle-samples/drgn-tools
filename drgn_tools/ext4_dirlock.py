@@ -190,7 +190,7 @@ class Ext4DirLock(CorelensModule):
     """Scan processes hung by ext4 directory inode lock"""
 
     name = "ext4_dirlock_scan"
-    skip_unless_have_kmod = "ext4"
+    skip_unless_have_kmods = ["ext4"]
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
