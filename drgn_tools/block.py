@@ -624,7 +624,12 @@ def get_inflight_io_nr(prog: drgn.Program, disk: Object) -> int:
         # hwq.tags were shared across different disks from same hba host.
         if (hwq.flags & BLK_MQ_F_TAG_SHARED) != 0:
             if (hwq.flags & BLK_MQ_F_TAG_HCTX_SHARED) != 0:
-                nr += hwq.queue.nr_active_requests_shared_tags.counter
+                # starting commit 079a2e3e8625, "nr_active_requests_shared_sbitmap"
+                # was renamed to "nr_active_requests_shared_tags".
+                if has_member(hwq.queue, "nr_active_requests_shared_tags"):
+                    nr += hwq.queue.nr_active_requests_shared_tags.counter
+                else:
+                    nr += hwq.queue.nr_active_requests_shared_sbitmap.counter
             else:
                 nr += hwq.nr_active.counter
         else:
