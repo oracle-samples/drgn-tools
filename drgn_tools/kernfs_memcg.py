@@ -141,7 +141,11 @@ def get_num_active_mem_cgroups(prog: Program) -> int:
     """
     mem_cgroup_subsys = prog["cgroup_subsys"][_MEMORY_CGRP_ID]
     # add 1 to number of active memcgroups to account for root memcgroup
-    return mem_cgroup_subsys.root.cgrp.nr_descendants.value_() + 1
+    try:
+        return mem_cgroup_subsys.root.cgrp.nr_descendants.value_() + 1
+    except AttributeError:
+        print("Number of active descendants not available.")
+        return -1
 
 
 def get_num_dying_mem_cgroups(prog: Program) -> int:
@@ -149,15 +153,27 @@ def get_num_dying_mem_cgroups(prog: Program) -> int:
     Get number of inactive or dying mem cgroups.
     """
     mem_cgroup_subsys = prog["cgroup_subsys"][_MEMORY_CGRP_ID]
-    return mem_cgroup_subsys.root.cgrp.nr_dying_descendants.value_()
+    try:
+        return mem_cgroup_subsys.root.cgrp.nr_dying_descendants.value_()
+    except AttributeError:
+        print("Number of dying descendants not available.")
+        return -1
 
 
 def get_num_mem_cgroups(prog: Program) -> None:
     active_mem_cgroups = get_num_active_mem_cgroups(prog)
     dying_mem_cgroups = get_num_dying_mem_cgroups(prog)
-    print(
-        f"There are {active_mem_cgroups} active and {dying_mem_cgroups} dying memcgroups \n"
-    )
+    if active_mem_cgroups >= 0 and dying_mem_cgroups >= 0:
+        print(
+            f"There are {active_mem_cgroups} active and {dying_mem_cgroups} dying memcgroups \n"
+        )
+    # UEK4 does not maintain dedicated counter for active and dying
+    # descendants.
+    else:
+        total_mem_cgroups = prog["cgroup_subsys"][
+            _MEMORY_CGRP_ID
+        ].root.nr_cgrps.value_()
+        print(f"There are a total of {total_mem_cgroups} memcgroups \n")
 
 
 # By default (max_pages == 0) we scan all pages,
