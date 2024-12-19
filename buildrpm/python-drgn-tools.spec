@@ -20,7 +20,7 @@
 
 
 Name:           python-drgn-tools
-Version:        1.1.1
+Version:        1.1.2
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -135,6 +135,10 @@ rm %{buildroot}/usr/bin/DRGN
 %endif
 
 %changelog
+* Thu Dec 19 2024 Stephen Brennan <stephen.s.brennan@oracle.com> - 1.1.2-1
+- Fix crash due in inflight-io module [Orabug: 37394100]
+- Add support for drgn 0.0.30 [Orabug: 37413891]
+
 * Wed Oct 30 2024 Stephen Brennan <stephen.s.brennan@oracle.com> - 1.1.1-1
 - Fix crash for NULL mutex owner in corelens "lock" module [Orabug: 37186686]
 - Fix crash for NULL hc.uuid in dm helper [Orabug: 37170994]
