@@ -60,7 +60,7 @@ jobs:
       - name: Build and install drgn with CTF support
         run: |
           cd ..
-          git clone https://github.com/brenns10/drgn -b ctf_0.0.29
+          git clone https://github.com/brenns10/drgn -b ctf_0.0.30
           cd drgn
           ../drgn-tools/venv/bin/python setup.py install
       - name: Run tests
