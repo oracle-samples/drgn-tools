@@ -37,10 +37,10 @@ CONFIGURATIONS = [
     # OL9: UEK 7
     ImageInfo(
         9,
-        4,
+        5,
         7,
         "x86_64",
-        "https://yum.oracle.com/ISOS/OracleLinux/OL9/u4/x86_64/OracleLinux-R9-U4-x86_64-boot-uek.iso",  # noqa
+        "https://yum.oracle.com/ISOS/OracleLinux/OL9/u5/x86_64/OracleLinux-R9-U5-x86_64-boot-uek.iso",  # noqa
         ["drgn-0.0.29-1.0.1.el9.x86_64.rpm"],
     ),
     # OL8: UEK 6-7
