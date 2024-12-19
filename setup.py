@@ -9,7 +9,7 @@ from setuptools import setup
 
 long_description = "drgn helper script repository"
 
-RELEASE_VERSION = "1.1.1"
+RELEASE_VERSION = "1.1.2"
 PACKAGES = ["drgn_tools"]
 if not os.environ.get("DRGN_TOOLS_V2_OMIT"):
     PACKAGES.append("drgn_tools.v2")
@@ -90,7 +90,7 @@ setup(
     description="drgn helper script repository",
     long_description=long_description,
     install_requires=[
-        "drgn>=0.0.25,<0.0.30",
+        "drgn>=0.0.25,<0.0.31",
     ],
     url="https://github.com/oracle-samples/drgn-tools",
     author="Oracle Linux Sustaining Engineering Team",
