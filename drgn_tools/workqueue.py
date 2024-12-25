@@ -13,11 +13,17 @@ from typing import Optional
 from typing import Union
 
 from drgn import cast
+from drgn import container_of
+from drgn import FaultError
 from drgn import IntegerLike
 from drgn import NULL
 from drgn import Object
 from drgn import Program
+from drgn import sizeof
 from drgn.helpers.common.format import escape_ascii_string
+from drgn.helpers.linux.bitops import for_each_set_bit
+from drgn.helpers.linux.cpumask import for_each_online_cpu
+from drgn.helpers.linux.cpumask import for_each_possible_cpu
 from drgn.helpers.linux.idr import idr_find
 from drgn.helpers.linux.idr import idr_for_each
 from drgn.helpers.linux.list import hlist_for_each_entry
@@ -52,6 +58,7 @@ __all__ = (
     "is_task_a_worker",
     "find_worker_executing_work",
     "workqueue_get_pwq",
+    "show_unexpired_delayed_works",
 )
 
 
@@ -612,6 +619,85 @@ def find_worker_executing_work(work: Object) -> Object:
                 return worker
 
     return NULL(prog, "struct worker *")
+
+
+def show_unexpired_delayed_works(
+    prog: Program, only_offline_cpus: bool = True
+) -> None:
+    """
+    Show delayed_work(s) whose timers have not yet expired.
+    delayed_work(s) get their `WORK_STRUCT_PENDING_BIT` set, but get
+    submitted only at expiration of corresponding timer.
+    This helper dumps all delayed_work(s) that have not yet made it to
+    any worker_pool, due to their timers not firing for one reason or
+    another.
+
+    :param only_offline_cpus: if True only delayed_works on offlined CPUs are shown.
+    """
+    online_cpus = list(for_each_online_cpu(prog))
+    for cpu in for_each_possible_cpu(prog):
+        cpu_state = "online" if cpu in online_cpus else "offline"
+        if only_offline_cpus and cpu in online_cpus:
+            continue
+        print(f"CPU: {cpu} state: {cpu_state}")
+        try:
+            for timer_base in per_cpu(prog["timer_bases"], cpu):
+                for idx in for_each_set_bit(
+                    timer_base.pending_map, sizeof(timer_base.pending_map) * 8
+                ):
+                    for timer in hlist_for_each_entry(
+                        "struct timer_list",
+                        timer_base.vectors[idx].address_of_(),
+                        "entry",
+                    ):
+                        if (
+                            prog["delayed_work_timer_fn"].address_of_()
+                            == timer.function
+                        ):
+                            dwork = container_of(
+                                timer,
+                                "struct delayed_work",
+                                "timer",
+                            )
+                            tte = (
+                                timer.expires.value_()
+                                - prog["jiffies"].value_()
+                            )
+                            work = dwork.work.address_
+                            try:
+                                func = prog.symbol(
+                                    dwork.work.func.value_()
+                                ).name
+                            except LookupError:
+                                func = (
+                                    f"UNKNOWN: 0x{dwork.work.func.value_():x}"
+                                )
+                            print(
+                                f"timer: {timer.value_():x} tte(jiffies): {tte} work: {work:x} func: {func}"
+                            )
+
+        except FaultError:
+            continue
+
+
+class OfflinedDelayedWorksModule(CorelensModule):
+    """
+    Show delayed works from offlined CPUs.
+    Delayed works (with non zero delay), rely on timer-wheel timers for
+    their submission. If these timers don't fire the work does not get
+    submitted. So delayed works submitted to an offlined CPU, don't get
+    executed even after specified delay because timer-wheel timers on
+    offlined CPUs don't get fired in first place.
+
+    This corelens module list delayed works on offlined CPUs, so that
+    one can know if a delayed work was left unexececuted, due to the fact
+    that it was submitted on an offlined CPU.
+    """
+
+    name = "offlined_delayed_works"
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        show_unexpired_delayed_works(prog)
 
 
 class WorkqueueModule(CorelensModule):
