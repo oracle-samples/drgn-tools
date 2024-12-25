@@ -105,3 +105,9 @@ def test_for_each_pending_work_of_pwq(prog: drgn.Program) -> None:
 
 def test_show_all_workqueues(prog: drgn.Program) -> None:
     wq.show_all_workqueues(prog)
+
+
+def test_show_unexpired_delayed_works(
+    prog: drgn.Program,
+) -> None:
+    wq.show_unexpired_delayed_works(prog)

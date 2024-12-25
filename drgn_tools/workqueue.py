@@ -684,13 +684,13 @@ class OfflinedDelayedWorksModule(CorelensModule):
     """
     Show delayed works from offlined CPUs.
     Delayed works (with non zero delay), rely on timer-wheel timers for
-    their submission. If these timers don't fire the work does not get
+    their submission. If these timers don't fire, the work does not get
     submitted. So delayed works submitted to an offlined CPU, don't get
     executed even after specified delay because timer-wheel timers on
     offlined CPUs don't get fired in first place.
 
     This corelens module list delayed works on offlined CPUs, so that
-    one can know if a delayed work was left unexececuted, due to the fact
+    one can know if a delayed work was left unexecuted, due to the fact
     that it was submitted on an offlined CPU.
     """
 
