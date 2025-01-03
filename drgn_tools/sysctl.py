@@ -168,7 +168,6 @@ def get_data_entry(prog: Program, ct: Object) -> Any:
         "proc_dostring_coredump",
         "proc_do_uts_string",
         "devkmsg_sysctl_set_loglvl",
-        "proc_do_large_bitmap",
         "proc_watchdog_cpumask",
     }
     # for the cases where the data encoded is a text string
