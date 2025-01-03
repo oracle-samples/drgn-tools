@@ -41,7 +41,12 @@ def decode_css_flags(css: Object) -> str:
 
     :param css: ``struct cgroup_subsys_state *``
     """
-    CSS_DYING = css.prog_["CSS_DYING"]
+    # We only need the type of the enum containing the cgroup subsystem state
+    # constants. Unfortunately the enum is anonymous so we need to access the
+    # type via one of the enum members. CSS_ONLINE is present since
+    # a31f2d3ff7fe2 ("cgroup: introduce CSS_ONLINE flag and on/offline_css()
+    # helpers") in Linux 3.8, which is sufficient for our needs.
+    CSS_ONLINE = css.prog_.constant("CSS_ONLINE")
     flags = css.flags.value_()
     if not flags:
         # There is no dedicated flag value to indicate a zombie cgroup.
@@ -50,7 +55,7 @@ def decode_css_flags(css: Object) -> str:
         # of being pinned by some other object
         return "ZOMBIE"
 
-    return decode_enum_type_flags(flags, CSS_DYING.type_, False)
+    return decode_enum_type_flags(flags, CSS_ONLINE.type_, False)
 
 
 def for_each_kernfs_node(prog: Program) -> Iterator[Object]:
