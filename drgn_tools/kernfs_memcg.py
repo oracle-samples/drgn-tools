@@ -185,15 +185,19 @@ def get_num_mem_cgroups(prog: Program) -> None:
 # that have memcg ref but if max_pages is specified
 # then we bail out after getting those many pages
 # or after scanning all pages , whichever happens first.
-def dump_page_cache_pages_pinning_cgroups(prog: Program, max_pages: int = 0):
+def dump_page_cache_pages_pinning_cgroups(
+    prog: Program, max_pages: int = 0, max_scan: int = 0
+):
     """
     Dump page-cache pages that have reference to a mem-cgroup.
-    The ouput also contains information such as the cgroup that is pinned, its flags
-    (to indicate current state of cgroup) and file cached by this page.
 
-    :params: max_pages: specify how many pages to find. By default first 10000 such
-    pages are listed. Use 0 to list all such pages.
+    The ouput also contains information such as the cgroup that is pinned, its
+    flags (to indicate current state of cgroup) and file cached by this page.
 
+    :param max_pages: specify how many pages to find. Use 0 (the default) to
+      list all such pages.
+    :param max_scan: how many pages to scan, regardless of whether any such
+      pages are found. Use 0 (the default) to scan all pages.
     """
     mem_cgroup_root = prog["cgroup_subsys"][_MEMORY_CGRP_ID].root
     total_count = 0
@@ -201,6 +205,8 @@ def dump_page_cache_pages_pinning_cgroups(prog: Program, max_pages: int = 0):
     fault_count = 0
     for page in for_each_page(prog):
         total_count = total_count + 1
+        if max_scan and total_count > max_scan:
+            break
         try:
             # Ignore slab pages
             if PageSlab(page):

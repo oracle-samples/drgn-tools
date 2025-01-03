@@ -6,7 +6,7 @@ from drgn_tools import kernfs_memcg as kernfs_memcg
 
 
 def test_dump_page_cache_pages_pinning_cgroups(prog: drgn.Program) -> None:
-    kernfs_memcg.dump_page_cache_pages_pinning_cgroups(prog, 10)
+    kernfs_memcg.dump_page_cache_pages_pinning_cgroups(prog, 10, 1000000)
 
 
 def test_dump_memcgroup_hierarchy(prog: drgn.Program) -> None:
