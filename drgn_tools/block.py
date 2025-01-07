@@ -59,24 +59,43 @@ def blkdev_devt_str(bdev: Object) -> str:
 
 def blkdev_ro(bdev: Object) -> int:
     """
-    Check whether ``struct block_device *`` is read only
+    Check whether ``struct block_device *`` is read only, which could be
+    user set it to readonly through ioctl, or its underlying disk is set
+    to readonly by disk driver.
 
     :param bdev: ``struct block_device *``
-    :returns: 1 if readonly, 0 if readwrite, -1 if unknown
+    :returns: 1 if readonly, 0 if readwrite, -1 if unknown which is possible
+        for kernel before v5.11 if the block_deivce has not be opened yet.
     """
+    ro = -1
     if has_member(bdev, "__bd_flags"):
         # v6.10: 01e198f01d55 ("bdev: move ->bd_read_only to ->__bd_flags")
         BD_READ_ONLY = 1 << 8
-        return int(bool(bdev.__bd_flags.counter & BD_READ_ONLY))
+        ro = int(bool(bdev.__bd_flags.counter & BD_READ_ONLY))
     elif has_member(bdev, "bd_read_only"):
         # v5.11: 83950d359010 ("block: move the policy field to struct
         # block_device")
-        return int(bool(bdev.bd_read_only.value_()))
-    # "bd_part" is NULL if bdev was not opened yet.
-    if bdev.bd_part:
-        return int(bdev.bd_part.policy != 0)
-    else:
-        return -1
+        ro = int(bool(bdev.bd_read_only.value_()))
+
+    # For v5.11 and up
+    if ro != -1:
+        # check whether disk driver set disk to readonly.
+        # v5.12: 52f019d43c22 ("block: add a hard-readonly flag to struct gendisk")
+        # introduced this flag to mark disk driver setting disk to readonly.
+        GD_READ_ONLY = 1 << 1
+        # v5.10: 38430f0876fa ("block: move the NEED_PART_SCAN flag to struct gendisk")
+        # add memeber "state" for "struct gendisk", not necessary to check whether
+        # this member exist since this branch is for v5.11+
+        ro |= int(bool(bdev.bd_disk.state & GD_READ_ONLY))
+        return ro
+    else:  # for v5.10 and below
+        # "bd_part" is NULL if bdev was not opened yet, this can only happen
+        # for the kernel before this commit:
+        # v5.11 0d02129e76ed ("block: merge struct block_device and struct hd_struct")
+        if bdev.bd_part:
+            return int(bdev.bd_part.policy != 0)
+        else:
+            return -1
 
 
 def BD_INODE(bdev: Object) -> Object:
