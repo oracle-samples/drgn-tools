@@ -20,7 +20,7 @@
 
 
 Name:           python-drgn-tools
-Version:        1.1.0
+Version:        2.0.0
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -132,6 +132,28 @@ rm %{buildroot}/usr/bin/DRGN
 %endif
 
 %changelog
+* Fri Jan 10 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.0.0-1
+- Installing drgn-tools does not pull in drgn as a dependency (Stephen Brennan) [Orabug: 37126732]
+- Circular freelist causes infinite loop in corelens "slabinfo" module (Stephen Brennan) [Orabug: 37170860]
+- hc.uuid null pointer in dm helper (Richard Li) [Orabug: 37176287]
+- Crash for NULL mutex owner in corelens "lock" module (Stephen Brennan) [Orabug: 37186679]
+- Enable all v2 corelens modules (Stephen Brennan) [Orabug: 37186712]
+- drgn-tools: add a lockup helper (Richard Li) [Orabug: 37187006]
+- runq: add prio and runtime (Richard Li) [Orabug: 37187104]
+- Add support to corelens-ls module to recursively print direntries of sub-directories (Srivathsa Dara) [Orabug: 37188670]
+- corelens: add sysctl to corelens module (Richard Li) [Orabug: 37191878]
+- targetcli: helper to reconstruct and dump targetcli structure on iscsi target (Richard Li) [Orabug: 37285210]
+- Drgn-tools compatibility with UEK next (Stephen Brennan) [Orabug: 37296325]
+- targetcli: helper to dump iscsi and vhost sections info from targetcli (Richard Li) [Orabug: 37301968]
+- Streamline drgn-tools testing & CI (Stephen Brennan) [Orabug: 37307170]
+- Add memcgroup related helpers to drgn-tools (Imran Khan) [Orabug: 37322867]
+- Corelens module: vhost (Richard Li) [Orabug: 37357372]
+- couple small enhancment for dm/block helpers (Junxiao Bi) [Orabug: 37361260]
+- drgn-tools: add an iscsi helper (Richard Li) [Orabug: 37362180]
+- corelens: add support for multiple kmods in skip_unless_have_kmod (Richard Li) [Orabug: 37389765]
+- corelens inflight io helpers crash due to a missing data filed with uek7 (Junxiao Bi) [Orabug: 37393601]
+- Support drgn 0.0.30 (Stephen Brennan) [Orabug: 37413889]
+
 * Tue Aug 27 2024 Stephen Brennan <stephen.s.brennan@oracle.com> - 1.1.0-1
 - Update to 1.1.0
 
