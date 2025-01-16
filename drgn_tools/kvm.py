@@ -143,7 +143,6 @@ def print_vcpu_list(prog: Program) -> None:
 
     for vm in vm_list:
         for vcpu in for_each_vcpu(vm):
-            cpu = vcpu.value_()
             id = vcpu.vcpu_id.value_()
 
             if has_member(vcpu, "vcpu_idx"):
@@ -168,7 +167,7 @@ def print_vcpu_list(prog: Program) -> None:
             rows.append(
                 [
                     hex(vm.value_()),
-                    cpu,
+                    hex(vcpu.value_()),
                     id,
                     idx,
                     arch,
