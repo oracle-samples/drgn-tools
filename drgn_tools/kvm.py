@@ -34,6 +34,15 @@ class KvmVcpuState(enum.Enum):
     LOAD = 8
 
 
+class MemSlotFlag(enum.Enum):
+    """
+    kvm_memory_region::flags
+    """
+
+    KVM_MEM_LOG_DIRTY_PAGES = 1
+    KVM_MEM_READONLY = 2
+
+
 def for_each_vm(prog: Program) -> Iterable[Object]:
     """
     Iterates over all ``struct kvm *
@@ -182,6 +191,83 @@ def print_vcpu_list(prog: Program) -> None:
     print_table(rows)
 
 
+def print_memslot_info(prog: Program) -> None:
+    """
+    Print memslots info of VM
+    """
+    vm_list = for_each_vm(prog)
+
+    print(" =============<< MEMSLOT INFO >>=================\n")
+
+    for vm in vm_list:
+        rows = [
+            [
+                "KVM",
+                "KVM_MEMSLOTS",
+                "KVM_MEMORY_SLOT",
+                "BASE_GFN",
+                "PAGES",
+                "ARCH",
+                "USER_ADDR",
+                "FLAGS",
+            ]
+        ]
+        nr_pages = 0
+        for memslot in vm.memslots:
+            # for UEK5 to UEK7-U2
+            if has_member(memslot, "memslots"):
+                for j in range(memslot.used_slots.value_()):
+                    mm = memslot.memslots[j]
+                    gfn = mm.base_gfn.value_()
+                    pages = mm.npages.value_()
+                    arch = hex(mm.arch.address_of_())
+                    usr_addr = hex(mm.userspace_addr.value_())
+                    if mm.flags.value_() == 0:
+                        flags = mm.flags.value_()
+                    else:
+                        flags = MemSlotFlag(mm.flags.value_()).name
+                    nr_pages = nr_pages + pages
+                    rows.append(
+                        [
+                            hex(vm.value_()),
+                            hex(memslot.address_of_()),
+                            hex(mm.address_of_()),
+                            gfn,
+                            pages,
+                            arch,
+                            usr_addr,
+                            flags,
+                        ]
+                    )
+            else:
+                # Starting from UEK7-U3
+                for vcpu in for_each_vcpu(vm):
+                    mmslot = vcpu.last_used_slot
+                    gfn = mmslot.base_gfn.value_()
+                    pages = mmslot.npages.value_()
+                    arch = hex(mmslot.arch.address_of_())
+                    usr_addr = hex(mmslot.userspace_addr.value_())
+                    if mmslot.flags.value_() == 0:
+                        flags = mmslot.flags.value_()
+                    else:
+                        flags = MemSlotFlag(mmslot.flags.value_()).name
+                    nr_pages = nr_pages + pages
+                    rows.append(
+                        [
+                            hex(vm.value_()),
+                            hex(memslot.value_()),
+                            hex(mmslot.address_of_()),
+                            gfn,
+                            pages,
+                            arch,
+                            usr_addr,
+                            flags,
+                        ]
+                    )
+        print_table(rows)
+        print("\n## Total Pages: %d ##" % (nr_pages))
+
+
 class KvmUtil(CorelensModule):
     """
     Show all the VM related info from KVM host side
@@ -193,6 +279,7 @@ class KvmUtil(CorelensModule):
         [
             "--vms",
             "--vcpu",
+            "--mmslot",
         ]
     ]
 
@@ -209,10 +296,18 @@ class KvmUtil(CorelensModule):
             action="store_true",
             help="show all vcpu info",
         )
+        parser.add_argument(
+            "--mmslot",
+            dest="memslot",
+            action="store_true",
+            help="show all memslot info",
+        )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         if args.list_vm:
             print_vm_list(prog)
         if args.vcpu_list:
             print_vcpu_list(prog)
+        if args.memslot:
+            print_memslot_info(prog)
         return
