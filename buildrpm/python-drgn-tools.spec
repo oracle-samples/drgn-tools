@@ -82,7 +82,7 @@ Requires:       python3.12-drgn >= %{drgn_min}, python3.12-drgn < %{drgn_max}
 
 %prep
 %autosetup -n drgn-tools-%{version}
-echo '__version__ = "%{version}"' > drgn_tools/_version.py
+echo '__version__ = "%{version}+%{release}"' > drgn_tools/_version.py
 
 %build
 %py3_build
