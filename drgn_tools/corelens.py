@@ -713,13 +713,15 @@ def main() -> None:
     # (2) Running multiple modules, but still printing to stdout
     #     (eg: corelens /proc/kcore -M sys -M dentrycache
     #      OR: corelens /proc/kcore -a)
-    #     - Corelens metadata & runtime info is suppressed
+    #     - Corelens metadata & runtime info is collected and printed at the end
     #     - Corelens module output is printed to stdout, separated by headers
     # (3) Running a single module (eg: corelens /proc/kcore -M sys)
     #     - Corelens metadata & runtime info is suppressed
     #     - Corelens module output is printed to stdout
     out_dir: Optional[Path] = None
     err_file: Optional[TextIO] = None
+    print_header = False
+    deferred_output: List[str] = []
     if args.output_directory:
         out_dir = Path(args.output_directory)
         out_dir.mkdir(exist_ok=True)
@@ -729,6 +731,14 @@ def main() -> None:
             print(*args, **kwargs)
             print(*args, **kwargs, file=err_file)
 
+    elif len(modules_to_run) > 1:
+        print_header = True
+        deferred_output.append("\n====== corelens ======\n")
+
+        def info_msg(*args, **kwargs):
+            end = kwargs.get("end", "\n")
+            deferred_output.append(" ".join(map(str, args)) + end)
+
     else:
 
         def info_msg(*args, **kwargs):
@@ -737,7 +747,6 @@ def main() -> None:
     kind = "CTF" if ctf else "DWARF"
     info_msg(f"Loaded {kind} debuginfo in in {load_time:.03f}s")
 
-    print_header = not out_dir and len(modules_to_run) > 1
     for mod, mod_args in modules_to_run:
         info_msg(f"Running module {mod.name}... ", end="", flush=True)
         with contextlib.ExitStack() as es:
@@ -747,9 +756,11 @@ def main() -> None:
             runtime = _run_module(mod, prog, mod_args, errors, print_header)
         info_msg(f"completed in {runtime:.3f}s")
 
-    _report_errors(errors, warnings, err_file)
     corelens_total_time = time.time() - corelens_begin_time
     info_msg(f"corelens total runtime: {corelens_total_time:.3f}s")
+    if deferred_output:
+        print("".join(deferred_output))
+    _report_errors(errors, warnings, err_file)
     if errors:
         sys.exit(1)
 
