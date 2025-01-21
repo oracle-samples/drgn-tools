@@ -6,6 +6,7 @@ Run analysis helper code and output to stdout or a directory
 import abc
 import argparse
 import collections
+import contextlib
 import importlib
 import inspect
 import os
@@ -697,46 +698,58 @@ def main() -> None:
     )
     load_time = time.time() - start_time
 
+    # We have a few kinds of CLI output:
+    # - Information regarding corelens & runtime (debuginfo version, how long
+    #   each module runs, etc).
+    # - Output produced by corelens modules.
+    # - Warnings and errors. These are always printed directly.
+    #
+    # Here's how we handle each in the three major situations we see:
+    #
+    # (1) Running in "report mode" (i.e. anything using the -o option)
+    #     - Corelens metedata & runtime info is printed in real time. It is also
+    #       printed to a file named "corelens" inside the report.
+    #     - Corelens module output goes to a file inside the report.
+    # (2) Running multiple modules, but still printing to stdout
+    #     (eg: corelens /proc/kcore -M sys -M dentrycache
+    #      OR: corelens /proc/kcore -a)
+    #     - Corelens metadata & runtime info is suppressed
+    #     - Corelens module output is printed to stdout, separated by headers
+    # (3) Running a single module (eg: corelens /proc/kcore -M sys)
+    #     - Corelens metadata & runtime info is suppressed
+    #     - Corelens module output is printed to stdout
     out_dir: Optional[Path] = None
     err_file: Optional[TextIO] = None
     if args.output_directory:
         out_dir = Path(args.output_directory)
         out_dir.mkdir(exist_ok=True)
         err_file = (out_dir / "corelens").open("w")
-        kind = "CTF" if ctf else "DWARF"
-        print(f"Loaded {kind} debuginfo in in {load_time:.03f}s")
-        print(
-            f"Loaded {kind} debuginfo in in {load_time:.03f}s", file=err_file
-        )
+
+        def info_msg(*args, **kwargs):
+            print(*args, **kwargs)
+            print(*args, **kwargs, file=err_file)
+
+    else:
+
+        def info_msg(*args, **kwargs):
+            pass
+
+    kind = "CTF" if ctf else "DWARF"
+    info_msg(f"Loaded {kind} debuginfo in in {load_time:.03f}s")
 
     print_header = not out_dir and len(modules_to_run) > 1
     for mod, mod_args in modules_to_run:
-        if out_dir:
-            out_file = out_dir / mod.name
-            print(f"Running module {mod.name}... ", end="", flush=True)
-            print(
-                f"Running module {mod.name}... ",
-                end="",
-                flush=True,
-                file=err_file,
-            )
-            with redirect_stdout(str(out_file), append=True):
-                runtime = _run_module(
-                    mod, prog, mod_args, errors, print_header
-                )
-            print(f"completed in {runtime:.3f}s")
-            print(f"completed in {runtime:.3f}s", file=err_file)
-        else:
-            _run_module(mod, prog, mod_args, errors, print_header)
+        info_msg(f"Running module {mod.name}... ", end="", flush=True)
+        with contextlib.ExitStack() as es:
+            if out_dir:
+                out_file = out_dir / mod.name
+                es.enter_context(redirect_stdout(str(out_file), append=True))
+            runtime = _run_module(mod, prog, mod_args, errors, print_header)
+        info_msg(f"completed in {runtime:.3f}s")
 
     _report_errors(errors, warnings, err_file)
     corelens_total_time = time.time() - corelens_begin_time
-    if out_dir:
-        print(f"corelens total runtime: {corelens_total_time:.3f}s")
-        print(
-            f"corelens total runtime: {corelens_total_time:.3f}s",
-            file=err_file,
-        )
+    info_msg(f"corelens total runtime: {corelens_total_time:.3f}s")
     if errors:
         sys.exit(1)
 
