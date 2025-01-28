@@ -49,6 +49,20 @@ def for_each_iscsi_tpg(tiqn: Object) -> Iterable[Object]:
     )
 
 
+def for_each_portal(tpg: Object) -> Iterable[Object]:
+    """
+    Get a list of portals under tpg
+
+    :param tpg: ``struct se_portal_group``
+    :returns:  Iterator of str
+    """
+    np_dentry = tpg.tpg_np_group.cg_item.ci_dentry
+    for portal in list_for_each_entry(
+        "struct dentry", np_dentry.d_subdirs.address_of_(), "d_child"
+    ):
+        yield portal.d_name.name.string_().decode()
+
+
 def print_iscsi_info(prog) -> None:
     """Dump iscsi section info"""
 
@@ -105,6 +119,10 @@ def print_iscsi_info(prog) -> None:
                 "link",
             ):
                 print_lun_info(lun, nr_indent=4)
+
+            print(f"{indent * 3}o- portals")
+            for portal in for_each_portal(se_tpg):
+                print(f"{indent * 4}o- {portal}")
 
 
 ######################################
@@ -178,6 +196,10 @@ def print_vhost_info(prog) -> None:
             "struct se_lun", se_tpg.tpg_lun_hlist.address_of_(), "link"
         ):
             print_lun_info(lun, nr_indent=3)
+
+        print(f"{indent * 2}o- portals")
+        for portal in for_each_portal(se_tpg):
+            print(f"{indent * 3}o- {portal}")
 
 
 def print_lun_info(lun: Object, nr_indent: int = 1) -> None:
