@@ -11,10 +11,12 @@ from typing import Iterable
 from drgn import FaultError
 from drgn import Object
 from drgn import Program
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.list import hlist_for_each_entry
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.dentry import dentry_for_each_child
 from drgn_tools.module import ensure_debuginfo
 
 ######################################
@@ -47,6 +49,18 @@ def for_each_iscsi_tpg(tiqn: Object) -> Iterable[Object]:
         tiqn.tiqn_tpg_list.address_of_(),
         "tpg_list",
     )
+
+
+def for_each_portal(tpg: Object) -> Iterable[Object]:
+    """
+    Get a list of portals under tpg
+
+    :param tpg: ``struct se_portal_group``
+    :returns:  Iterator of str
+    """
+    np_dentry = tpg.tpg_np_group.cg_item.ci_dentry
+    for portal in dentry_for_each_child(np_dentry):
+        yield escape_ascii_string(portal.d_name.name.string_())
 
 
 def print_iscsi_info(prog) -> None:
@@ -105,6 +119,10 @@ def print_iscsi_info(prog) -> None:
                 "link",
             ):
                 print_lun_info(lun, nr_indent=4)
+
+            print(f"{indent * 3}o- portals")
+            for portal in for_each_portal(se_tpg):
+                print(f"{indent * 4}o- {portal}")
 
 
 ######################################
