@@ -24,7 +24,6 @@ from drgn.helpers.linux import inode_path
 from drgn.helpers.linux import kernfs_path
 from drgn.helpers.linux import PageSlab
 from drgn.helpers.linux import slab_cache_for_each_allocated_object
-from drgn.helpers.linux import slab_cache_is_merged
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.dentry import dentry_path_any_mount
@@ -61,19 +60,25 @@ def decode_css_flags(css: Object) -> str:
 def for_each_kernfs_node(prog: Program) -> Iterator[Object]:
     """
     Iterate over all kernfs_node objects in the system.
+    This ignores the fact that ``kernfs_node_cache`` may be merged with
+    other slab caches and returns all objects of ``kernfs_node_cache``
+    or of the merged slab-cache.
+    Usually we iterate through kernfs_node(s) of specific usage, for
+    example, kernfs_node(s) corresponding to cgroups. So user can
+    do additional checks to ensure that validity of obtained kernfs_node
+    object.
+    For example for cgroups, kernfs_node.priv is a pointer to ``struct
+    cgroup`` object. This is better than giving up straight away
+    for merged slab caches.
+
 
     :returns: Iterator of ``struct kernfs_node *`` objects.
     """
     kernfs_node_cache = find_slab_cache(prog, "kernfs_node_cache")
-    if not slab_cache_is_merged(kernfs_node_cache):
-        for kn in slab_cache_for_each_allocated_object(
-            kernfs_node_cache, "struct kernfs_node"
-        ):
-            yield kn
-    else:
-        print(
-            "Can't iterate through kernfs_node_cache, because its merged with other slab-cache(s)"
-        )
+    for kn in slab_cache_for_each_allocated_object(
+        kernfs_node_cache, "struct kernfs_node"
+    ):
+        yield kn
 
 
 def dump_memcgroup_hierarchy(prog: Program) -> None:
