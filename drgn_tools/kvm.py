@@ -143,7 +143,6 @@ def print_vcpu_list(prog: Program) -> None:
 
     for vm in vm_list:
         for vcpu in for_each_vcpu(vm):
-            cpu = vcpu.value_()
             id = vcpu.vcpu_id.value_()
 
             if has_member(vcpu, "vcpu_idx"):
@@ -168,7 +167,7 @@ def print_vcpu_list(prog: Program) -> None:
             rows.append(
                 [
                     hex(vm.value_()),
-                    cpu,
+                    hex(vcpu.value_()),
                     id,
                     idx,
                     arch,
@@ -183,6 +182,66 @@ def print_vcpu_list(prog: Program) -> None:
     print_table(rows)
 
 
+def print_memslot_info(prog: Program) -> None:
+    vm_list = for_each_vm(prog)
+    rows = [
+        [
+            "KVM",
+            "KVM_MEMSLOTS",
+            "KVM_MEMORY_SLOT",
+            "BASE_GFN",
+            "PAGES",
+            "ARCH",
+            "USER_ADDR",
+            "FLAGS",
+        ]
+    ]
+    for vm in vm_list:
+        for memslot in vm.memslots:
+            if has_member(memslot, "memslots"):
+                for j in range(memslot.used_slots.value_()):
+                    mm = memslot.memslots[j]
+                    gfn = mm.base_gfn.value_()
+                    pages = mm.npages.value_()
+                    arch = hex(mm.arch.address_of_())
+                    usr_addr = mm.userspace_addr.value_()
+                    flags = mm.flags.value_()
+                    rows.append(
+                        [
+                            hex(vm.value_()),
+                            hex(memslot.address_of_()),
+                            hex(mm.address_of_()),
+                            gfn,
+                            pages,
+                            arch,
+                            usr_addr,
+                            flags,
+                        ]
+                    )
+            else:
+                for vcpu in for_each_vcpu(vm):
+                    mmslot = vcpu.last_used_slot
+                    mm = hex(mmslot.address_of_())
+                    gfn = mmslot.base_gfn.value_()
+                    pages = mmslot.npages.value_()
+                    arch = hex(mmslot.arch.address_of_())
+                    usr_addr = hex(mmslot.userspace_addr.value_())
+                    flags = mmslot.flags.value_()
+                    rows.append(
+                        [
+                            hex(vm.value_()),
+                            hex(memslot.value_()),
+                            mm,
+                            gfn,
+                            pages,
+                            arch,
+                            usr_addr,
+                            flags,
+                        ]
+                    )
+    print_table(rows)
+
+
 class KvmUtil(CorelensModule):
     """
     Show all the VM related info from KVM host side
@@ -194,6 +253,7 @@ class KvmUtil(CorelensModule):
         [
             "--vms",
             "--vcpu",
+            "--mmslot",
         ]
     ]
 
@@ -210,10 +270,18 @@ class KvmUtil(CorelensModule):
             action="store_true",
             help="show all vcpu info",
         )
+        parser.add_argument(
+            "--mmslot",
+            dest="memslot",
+            action="store_true",
+            help="show all memslot info",
+        )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         if args.list_vm:
             print_vm_list(prog)
         if args.vcpu_list:
             print_vcpu_list(prog)
+        if args.memslot:
+            print_memslot_info(prog)
         return
