@@ -129,6 +129,14 @@ drgn\_tools.itertools module
    :undoc-members:
    :show-inheritance:
 
+drgn\_tools.list_lru module
+-----------------------
+
+.. automodule:: drgn_tools.list_lru
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 drgn\_tools.lock module
 -----------------------
 
