@@ -124,7 +124,7 @@ def scan_mutex_lock(
     stack: bool,
     time: Optional[int] = None,
     pid: Optional[int] = None,
-) -> None:
+) -> List[Tuple[Object, List[Object]]]:
     """Scan for mutex and show details"""
     wtask = None
     if pid is not None:
@@ -145,6 +145,8 @@ def scan_mutex_lock(
 
     seen_mutexes: Set[int] = set()
 
+    dependency_list: List[Tuple[Object, List[Object]]] = []
+
     for task, frame in frame_list:
         mutex = get_lock_from_frame(prog, task, frame, "mutex", "lock")
         if not mutex:
@@ -158,6 +160,10 @@ def scan_mutex_lock(
         index = 0
         addr_info = _addr_info(prog, mutex_addr)
         print(f"Mutex: 0x{mutex_addr:x}{addr_info}")
+
+        dependency = (mutex, [struct_owner])
+        dependency_list.append(dependency)
+
         if struct_owner:
             print(
                 "Mutex OWNER:",
@@ -184,12 +190,20 @@ def scan_mutex_lock(
 
                 if waittime > timens or timens == 0:
                     show_lock_waiter(prog, waiter, index, stacktrace=stack)
+                    
+                    dependency = (waiter, [mutex])
+                    dependency_list.append(dependency)
                 else:
                     continue
         else:
             show_lock_waiter(prog, wtask, index, stacktrace=stack)
 
+            dependency = (wtask, [mutex])
+            dependency_list.append(dependency)
+
         print("")
+
+    return dependency_list
 
 
 def show_sem_lock(
