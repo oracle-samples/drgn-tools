@@ -1,66 +1,81 @@
+# Copyright (c) 2025, Oracle and/or its affiliates.
+# Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import argparse
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Set
+from typing import Union
 
 from drgn import Object
 from drgn import Program
+from drgn import TypeKind
 
 from drgn_tools.corelens import CorelensModule
-from drgn_tools.lock import scan_mutex_lock
+from drgn_tools.lock import get_mutex_lock_info
+
 
 class DependencyGraph:
-
     class Node:
-        def __init__(self, object: Object) :
-            self.name: str = object.type_.type_name() # TypeName of Object inside Node
-            self.address: int = object.value_() # Memory address of Object in host RAM
-            self.object: Object = object # The object itself
-            self.depends_on: list[__class__] = []
+        @classmethod
+        def from_object(cls, object: Object):
+            type_ = object.type_
+            if type_.kind == TypeKind.POINTER:
+                object = object[0]
+                type_ = object.type_
 
+            if type_.kind != TypeKind.STRUCT or object.address_ is None:
+                raise ValueError(
+                    "A reference object of type struct is expected"
+                )
+
+            object_node = cls(name=type_.typename(), address=object.address_)
+            object_node.object = object
+            return object_node
+
+        def __init__(
+            self,
+            name: str,
+            identifier: Union[int | str] = "",
+            address: int = 0,
+        ):
+            self.name: str = f"{name}{str(identifier)}"
+            self.address: int = address
+            self.depends_on: List[DependencyGraph.Node] = []
+            self.blocked_nodes: List[DependencyGraph.Node] = []
+            self.object: Object = None
 
         def __hash__(self):
-            # Using name (example : struct task_struct") and address as unique 
+            # Using name (example : "struct task_struct") and address as unique
             # Will be useful in case of Objects which don't exist in memory (example : CPU) - can set address=0 and name='CPU10'
             return hash((self.name, self.address))
-        
-        
+
     def __init__(self):
-        self.NodeSet: dict[tuple, self.Node] = dict()
+        self.node_map: Dict[int, self.Node] = dict()
 
+    def add_edge(self, src: Node, dst: Node) -> None:
+        if hash(src) not in self.node_map:
+            self.node_map[hash(src)] = src
+        else:
+            src = self.node_map[hash(src)]
 
-    def insert(self, dependency: tuple) -> None:
-        blocking_object: Object = dependency[0]
-        dependent_objects: list[Object] = dependency[1]
+        if hash(dst) not in self.node_map:
+            self.node_map[hash(dst)] = dst
+        else:
+            dst = self.node_map[hash(dst)]
 
-        if not blocking_object:
-            return 
-        
-        key = (blocking_object.type_.type_name(), blocking_object.value_())
+        if dst not in src.blocked_nodes:
+            src.blocked_nodes.append(dst)
 
-        if key not in self.NodeSet:
-            self.NodeSet[key] = self.Node(blocking_object)
-        
-        blocking_node: self.Node = self.NodeSet[key]
+        if src not in dst.depends_on:
+            dst.depends_on.append(src)
 
+    def detect_cycle(self) -> Optional[List[List[Node]]]:
+        visited: Set[DependencyGraph.Node] = set()
+        path: List[DependencyGraph.Node] = []
+        cycles: List[List[DependencyGraph.Node]] = []
 
-        for dependent_object in dependent_objects:
-            if not dependent_object:
-                continue
-
-            key = (dependent_object.type_.type_name(), dependent_object.value_())
-
-            if key not in self.NodeSet:
-                self.NodeSet[key] = self.Node(dependent_object)
-            
-            dependent_node = self.NodeSet[key]
-            dependent_node.depends_on.append(blocking_node)
-
-
-
-    def detect_cycle(self):
-        visited: set[self.Node] = set()
-        path = []
-        cycles = []
-
-        def dfs(node: self.Node) -> None:
+        def dfs(node: DependencyGraph.Node) -> None:
             # If the node is currently being visited (part of the current DFS path), we've found a cycle
             if node in path:
                 cycle_start = path.index(node)
@@ -78,17 +93,17 @@ class DependencyGraph:
             for neighbor in node.depends_on:
                 dfs(neighbor)
 
-            path.pop() 
+            path.pop()
 
         # Run DFS for all nodes in the graph
-        for node in self.NodeSet.values():
+        for node in self.node_map.values():
             if node not in visited:  # Only visit unvisited nodes
                 dfs(node)
 
         return cycles
-    
-class Deadlock(CorelensModule):
 
+
+class Deadlock(CorelensModule):
     name = "deadlock"
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
@@ -96,14 +111,13 @@ class Deadlock(CorelensModule):
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         graph: DependencyGraph = DependencyGraph()
-
-        for dependency in scan_mutex_lock(prog, stack=False):
-            graph.insert(dependency)
+        get_mutex_lock_info(prog, stack=False, graph=graph)
 
         cycles = graph.detect_cycle()
 
         if not cycles:
             print("No cycle found")
+            return
 
         for cycle in cycles:
             print(cycle)
