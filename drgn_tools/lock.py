@@ -43,6 +43,7 @@ from drgn.helpers.linux.pid import find_task
 from drgn_tools.bt import bt
 from drgn_tools.bt import bt_has_any
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.deadlock import DependencyGraph
 from drgn_tools.locking import _RWSEM_READER_MASK
 from drgn_tools.locking import _RWSEM_READER_SHIFT
 from drgn_tools.locking import for_each_mutex_waiter
@@ -119,12 +120,13 @@ def _addr_info(prog: Program, addr: int):
         return ""
 
 
-def scan_mutex_lock(
+def get_mutex_lock_info(
     prog: Program,
     stack: bool,
     time: Optional[int] = None,
     pid: Optional[int] = None,
-) -> List[Tuple[Object, List[Object]]]:
+    graph: Optional[DependencyGraph] = None,
+) -> None:
     """Scan for mutex and show details"""
     wtask = None
     if pid is not None:
@@ -145,7 +147,72 @@ def scan_mutex_lock(
 
     seen_mutexes: Set[int] = set()
 
-    dependency_list: List[Tuple[Object, List[Object]]] = []
+    for task, frame in frame_list:
+        mutex = get_lock_from_frame(prog, task, frame, "mutex", "lock")
+        if not mutex:
+            continue
+        mutex_addr = mutex.value_()
+        if mutex_addr in seen_mutexes:
+            continue
+        seen_mutexes.add(mutex_addr)
+
+        struct_owner = mutex_owner(prog, mutex)
+        index = 0
+        if graph:
+            graph.add_edge(
+                DependencyGraph.Node.from_object(struct_owner),
+                DependencyGraph.Node.from_object(mutex),
+            )
+
+        if pid is None:
+            if time is None:
+                time = 0
+            for waiter in for_each_mutex_waiter(prog, mutex):
+                waittime = task_lastrun2now(waiter)
+                timens = time * 1000000000
+                index = index + 1
+
+                if waittime > timens or timens == 0:
+                    if graph:
+                        graph.add_edge(
+                            DependencyGraph.Node.from_object(mutex),
+                            DependencyGraph.Node.from_object(waiter),
+                        )
+                else:
+                    continue
+        else:
+            if graph:
+                graph.add_edge(
+                    DependencyGraph.Node.from_object(mutex),
+                    DependencyGraph.Node.from_object(wtask),
+                )
+
+
+def scan_mutex_lock(
+    prog: Program,
+    stack: bool,
+    time: Optional[int] = None,
+    pid: Optional[int] = None,
+) -> None:
+    """Scan for mutex and show details"""
+    wtask = None
+    if pid is not None:
+        wtask = find_task(prog, pid)
+
+    frame_list = bt_has_any(
+        prog,
+        [
+            "__mutex_lock",
+            "__mutex_lock_interruptible_slowpath",
+            "__mutex_lock_slowpath",
+            "__mutex_lock_killable_slowpath",
+        ],
+        one_per_task=True,
+    )
+    if not frame_list:
+        return
+
+    seen_mutexes: Set[int] = set()
 
     for task, frame in frame_list:
         mutex = get_lock_from_frame(prog, task, frame, "mutex", "lock")
@@ -160,9 +227,6 @@ def scan_mutex_lock(
         index = 0
         addr_info = _addr_info(prog, mutex_addr)
         print(f"Mutex: 0x{mutex_addr:x}{addr_info}")
-
-        dependency = (mutex, [struct_owner])
-        dependency_list.append(dependency)
 
         if struct_owner:
             print(
@@ -190,20 +254,12 @@ def scan_mutex_lock(
 
                 if waittime > timens or timens == 0:
                     show_lock_waiter(prog, waiter, index, stacktrace=stack)
-                    
-                    dependency = (waiter, [mutex])
-                    dependency_list.append(dependency)
                 else:
                     continue
         else:
             show_lock_waiter(prog, wtask, index, stacktrace=stack)
 
-            dependency = (wtask, [mutex])
-            dependency_list.append(dependency)
-
         print("")
-
-    return dependency_list
 
 
 def show_sem_lock(
