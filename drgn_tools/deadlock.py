@@ -1,6 +1,5 @@
 # Copyright (c) 2025, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-import argparse
 from typing import Dict
 from typing import List
 from typing import Optional
@@ -9,11 +8,7 @@ from typing import Tuple
 from typing import Union
 
 from drgn import Object
-from drgn import Program
 from drgn import TypeKind
-
-from drgn_tools.corelens import CorelensModule
-from drgn_tools.lock import get_mutex_lock_info
 
 
 class DependencyGraph:
@@ -30,9 +25,9 @@ class DependencyGraph:
                 )
 
             object_node = cls.get_node(
-                name=type_.typename(), address=object.address_
+                name=type_.type_name(), address=object.address_
             )
-            if not object_node.object:
+            if object_node.object is None:
                 object_node.object = object
             return object_node
 
@@ -46,7 +41,7 @@ class DependencyGraph:
             self.address: int = address
             self.depends_on: List[DependencyGraph.Node] = []
             self.blocked_nodes: List[DependencyGraph.Node] = []
-            self.object: Object = None
+            self.object: Optional[Object] = None
 
         def __hash__(self):
             # Using name (example : "struct task_struct") and address as unique
@@ -58,7 +53,7 @@ class DependencyGraph:
             hash_value = hash((name, address))
             if hash_value in DependencyGraph.node_map:
                 return DependencyGraph.node_map[hash_value]
-            return cls(name, address)
+            return cls(name=name, address=address)
 
     node_map: Dict[int, Node] = dict()
 
@@ -117,20 +112,3 @@ class DependencyGraph:
                 dfs(node)
 
         return cycles
-
-
-class Deadlock(CorelensModule):
-    name = "deadlock"
-
-    def add_args(self, parser: argparse.ArgumentParser) -> None:
-        pass
-
-    def run(self, prog: Program, args: argparse.Namespace) -> None:
-        graph: DependencyGraph = DependencyGraph()
-        get_mutex_lock_info(prog, stack=False, graph=graph)
-        cycles = graph.detect_cycle()
-        if not cycles:
-            print("No cycle found")
-            return
-        for cycle in cycles:
-            print(cycle)
