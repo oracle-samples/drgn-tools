@@ -34,7 +34,7 @@ class DependencyGraph:
         def __init__(
             self,
             name: str,
-            identifier: Union[int | str] = "",
+            identifier: Union[int, str] = "",
             address: int = 0,
         ):
             self.name: str = f"{name}{str(identifier)}"
