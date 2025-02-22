@@ -123,9 +123,9 @@ def _addr_info(prog: Program, addr: int):
 def get_mutex_lock_info(
     prog: Program,
     stack: bool,
+    graph: DependencyGraph,
     time: Optional[int] = None,
     pid: Optional[int] = None,
-    graph: Optional[DependencyGraph] = None,
 ) -> None:
     """Scan for mutex and show details"""
     wtask = None
@@ -158,11 +158,10 @@ def get_mutex_lock_info(
 
         struct_owner = mutex_owner(prog, mutex)
         index = 0
-        if graph:
-            graph.add_edge(
-                DependencyGraph.Node.from_object(struct_owner),
-                DependencyGraph.Node.from_object(mutex),
-            )
+        graph.add_edge(
+            DependencyGraph.Node.from_object(struct_owner),
+            DependencyGraph.Node.from_object(mutex),
+        )
 
         if pid is None:
             if time is None:
@@ -173,19 +172,17 @@ def get_mutex_lock_info(
                 index = index + 1
 
                 if waittime > timens or timens == 0:
-                    if graph:
-                        graph.add_edge(
-                            DependencyGraph.Node.from_object(mutex),
-                            DependencyGraph.Node.from_object(waiter),
-                        )
+                    graph.add_edge(
+                        DependencyGraph.Node.from_object(mutex),
+                        DependencyGraph.Node.from_object(waiter),
+                    )
                 else:
                     continue
         else:
-            if graph:
-                graph.add_edge(
-                    DependencyGraph.Node.from_object(mutex),
-                    DependencyGraph.Node.from_object(wtask),
-                )
+            graph.add_edge(
+                DependencyGraph.Node.from_object(mutex),
+                DependencyGraph.Node.from_object(wtask),
+            )
 
 
 def scan_mutex_lock(
@@ -453,6 +450,29 @@ def scan_lock(
     scan_rwsem_lock(prog, stack, time, pid)
 
 
+def get_deadlock_info(
+    prog: Program,
+    stack: bool,
+    time: Optional[int] = None,
+    pid: Optional[int] = None,
+) -> None:
+    graph: DependencyGraph = DependencyGraph()
+    get_mutex_lock_info(prog, stack, graph)
+    cycles = graph.detect_cycle()
+    if not cycles:
+        print("No cycle found")
+        return
+
+    print("Cycle Detected!!")
+    cycle_count = 1
+    for cycle in cycles:
+        print(f"---- {cycle_count} ----")
+        for node in cycle:
+            print(f"[{node.name}(0x{node.address:x})]", end=" -> ")
+        print("")
+        cycle_count += 1
+
+
 class Locking(CorelensModule):
     """Display active mutex and semaphores and their waiters"""
 
@@ -490,3 +510,4 @@ class Locking(CorelensModule):
             print("Dont filter with both time and PID")
             return
         scan_lock(prog, args.stack, args.time, args.pid)
+        get_deadlock_info(prog, args.stack, args.time, args.pid)
