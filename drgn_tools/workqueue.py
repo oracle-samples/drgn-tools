@@ -651,8 +651,8 @@ def show_unexpired_delayed_works(
                         "entry",
                     ):
                         if (
-                            prog["delayed_work_timer_fn"].address_of_()
-                            == timer.function
+                            prog.symbol("delayed_work_timer_fn").address
+                            == timer.function.value_()
                         ):
                             dwork = container_of(
                                 timer,
