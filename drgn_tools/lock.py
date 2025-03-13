@@ -510,4 +510,3 @@ class Locking(CorelensModule):
             print("Dont filter with both time and PID")
             return
         scan_lock(prog, args.stack, args.time, args.pid)
-        get_deadlock_info(prog, args.stack, args.time, args.pid)
