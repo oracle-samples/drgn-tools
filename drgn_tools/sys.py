@@ -81,7 +81,12 @@ def get_sysinfo(prog: Program) -> Dict[str, Any]:
         uts = prog["init_uts_ns"]
     else:
         raise Exception("error: could not find utsname information")
-    timekeeper = prog["shadow_timekeeper"]
+    try:
+        timekeeper = prog["shadow_timekeeper"]
+    except KeyError:
+        # 20c7b582e88b8 ("timekeeping: Move shadow_timekeeper into tk_core")
+        # Starting in v6.13
+        timekeeper = prog["tk_core"].shadow_timekeeper
     date = time.ctime(timekeeper.xtime_sec)
     uptime = str(datetime.timedelta(seconds=int(timekeeper.ktime_sec)))
     jiffies = int(prog["jiffies"])
