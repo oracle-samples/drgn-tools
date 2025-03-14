@@ -20,7 +20,7 @@
 
 
 Name:           python-drgn-tools
-Version:        2.0.0
+Version:        2.1.0
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -132,6 +132,14 @@ rm %{buildroot}/usr/bin/DRGN
 %endif
 
 %changelog
+* Thu Apr 17 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.1.0-1
+- Add helper and module for unsubmitted pending work (Imran Khan)
+- Add -V option to display version, and include the version in corelens reports (Stephen Brennan) [Orabug: 37503503]
+- targetcli: add portal info (Richard Li) [Orabug: 37444641]
+- Add --mmslot option to kvm module (Siddhi Katage) [Orabug: 37357370]
+- Fix crash in show_unexpired_delayed_works with CTF (Stephen Brennan) [Orabug: 37695749]
+- Add support for drgn 0.0.31 (Stephen Brennan)
+
 * Fri Jan 10 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.0.0-1
 - Installing drgn-tools does not pull in drgn as a dependency (Stephen Brennan) [Orabug: 37126732]
 - Circular freelist causes infinite loop in corelens "slabinfo" module (Stephen Brennan) [Orabug: 37170860]
