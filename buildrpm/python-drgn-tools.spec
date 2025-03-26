@@ -104,6 +104,7 @@ echo '__version__ = "%{version}+%{release}"' > drgn_tools/_version.py
 %py3_install
 gzip man/corelens.1
 install -m644 -D man/corelens.1.gz %{buildroot}%{_mandir}/man1/corelens.1.gz
+install -m644 -D extras/corelens.py %{buildroot}%{python3_sitelib}/sos/report/plugins/
 
 # The DRGN script is an interactive CLI which is convenient for developers,
 # but should not be part of general users' PATH. If necessary, it can be invoked
@@ -116,6 +117,7 @@ rm %{buildroot}/usr/bin/DRGN
 %{python3_sitelib}/drgn_tools/*
 /usr/bin/corelens
 %{_mandir}/man1/corelens.1.gz
+%{buildroot}%{python3_sitelib}/sos/report/plugins/corelens.py
 
 %if %{with_python311}
 %files -n python3.11-drgn-tools
