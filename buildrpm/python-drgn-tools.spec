@@ -104,6 +104,7 @@ echo '__version__ = "%{version}+%{release}"' > drgn_tools/_version.py
 %py3_install
 gzip man/corelens.1
 install -m644 -D man/corelens.1.gz %{buildroot}%{_mandir}/man1/corelens.1.gz
+install -m644 -D extras/corelens.py %{buildroot}%{python3_sitelib}/sos/report/plugins/
 
 # The DRGN script is an interactive CLI which is convenient for developers,
 # but should not be part of general users' PATH. If necessary, it can be invoked
@@ -116,6 +117,7 @@ rm %{buildroot}/usr/bin/DRGN
 %{python3_sitelib}/drgn_tools/*
 /usr/bin/corelens
 %{_mandir}/man1/corelens.1.gz
+%{buildroot}%{python3_sitelib}/sos/report/plugins/corelens.py
 
 %if %{with_python311}
 %files -n python3.11-drgn-tools
@@ -132,6 +134,9 @@ rm %{buildroot}/usr/bin/DRGN
 %endif
 
 %changelog
+* Thu Mar 14 2025 Anil Lal <anil.palakunnathu.kunnengeri@oracle.com> - 2.0.0-1
+- Add corelens plugin to sosreport (Anil Lal) [Orabug: LSE-524]
+
 * Fri Jan 10 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.0.0-1
 - Installing drgn-tools does not pull in drgn as a dependency (Stephen Brennan) [Orabug: 37126732]
 - Circular freelist causes infinite loop in corelens "slabinfo" module (Stephen Brennan) [Orabug: 37170860]
