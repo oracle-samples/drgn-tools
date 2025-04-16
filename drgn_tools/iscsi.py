@@ -122,7 +122,7 @@ def print_iscsi_sessions(prog: Program) -> None:
         )
 
         for scsi_dev in for_each_scsi_host_device(prog):
-            name = scsi_device_name(prog, scsi_dev)
+            name = scsi_device_name(scsi_dev)
             print(
                 "scsi{} Channel {} Id {} Lun: {}".format(
                     session.host.host_no.value_(),
