@@ -46,10 +46,7 @@ jobs:
           sudo apt-get install qemu-kvm zstd gzip bzip2 cpio busybox-static fio \
                                autoconf automake check gcc git liblzma-dev \
                                libelf-dev libdw-dev libtool make pkgconf zlib1g-dev \
-                               binutils-dev
-          sudo wget -O /usr/bin/rpm2cpio https://github.com/rpm-software-management/rpm/raw/rpm-4.19.0-release/scripts/rpm2cpio.sh
-          echo '0403da24a797ccfa0cfd37bd4a6d6049370b9773e558da6173ae6ad25f97a428 /usr/bin/rpm2cpio' | sha256sum -c -
-          sudo chmod 755 /usr/bin/rpm2cpio
+                               binutils-dev rpm2cpio
       - name: Setup test environment
         # Pinned virtualenv and tox are for the last versions which support
         # detecting Python 3.6 and running tests on it.
