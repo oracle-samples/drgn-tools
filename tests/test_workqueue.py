@@ -1,6 +1,7 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import drgn
+import pytest
 from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.percpu import per_cpu_ptr
@@ -86,27 +87,32 @@ def test_for_each_pwq(prog: drgn.Program) -> None:
     assert pwqs.sort() == cpu_pwqs_list.sort()
 
 
+@pytest.mark.skip_live
 def test_for_each_pending_work_on_cpu(prog: drgn.Program) -> None:
     for work in wq.for_each_pending_work_on_cpu(prog, 0):
         pass
 
 
+@pytest.mark.skip_live
 def test_for_each_pending_work_in_pool(prog: drgn.Program) -> None:
     pool = per_cpu(prog["cpu_worker_pools"], 0)[0].address_of_()
     for work in wq.for_each_pending_work_in_pool(pool):
         pass
 
 
+@pytest.mark.skip_live
 def test_for_each_pending_work_of_pwq(prog: drgn.Program) -> None:
     cpu_pwqs_0 = wq.workqueue_get_pwq(prog["system_wq"], 0)
     for work in wq.for_each_pending_work_of_pwq(cpu_pwqs_0):
         pass
 
 
+@pytest.mark.skip_live
 def test_show_all_workqueues(prog: drgn.Program) -> None:
     wq.show_all_workqueues(prog)
 
 
+@pytest.mark.skip_live
 def test_show_unexpired_delayed_works(
     prog: drgn.Program,
 ) -> None:
