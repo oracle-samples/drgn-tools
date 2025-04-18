@@ -338,6 +338,17 @@ def for_each_rwsem_waiter_entity(rwsem: Object) -> Iterable[Object]:
         yield waiter
 
 
+def rwsem_count(rwsem: Object) -> int:
+    try:
+        return rwsem.count.counter.value_()
+    except AttributeError:
+        # For all modern kernels, rwsem.count is an atomic_long_t. Prior to
+        # 8ee62b1870be8 ("locking/rwsem: Convert sem->count to
+        # 'atomic_long_t'"), which was merged in 4.8, it was a long. It's not
+        # too hard to fall back.
+        return rwsem.count.value_()
+
+
 def get_rwsem_owner(rwsem: Object) -> Tuple[Object, "RwsemStateCode"]:
     """
     Find owner of  given rwsem
@@ -346,7 +357,7 @@ def get_rwsem_owner(rwsem: Object) -> Tuple[Object, "RwsemStateCode"]:
     :returns: type of owner and ``struct task_struct *`` if owner can be found, NULL otherwise
     """
     prog = rwsem.prog_
-    if not rwsem.count.counter.value_():
+    if not rwsem_count(rwsem):
         return NULL(prog, "struct task_struct *"), RwsemStateCode.UNLOCKED
 
     if is_rwsem_writer_owned(rwsem):
@@ -461,12 +472,13 @@ def is_rwsem_reader_owned(rwsem: Object) -> bool:
               case when type of owner could not be determined or when rwsem
               is free.)
     """
-    if not rwsem.count.counter.value_():  # rwsem is free
+    count = rwsem_count(rwsem)
+    if not count:  # rwsem is free
         return False
     if rwsem.owner.type_.type_name() == "atomic_long_t":
-        owner_is_writer = rwsem.count.counter.value_() & _RWSEM_WRITER_LOCKED
+        owner_is_writer = count & _RWSEM_WRITER_LOCKED
         owner_is_reader = (
-            (rwsem.count.counter.value_() & _RWSEM_READER_MASK)
+            (count & _RWSEM_READER_MASK)
             and (rwsem.owner.counter.value_() & _RWSEM_READER_OWNED)
             and (owner_is_writer == 0)
         )
@@ -491,11 +503,12 @@ def is_rwsem_writer_owned(rwsem: Object) -> bool:
               case when type of owner could not be determined or when rwsem
               was free.)
     """
-    if not rwsem.count.counter.value_():  # rwsem is free
+    count = rwsem_count(rwsem)
+    if not count:  # rwsem is free
         return False
 
     if rwsem.owner.type_.type_name() == "atomic_long_t":
-        owner_is_writer = rwsem.count.counter.value_() & _RWSEM_WRITER_LOCKED
+        owner_is_writer = count & _RWSEM_WRITER_LOCKED
         return bool(owner_is_writer)
     else:
         if not rwsem.owner.value_():
@@ -536,7 +549,8 @@ def get_rwsem_info(rwsem: Object, callstack: int = 0) -> None:
     # of rwsem ->count and ->owner bits.
 
     print(f"({rwsem.type_.type_name()})0x{rwsem.value_():x}")
-    if not rwsem.count.counter.value_():
+    count = rwsem_count(rwsem)
+    if not count:
         print("rwsem is free.")
         return
 
@@ -557,7 +571,7 @@ def get_rwsem_info(rwsem: Object, callstack: int = 0) -> None:
         # So try to retrieve that info.
         if rwsem.owner.type_.type_name() == "atomic_long_t":
             num_readers = (
-                rwsem.count.counter.value_() & _RWSEM_READER_MASK
+                count & _RWSEM_READER_MASK
             ) >> _RWSEM_READER_SHIFT
             print(f"Owned by {num_readers} reader(s)")
         else:
