@@ -251,9 +251,6 @@ TEST_KERNELS = [
     # configurations and any customizations. It's not officially supported, but
     # it's an excellent test bed to ensure we are ready to support the latest
     # upstream features.
-    # We also apparently need to add "-modules-core" RPMs, because there weren't
-    # enough kernel RPMs yet.
-    # Tests currently fail on UEK-next. Uncomment this to enable the tests:
     TestKernel(
         9,
         "next",
@@ -269,6 +266,8 @@ TEST_KERNELS = [
         ),
         pkgbase="kernel-ueknext",
     ),
+    # UEK8 further distributes modules, so we need to add -modules-core.
+    TestKernel(9, 8, "x86_64", ["kernel-uek-core", "kernel-uek-modules", "kernel-uek-modules-core"]),
     # UEK7 switches from a single "kernel-uek" to "-core" and "-modules".
     # The "kernel-uek" package still exists as a placeholder.
     TestKernel(9, 7, "x86_64", ["kernel-uek-core", "kernel-uek-modules"]),
