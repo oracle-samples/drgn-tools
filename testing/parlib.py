@@ -360,7 +360,7 @@ class ParClient:
         """
         first_block = data.read(chunk_size)
         if len(first_block) < chunk_size:
-            self.put_object_raw(key, data.read())
+            self.put_object_raw(key, first_block)
         else:
             self.put_object_multipart(
                 key, data, chunk_size, first_block=first_block
