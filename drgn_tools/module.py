@@ -450,14 +450,13 @@ def module_symbols(module: Object) -> List[Tuple[str, Object]]:
     return syms
 
 
-def _first_kallsyms_symbol(module: Object) -> Optional[int]:
+def _first_kallsyms_symbols(module: Object, count: int) -> List[int]:
     try:
         ks = module.kallsyms
     except AttributeError:
         ks = module
-    if ks.num_symtab >= 2:
-        return int(ks.symtab[1].st_value)
-    return None
+    end = min(count + 1, ks.num_symtab)
+    return [int(ks.symtab[i].st_value) for i in range(1, end)]
 
 
 def module_has_debuginfo(module: Object) -> bool:
@@ -471,14 +470,14 @@ def module_has_debuginfo(module: Object) -> bool:
     """
     if module.prog_.cache.get("using_ctf"):
         return True
-    fst = _first_kallsyms_symbol(module)
-    if not fst:
-        return False
-    try:
-        module.prog_.symbol(fst)
-        return True
-    except LookupError:
-        return False
+    addrs = _first_kallsyms_symbols(module, 5)
+    for addr in addrs:
+        try:
+            module.prog_.symbol(addr)
+            return True
+        except LookupError:
+            pass
+    return False
 
 
 def _elf_sym_to_symbol(name: str, obj: Object) -> Symbol:
