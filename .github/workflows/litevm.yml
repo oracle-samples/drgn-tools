@@ -59,7 +59,7 @@ jobs:
           cd ..
           git clone https://github.com/brenns10/drgn -b ctf_0.0.31
           cd drgn
-          ../drgn-tools/venv/bin/python setup.py install
+          ../drgn-tools/venv/bin/pip install .
       - name: Run tests
         run: |
           venv/bin/python -m testing.litevm.vm --delete-after-test --with-ctf
