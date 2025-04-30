@@ -617,7 +617,7 @@ def _version_string() -> str:
     return f"drgn-tools {__version__}, {drgn_version_header()}, {ctf_str}"
 
 
-def main() -> None:
+def _do_main() -> None:
     corelens_begin_time = time.time()
     parser = argparse.ArgumentParser(
         description="Kernel core dump analysis tool",
@@ -792,6 +792,20 @@ def main() -> None:
         sys.exit(1)
 
 
+def main() -> None:
+    # Wrap _do_main() with standard Ctrl-C and pipe handling. We do this here,
+    # rather than in the "if __name__ == '__main__'" area below, because this is
+    # the entry point called by the command line stub that actually gets
+    # installed to /usr/bin. If we included it below, then the /usr/bin/corelens
+    # script wouldn't get these error handlers.
+    try:
+        _do_main()
+    except KeyboardInterrupt:
+        sys.exit("interrupted")
+    except BrokenPipeError:
+        pass
+
+
 def run(prog: Program, cl_cmd: str) -> None:
     """
     Run a single corelens command
@@ -834,13 +848,16 @@ def make_runner(prog: Program) -> Callable[[str], None]:
 
 
 if __name__ == "__main__":
-    # Please, do not ask too many questions about this line. Please. It is a
-    # terrible, terrible corner of Python.
+    # When the module is run directly, as in "python -m drgn_tools.corelens",
+    # Python actually creates this module with the name "__main__", rather than
+    # drgn_tools.corelens. Later on, when other code imports
+    # drgn_tools.corelens, this module is actually re-read and a new module with
+    # the correct name is created. That means that there are actually two copies
+    # of the class CorelensModule: the one defined in __main__, and the one
+    # defined in drgn_tools.corelens. Nothing inherits from the one in __main__,
+    # so if we run __main__.main(), we don't detect any corelens modules. We
+    # need to run drgn_tools.corelens.main() in order to actually get a
+    # functional program.
     import drgn_tools.corelens
 
-    try:
-        drgn_tools.corelens.main()
-    except KeyboardInterrupt:
-        sys.exit("interrupted")
-    except BrokenPipeError:
-        pass
+    drgn_tools.corelens.main()
