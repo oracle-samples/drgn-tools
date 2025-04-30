@@ -21,7 +21,7 @@
 
 Name:           python-drgn-tools
 Version:        2.1.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
 License:        UPL
@@ -132,6 +132,12 @@ rm %{buildroot}/usr/bin/DRGN
 %endif
 
 %changelog
+* Wed Apr 30 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.1.0-2
+- Resolve cpuinfo issue for aarch64 on Linux 6.0+ [Orabug: 37879692]
+- Avoid traceback on Ctrl-C and broken pipe error [Orabug: 37879205]
+- Don't run "rds" module for unsupported "rds_tcp" [Orabug: 34774256]
+- Reduce false positives for DWARF kernel moduel debuginfo detection [Orabug: 37894843]
+
 * Thu Apr 17 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.1.0-1
 - Add helper and module for unsubmitted pending work (Imran Khan)
 - Add -V option to display version, and include the version in corelens reports (Stephen Brennan) [Orabug: 37503503]
