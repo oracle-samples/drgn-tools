@@ -12,6 +12,7 @@ from drgn import Architecture
 from drgn import Object
 from drgn import Program
 from drgn import sizeof
+from drgn import TypeKind
 from drgn.helpers.linux.bitops import for_each_set_bit
 from drgn.helpers.linux.bitops import test_bit
 from drgn.helpers.linux.percpu import per_cpu
@@ -138,11 +139,18 @@ def aarch64_get_cpu_info(prog: Program) -> Dict[str, Any]:
     cpu_caps_list = []
 
     hwcap_str = prog["hwcap_str"].read_()
-    elf_hwcap = prog["elf_hwcap"].read_()
+    elf_hwcap = prog["elf_hwcap"]
     num_caps = len(hwcap_str)
 
+    # Starting in v6.0, 60c868eff2bc5 ("arm64/cpufeature: Store elf_hwcaps as a
+    # bitmap rather than unsigned long") converts what was an unsigned long, to
+    # a bitmap. To make backwards compatibility easier, treat the old field as
+    # bitmap by taking its address.
+    if elf_hwcap.type_.kind == TypeKind.INT:
+        elf_hwcap = elf_hwcap.address_of_()
+
     for i in range(num_caps):
-        if elf_hwcap & (1 << i):
+        if test_bit(i, elf_hwcap):
             cpu_caps_list.append(hwcap_str[i].string_().decode("utf-8"))
 
     midr_implementor = hex(
