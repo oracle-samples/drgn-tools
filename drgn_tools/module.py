@@ -470,6 +470,13 @@ def module_has_debuginfo(module: Object) -> bool:
     """
     if module.prog_.cache.get("using_ctf"):
         return True
+    # The common case for DWARF is that we record which modules' debuginfo we
+    # load as we do it. Then we can easily check the name in the cache.
+    name = module.name.string_().decode().replace("-", "_")
+    if name in module.prog_.cache.get("drgn-tools-loaded-mods", set()):
+        return True
+    # Otherwise, fallback to a heuristic. TODO: drgn 0.0.31 use the module API
+    # for this.
     addrs = _first_kallsyms_symbols(module, 5)
     for addr in addrs:
         try:
@@ -883,6 +890,7 @@ class KernelModule:
                 info = fetch_debuginfo(release, [name]).get(name)
             if info:
                 self.obj.prog_.load_debug_info([info])
+                self.obj.prog_.cache.setdefault("drgn-tools-loaded-mods", set()).add(name)
             else:
                 raise FileNotFoundError("Could not find debuginfo for module")
 
@@ -1107,6 +1115,7 @@ def load_module_debuginfo(
         )
 
     prog.load_debug_info(to_load)
+    prog.cache.setdefault("drgn-tools-loaded-mods", set()).update(found_set)
 
 
 def ensure_debuginfo(prog: Program, modules: List[str]) -> Optional[str]:
