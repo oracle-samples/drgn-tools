@@ -1,14 +1,18 @@
-# Copyright (c) 2024, Oracle and/or its affiliates.
+# Copyright (c) 2025, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import argparse
+import typing
 
+import drgn
 from drgn import Program
 from drgn.helpers.common import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.percpu import per_cpu
 
 from drgn_tools.bt import bt
+from drgn_tools.bt import bt_has_any
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.table import print_table
 from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import timestamp_str
 
@@ -17,7 +21,7 @@ def scan_lockup(
     prog: Program, min_run_time_seconds: int = 1, skip_swapper: bool = True
 ) -> None:
     """
-    Scan potential lockups on cpus.
+    Scan potential lockups on cpus and tasks waiting for RCU.
 
     :param prog: drgn program
     :param min_run_time_seconds: int
@@ -47,13 +51,52 @@ def scan_lockup(
         print()
         nr_processes += 1
 
-    print(
-        f"We found {nr_processes} processes running more than {min_run_time_seconds} seconds."
-    )
+    print(f"We found {nr_processes} processes running more than {min_run_time_seconds} seconds")
+
+    dump_tasks_waiting_rcu_gp(prog, min_run_time_seconds)
+
+
+def tasks_waiting_rcu_gp(prog: Program) -> typing.List[typing.Tuple[drgn.Object, drgn.StackFrame]]:
+    """
+    Detects tasks waiting RCU grace period
+
+    :param prog: drgn program
+    """
+    rcu_gp_fn = ["percpu_ref_switch_to_atomic_sync"]
+    return bt_has_any(prog, rcu_gp_fn)
+
+
+def dump_tasks_waiting_rcu_gp(prog: Program, min_run_time_seconds: int) -> None:
+    """
+    Prints tasks waiting on rcu grace period with details
+
+    :param prog: drgn program
+    :param min_run_time_seconds: int
+    """
+    tasks_waiting = tasks_waiting_rcu_gp(prog)
+    output = [["TASK", "NAME", "PID", "PENDING_TIME"]]
+    tasks_pids = set()  # remove duplicates
+    if tasks_waiting:
+        for t, _ in tasks_waiting:
+            pending_time = timestamp_str(task_lastrun2now(t))
+            pid = t.pid.value_()
+            if pid not in tasks_pids and task_lastrun2now(t) > min_run_time_seconds * 1e9:
+                output.append(
+                    [
+                        hex(t.value_()),
+                        escape_ascii_string(t.comm.string_()),
+                        pid,
+                        pending_time
+                    ]
+                )
+                tasks_pids.add(pid)
+        print()
+        print(f"We found below tasks waiting for rcu grace period over {min_run_time_seconds} seconds:")
+        print_table(output)
 
 
 class LockUp(CorelensModule):
-    """Print tasks which have been on-cpu for too long"""
+    """Print tasks which have been on-cpu for too long (possible RCU blockers) and tasks waiting RCU grace period if any"""
 
     name = "lockup"
 
