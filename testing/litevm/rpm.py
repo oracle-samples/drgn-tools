@@ -6,6 +6,7 @@ RPM Fetching for Tests
 import argparse
 import fnmatch
 import io
+import os
 import shlex
 import shutil
 import sqlite3
@@ -19,6 +20,7 @@ from typing import Union
 from urllib.error import HTTPError
 
 from drgn_tools.util import download_file
+from drgn_tools.util import head_file
 from testing.util import BASE_DIR
 
 
@@ -90,6 +92,18 @@ def download_file_cached(
                 cached_file.unlink()
                 raise
     return cached_file
+
+
+def check_file_cached(
+    url: str, cache: Optional[Path], cache_key: Optional[str]
+) -> bool:
+    if not cache:
+        cache = YUM_CACHE_DIR
+    if cache_key:
+        cache = cache / cache_key
+    cached_file = cache / url.split("/")[-1]
+    rv = cached_file.is_file() or head_file(url)
+    return rv
 
 
 class TestKernel:
@@ -192,20 +206,58 @@ class TestKernel:
         def key(t):
             return tuple(map(int, t[0].split(".") + t[1].split(".")[:-1]))
 
-        rows.sort(key=key)
-        ver, rel, href = rows[-1]
-
-        # Now set the final values as output
-        self._rpm_urls = []
-        rpm_url = yumbase + href
-        for final_pkg in self.pkgs:
-            self._rpm_urls.append(rpm_url.replace(self.pkgbase, final_pkg))
-        self._release = f"{ver}-{rel}.{self.arch}"
-        self._dbinfo_url = DEBUGINFO_URL.format(
-            ol_ver=self.ol_ver,
-            release=self._release,
-            pkgbase=self.pkgbase,
+        allow_missing = bool(
+            int(os.environ.get("DRGN_TOOLS_ALLOW_MISSING_LATEST", 0))
         )
+        rows.sort(key=key, reverse=True)
+        versions_tried = []
+        for ver, rel, href in rows[:2]:
+            # Check whether all RPMs are either cached or available via HTTP
+            rpm_urls: List[str] = []
+            rpm_url = yumbase + href
+            missing_urls = []
+            release = f"{ver}-{rel}.{self.arch}"
+            for final_pkg in self.pkgs:
+                url = rpm_url.replace(self.pkgbase, final_pkg)
+                if not check_file_cached(
+                    url, self.cache_dir, self._cache_key("rpm")
+                ):
+                    missing_urls.append(url)
+                rpm_urls.append(url)
+            dbinfo_url = DEBUGINFO_URL.format(
+                ol_ver=self.ol_ver,
+                release=release,
+                pkgbase=self.pkgbase,
+            )
+            if not check_file_cached(
+                dbinfo_url, self.cache_dir, self._cache_key("rpm")
+            ):
+                missing_urls.append(dbinfo_url)
+
+            # If some RPMs are available, we have two options:
+            # 1. Try the next older RPM (if the environment variable is set)
+            # 2. Ignore the error and let the HTTP 404 handling below report the
+            # issue.
+            if missing_urls and allow_missing:
+                print(
+                    f"warning: {release} had missing RPMs:\n"
+                    + "\n".join(missing_urls)
+                    + "\nTrying an older release..."
+                )
+                versions_tried.append(release)
+                continue
+
+            self._rpm_urls = rpm_urls
+            self._dbinfo_url = dbinfo_url
+            self._release = release
+            return
+        else:
+            # This is the case where we checked both candidates, but neither had
+            # all files available. Report an error.
+            sys.exit(
+                "error: no release had all files available. Tried: "
+                + ", ".join(versions_tried)
+            )
 
     def _get_rpms(self) -> None:
         if not self._release:
