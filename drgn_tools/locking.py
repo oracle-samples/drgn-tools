@@ -570,9 +570,7 @@ def get_rwsem_info(rwsem: Object, callstack: int = 0) -> None:
         # For reader owned rwsems, we can get number of readers in newer kernels( >= v5.3.1).
         # So try to retrieve that info.
         if rwsem.owner.type_.type_name() == "atomic_long_t":
-            num_readers = (
-                count & _RWSEM_READER_MASK
-            ) >> _RWSEM_READER_SHIFT
+            num_readers = (count & _RWSEM_READER_MASK) >> _RWSEM_READER_SHIFT
             print(f"Owned by {num_readers} reader(s)")
         else:
             print("rwsem is owned by one or more readers")
