@@ -10,11 +10,13 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List
 from typing import Optional
 from typing import Union
+from urllib.error import HTTPError
 
 from drgn_tools.util import download_file
 from testing.util import BASE_DIR
@@ -210,22 +212,28 @@ class TestKernel:
             self._getlatest()
 
         self._rpm_paths = []
-        for i, url in enumerate(self._rpm_urls):
+        try:
+            for i, url in enumerate(self._rpm_urls):
+                path = download_file_cached(
+                    url,
+                    desc=f"RPM {i + 1}/{len(self._rpm_urls)}",
+                    cache=self.cache_dir,
+                    cache_key=self._cache_key("rpm"),
+                    delete_on_miss=(i == 0),
+                )
+                self._rpm_paths.append(path)
             path = download_file_cached(
-                url,
-                desc=f"RPM {i + 1}/{len(self._rpm_urls)}",
+                self._dbinfo_url,
+                desc="Debuginfo RPM",
                 cache=self.cache_dir,
                 cache_key=self._cache_key("rpm"),
-                delete_on_miss=(i == 0),
+                delete_on_miss=False,
             )
-            self._rpm_paths.append(path)
-        path = download_file_cached(
-            self._dbinfo_url,
-            desc="Debuginfo RPM",
-            cache=self.cache_dir,
-            cache_key=self._cache_key("rpm"),
-            delete_on_miss=False,
-        )
+        except HTTPError as e:
+            sys.exit(
+                f"HTTP error {e.code} {e.reason} encountered while "
+                f"fetching URL:\n{e.url}"
+            )
         self._dbinfo_path = path
 
     def get_rpms(self) -> List[Path]:
