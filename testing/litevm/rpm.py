@@ -267,7 +267,12 @@ TEST_KERNELS = [
         pkgbase="kernel-ueknext",
     ),
     # UEK8 further distributes modules, so we need to add -modules-core.
-    TestKernel(9, 8, "x86_64", ["kernel-uek-core", "kernel-uek-modules", "kernel-uek-modules-core"]),
+    TestKernel(
+        9,
+        8,
+        "x86_64",
+        ["kernel-uek-core", "kernel-uek-modules", "kernel-uek-modules-core"],
+    ),
     # UEK7 switches from a single "kernel-uek" to "-core" and "-modules".
     # The "kernel-uek" package still exists as a placeholder.
     TestKernel(9, 7, "x86_64", ["kernel-uek-core", "kernel-uek-modules"]),
