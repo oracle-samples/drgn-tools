@@ -750,7 +750,10 @@ def _do_main() -> None:
     deferred_output: List[str] = []
     if args.output_directory:
         out_dir = Path(args.output_directory)
-        out_dir.mkdir(exist_ok=True)
+        try:
+            out_dir.mkdir(exist_ok=True)
+        except OSError as e:
+            sys.exit(f"error creating output directory: {e}")
         err_file = (out_dir / "corelens").open("w")
 
         def info_msg(*args, **kwargs):
