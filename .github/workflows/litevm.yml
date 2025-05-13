@@ -5,6 +5,11 @@ on:
     branches:
       - main
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
 
 jobs:
   commit-hooks:
@@ -61,5 +66,7 @@ jobs:
           cd drgn
           ../drgn-tools/venv/bin/pip install .
       - name: Run tests
+        env:
+          DRGN_TOOLS_ALLOW_MISSING_LATEST: ${{ contains(github.event.pull_request.labels.*.name, 'allow-missing-latest') && '1' || '0' }}
         run: |
           venv/bin/python -m testing.litevm.vm --delete-after-test --with-ctf

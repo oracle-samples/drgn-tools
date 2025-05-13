@@ -6,6 +6,8 @@ import time
 import typing as t
 from contextlib import contextmanager
 from enum import IntEnum
+from urllib.error import HTTPError
+from urllib.request import Request
 from urllib.request import urlopen
 
 from drgn import NULL
@@ -305,6 +307,15 @@ class SimpleProgress:
         self.print_report()
         if self.isatty and not self.quiet:
             print()
+
+
+def head_file(url: str) -> bool:
+    request = Request(url, method="HEAD")
+    try:
+        urlopen(request)
+        return True
+    except HTTPError:
+        return False
 
 
 def download_file(
