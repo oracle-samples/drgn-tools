@@ -23,6 +23,10 @@ def get_mountinfo(prog: drgn.Program) -> List[List[str]]:
     for mnt in drgn.helpers.linux.fs.for_each_mount(mounts):
         devname = mnt.mnt_devname
         sb = mnt.mnt.mnt_sb
+        if not sb:
+            # See https://github.com/osandov/drgn/pull/496
+            # TODO: drgn 0.0.32+ can drop this
+            continue
         fstype = sb.s_type.name.string_()
         if sb.s_subtype:
             fstype += b"." + sb.s_subtype.string_()
