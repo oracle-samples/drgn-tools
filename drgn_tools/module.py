@@ -890,7 +890,9 @@ class KernelModule:
                 info = fetch_debuginfo(release, [name]).get(name)
             if info:
                 self.obj.prog_.load_debug_info([info])
-                self.obj.prog_.cache.setdefault("drgn-tools-loaded-mods", set()).add(name)
+                self.obj.prog_.cache.setdefault(
+                    "drgn-tools-loaded-mods", set()
+                ).add(name)
             else:
                 raise FileNotFoundError("Could not find debuginfo for module")
 
