@@ -15,17 +15,23 @@ class LibCorelens(Plugin, RedHatPlugin):
     Corelens Data Collection
     """
 
-    plugin_name = 'corelens'
-    profiles = ('system', 'corelens')
+    plugin_name = "corelens"
+    profiles = ("system", "corelens")
     short_desc = "Corelens data collection"
-    option_list = [PluginOpt('task-days', default=3, desc='days of task history')]
+    option_list = [
+        PluginOpt("task-days", default=3, desc="days of task history")
+    ]
 
     def check_version(self):
         # This function is to validate the corelens version which is available
         # along with drgn-tools version above 1.1.2 and higher
-        version_command = "rpm -qa | grep drgn-tools | cut -d '-' -f3 | tr -d '.'"
+        version_command = (
+            "rpm -qa | grep drgn-tools | cut -d '-' -f3 | tr -d '.'"
+        )
         try:
-            corelens_version = int(subprocess.check_output(version_command, shell=True).strip())
+            corelens_version = int(
+                subprocess.check_output(version_command, shell=True).strip()
+            )
             return corelens_version >= 112
         except Exception:
             return False
@@ -52,11 +58,19 @@ class LibCorelens(Plugin, RedHatPlugin):
                         vmcore_path = value
 
             if vmcore_path:
-                if storage and (storage.startswith("LABEL=") or storage.startswith("UUID=")):
-                    resolved_storage = subprocess.getoutput(f"findmnt -rn -o TARGET -S {storage}")
+                if storage and (
+                    storage.startswith("LABEL=") or storage.startswith("UUID=")
+                ):
+                    resolved_storage = subprocess.getoutput(
+                        f"findmnt -rn -o TARGET -S {storage}"
+                    )
                     if resolved_storage:
                         storage = resolved_storage
-                        return f"{storage}/{vmcore_path}" if not vmcore_path.startswith("/") else f"{storage}{vmcore_path}"
+                        return (
+                            f"{storage}/{vmcore_path}"
+                            if not vmcore_path.startswith("/")
+                            else f"{storage}{vmcore_path}"
+                        )
                 return vmcore_path
             else:
                 return None
@@ -70,14 +84,22 @@ class LibCorelens(Plugin, RedHatPlugin):
         try:
             vmcore_dir_path = self.get_vmcore_dir_path()
             if not vmcore_dir_path:
-                error_logs.append("Error: Could not determine vmcore path from /etc/kdump.conf")
-                self.add_string_as_file("\n".join(error_logs), filename="corelens")
+                error_logs.append(
+                    "Error: Could not determine vmcore path from /etc/kdump.conf"
+                )
+                self.add_string_as_file(
+                    "\n".join(error_logs), filename="corelens"
+                )
                 return
 
             vmcore_dir_path = Path(vmcore_dir_path)
             if not vmcore_dir_path.is_dir():
-                error_logs.append(f"Error: {vmcore_dir_path} is not a valid directory.")
-                self.add_string_as_file("\n".join(error_logs), filename="corelens")
+                error_logs.append(
+                    f"Error: {vmcore_dir_path} is not a valid directory."
+                )
+                self.add_string_as_file(
+                    "\n".join(error_logs), filename="corelens"
+                )
                 return
 
             now = datetime.now()
@@ -88,31 +110,52 @@ class LibCorelens(Plugin, RedHatPlugin):
                 if directory.is_dir():
                     try:
                         timestamp_str = directory.name[-19:]
-                        dir_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d-%H:%M:%S")
+                        dir_timestamp = datetime.strptime(
+                            timestamp_str, "%Y-%m-%d-%H:%M:%S"
+                        )
                         if dir_timestamp >= oldest_allowed_date:
-                            recent_vmcore_dirs.append((dir_timestamp, directory))
+                            recent_vmcore_dirs.append(
+                                (dir_timestamp, directory)
+                            )
                     except ValueError:
-                        error_logs.append(f"Warning: Skipping invalid directory format: {directory.name}")
+                        error_logs.append(
+                            f"Warning: Skipping invalid directory format: {directory.name}"
+                        )
 
             recent_vmcore_dirs.sort(reverse=True, key=lambda x: x[0])
-            recent_vmcore_dirs = [directory[1] for directory in recent_vmcore_dirs[:3]]
+            recent_vmcore_dirs = [
+                directory[1] for directory in recent_vmcore_dirs[:3]
+            ]
             if not recent_vmcore_dirs:
                 error_logs.append("No recent vmcore directories found.")
-                self.add_string_as_file("\n".join(error_logs), filename="corelens")
+                self.add_string_as_file(
+                    "\n".join(error_logs), filename="corelens"
+                )
                 return
 
             archive_tmp_dir = self.archive.get_tmp_dir()
-            corelens_output_path = Path(archive_tmp_dir) / "sos_commands/corelens"
+            corelens_output_path = (
+                Path(archive_tmp_dir) / "sos_commands/corelens"
+            )
             corelens_output_path.mkdir(parents=True, exist_ok=True)
 
             for vmcore_subdir in recent_vmcore_dirs:
                 vmcore_file = vmcore_subdir / "vmcore"
-                corelens_output_file = corelens_output_path / vmcore_subdir.name
-                corelens_cmd = f"corelens {vmcore_file} -A -o {corelens_output_file}"
+                corelens_output_file = (
+                    corelens_output_path / vmcore_subdir.name
+                )
+                corelens_cmd = (
+                    f"corelens {vmcore_file} -A -o {corelens_output_file}"
+                )
                 try:
-                    self.add_cmd_output(corelens_cmd, suggest_filename=f"corelens-{vmcore_subdir.name}")
+                    self.add_cmd_output(
+                        corelens_cmd,
+                        suggest_filename=f"corelens-{vmcore_subdir.name}",
+                    )
                 except subprocess.CalledProcessError:
-                    error_logs.append(f"Error: Failed to process vmcore at {vmcore_file}")
+                    error_logs.append(
+                        f"Error: Failed to process vmcore at {vmcore_file}"
+                    )
         except Exception as e:
             error_logs.append(f"Unexpected error: {e}")
 
@@ -120,7 +163,7 @@ class LibCorelens(Plugin, RedHatPlugin):
             self.add_string_as_file("\n".join(error_logs), filename="corelens")
 
     def setup(self):
-        days = self.get_option('task-days')
+        days = self.get_option("task-days")
         corelens_binary = Path("/usr/bin/corelens")
         if corelens_binary.exists() and self.check_version():
             self.process_recent_vmcores(days)
@@ -128,9 +171,17 @@ class LibCorelens(Plugin, RedHatPlugin):
             corelens_info_header = "Corelens details::"
             rpm_cmd = "rpm -qa | grep -E 'oled|drgn'"
             try:
-                corelens_pkg = subprocess.check_output(rpm_cmd, shell=True, universal_newlines=True).decode("utf-8")
+                corelens_pkg = subprocess.check_output(
+                    rpm_cmd, shell=True, universal_newlines=True
+                ).decode("utf-8")
             except Exception:
                 corelens_pkg = "Error fetching package details either oled-tools or drgn package is missing"
-            failure_message = "File not created. Either vmlinux.ctfa or vmcore not found"
-            corelens_report = f"{corelens_info_header}\n{corelens_pkg}\n{failure_message}"
-            self.add_string_as_file('%s' % (corelens_report), filename='corelens')
+            failure_message = (
+                "File not created. Either vmlinux.ctfa or vmcore not found"
+            )
+            corelens_report = (
+                f"{corelens_info_header}\n{corelens_pkg}\n{failure_message}"
+            )
+            self.add_string_as_file(
+                "%s" % (corelens_report), filename="corelens"
+            )
