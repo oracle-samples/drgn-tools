@@ -11,12 +11,12 @@ from drgn import container_of
 from drgn import FaultError
 from drgn import Object
 from drgn import Program
+from drgn.helpers.linux import address_to_module
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.device import bus_to_subsys
 from drgn_tools.logging import get_logger
-from drgn_tools.module import address_to_module
 from drgn_tools.module import KernelModule
 from drgn_tools.util import has_member
 
