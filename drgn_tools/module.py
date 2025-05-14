@@ -265,8 +265,24 @@ def module_build_id(mod: Object) -> str:
     """
     prog = mod.prog_
     notes_attrs = mod.notes_attrs
-    for i in range(notes_attrs.notes.value_()):
-        attr = notes_attrs.attrs[i]
+
+    if hasattr(notes_attrs, "grp"):
+        # In 6.14, 4723f16de64e1 ("module: sysfs: Add notes attributes through
+        # attribute_group") changes the storage to use an attribute, and the
+        # array here is null-terminated.
+        def attrs():
+            attr = notes_attrs.grp.bin_attrs[0]
+            while attr:
+                yield attr
+                attr += 1
+
+    else:
+        # Pre-6.14, there was an array with an explicit length.
+        def attrs():
+            for i in range(notes_attrs.notes.value_()):
+                yield notes_attrs.attrs[i]
+
+    for attr in attrs():
         if attr.attr.name.string_() == b".note.gnu.build-id":
             data = prog.read(attr.private, attr.size.value_())
             # Hack / simplification: note data comes at the end of the ELF note
