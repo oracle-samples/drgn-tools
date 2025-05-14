@@ -51,12 +51,16 @@ def scan_lockup(
         print()
         nr_processes += 1
 
-    print(f"We found {nr_processes} processes running more than {min_run_time_seconds} seconds")
+    print(
+        f"We found {nr_processes} processes running more than {min_run_time_seconds} seconds"
+    )
 
     dump_tasks_waiting_rcu_gp(prog, min_run_time_seconds)
 
 
-def tasks_waiting_rcu_gp(prog: Program) -> typing.List[typing.Tuple[drgn.Object, drgn.StackFrame]]:
+def tasks_waiting_rcu_gp(
+    prog: Program,
+) -> typing.List[typing.Tuple[drgn.Object, drgn.StackFrame]]:
     """
     Detects tasks waiting RCU grace period
 
@@ -66,7 +70,9 @@ def tasks_waiting_rcu_gp(prog: Program) -> typing.List[typing.Tuple[drgn.Object,
     return bt_has_any(prog, rcu_gp_fn)
 
 
-def dump_tasks_waiting_rcu_gp(prog: Program, min_run_time_seconds: int) -> None:
+def dump_tasks_waiting_rcu_gp(
+    prog: Program, min_run_time_seconds: int
+) -> None:
     """
     Prints tasks waiting on rcu grace period with details
 
@@ -80,18 +86,23 @@ def dump_tasks_waiting_rcu_gp(prog: Program, min_run_time_seconds: int) -> None:
         for t, _ in tasks_waiting:
             pending_time = timestamp_str(task_lastrun2now(t))
             pid = t.pid.value_()
-            if pid not in tasks_pids and task_lastrun2now(t) > min_run_time_seconds * 1e9:
+            if (
+                pid not in tasks_pids
+                and task_lastrun2now(t) > min_run_time_seconds * 1e9
+            ):
                 output.append(
                     [
                         hex(t.value_()),
                         escape_ascii_string(t.comm.string_()),
                         pid,
-                        pending_time
+                        pending_time,
                     ]
                 )
                 tasks_pids.add(pid)
         print()
-        print(f"We found below tasks waiting for rcu grace period over {min_run_time_seconds} seconds:")
+        print(
+            f"We found below tasks waiting for rcu grace period over {min_run_time_seconds} seconds:"
+        )
         print_table(output)
 
 
