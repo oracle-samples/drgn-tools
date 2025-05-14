@@ -4,6 +4,7 @@
 Helper for linux kernel locking
 """
 import enum
+from collections import defaultdict
 from typing import Iterable
 from typing import Optional
 from typing import Tuple
@@ -18,6 +19,7 @@ from drgn import Object
 from drgn import Program
 from drgn import StackFrame
 from drgn.helpers import ValidationError
+from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.list import validate_list_for_each_entry
@@ -27,8 +29,10 @@ from drgn.helpers.linux.sched import task_cpu
 from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.bt import bt
+from drgn_tools.bt import frame_name
 from drgn_tools.mm import AddrKind
 from drgn_tools.table import FixedTable
+from drgn_tools.task import get_command
 from drgn_tools.task import get_current_run_time
 from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import per_cpu_owner
@@ -670,3 +674,135 @@ def get_lock_from_frame(
         if is_task_blocked_on_lock(pid, kind, lock):
             return lock
     return None
+
+
+######################################
+# qspinlock
+######################################
+_QSPINLOCK_UNLOCKED_VAL = 0
+
+
+def qspinlock_is_locked(qsp: Object) -> bool:
+    """
+    Check if a qspinlock is locked or not
+
+    :param qsp: ``struct qspinlock *``
+    :returns: True if qspinlock is locked, False otherwise.
+    """
+    return qsp.locked.value_() != _QSPINLOCK_UNLOCKED_VAL
+
+
+def get_qspinlock_tail_cpu(qsp: Object) -> int:
+    """
+    Get tail cpu that spins on the  qspinlock
+
+    :param qsp: ``struct qspinlock *``
+    :returns: tail cpu that spins on the qspinlock, -1 if None
+    """
+    tail = qsp.tail.value_()
+    tail_cpu = (tail >> 2) - 1
+    return tail_cpu
+
+
+def get_tail_cpu_qnode(qsp: Object) -> Iterable[Object]:
+    """
+    Only for UEK6 and above.
+    Given a qspinlock, find qnodes associated with the tail cpu spining on the qspinlock.
+
+    :param qsp: ``struct qspinlock *``
+    :returns: Iterator of qnode
+    """
+    tail_cpu = get_qspinlock_tail_cpu(qsp)
+    prog = qsp.prog_
+    if tail_cpu < 0:
+        return []
+    tail_qnodes = per_cpu(prog["qnodes"], tail_cpu)
+    for qnode in tail_qnodes:
+        yield qnode
+
+
+def dump_qnode_address_for_each_cpu(prog: Program, cpu: int = -1) -> None:
+    """
+    Only for UEK6 and above.
+    Dump all qnode addresses per cpu. If cpu is specified, dump qnode address on that cpu only.
+
+    :param prog: drgn program
+    :param cpu: cpu id
+    """
+    print(
+        "%-20s %-20s"
+        % (
+            "cpu",
+            "qnode",
+        )
+    )
+    online_cpus = list(for_each_online_cpu(prog))
+    if cpu > -1:
+        if cpu in online_cpus:
+            qnode_addr = per_cpu(prog["qnodes"], cpu).address_of_().value_()
+            print("%-20s %-20lx" % (cpu, qnode_addr))
+    else:
+        for cpu_id in online_cpus:
+            qnode_addr = per_cpu(prog["qnodes"], cpu_id).address_of_().value_()
+            print("%-20s %-20lx" % (cpu_id, qnode_addr))
+
+
+def scan_bt_for_spinlocks(
+    prog: Program, show_unlocked_only: bool = True
+) -> None:
+    """
+    Scan spinlocks on bt and dump their stats. Set show_unlocked_only to False to also include locked spinlocks stats.
+
+    :param prog: drgn program
+    :param show_unlocked_only: bool
+    """
+    wait_on_spin_lock_key_words = {
+        "__pv_queued_spin_lock_slowpath",
+        "native_queued_spin_lock_slowpath",
+    }
+
+    # stores the lock status, running time, pid, spinlock address, task address, cpu and command
+    # dictionary is used here for formatting purpose later
+    # the maximum number of elements stored is at most the numer of CPUs
+    sp_lock_stats = defaultdict(list)
+
+    for cpu in for_each_online_cpu(prog):
+        task = cpu_curr(prog, cpu)
+        trace = prog.stack_trace(task)
+
+        for frame in trace:
+            if frame_name(prog, frame) in wait_on_spin_lock_key_words:
+                if "lock" in frame.locals():
+                    sp = frame["lock"]
+                    sp_addr = sp.value_()
+                    is_locked = qspinlock_is_locked(sp)
+                    run_time = timestamp_str(get_current_run_time(prog, cpu))
+                    pid = task.pid.value_()
+                    cmd = get_command(task)
+                    task_addr = task.value_()
+
+                    sp_lock_stats[(sp_addr, is_locked)].append(
+                        (task_addr, pid, cpu, run_time, cmd)
+                    )
+
+    if show_unlocked_only:
+        print("Dumping unlocked spinlocks stats only...")
+    for sp, stats in sp_lock_stats.items():
+        is_locked = sp[1]
+        if show_unlocked_only and is_locked:
+            continue
+        if show_unlocked_only:
+            print(
+                f"spinlock {hex(sp[0])} has {len(stats)} spinner(s), which are as follows: "
+            )
+        else:
+            print(
+                f"spinlock {hex(sp[0])} (is_locked = {is_locked}) has {len(stats)} spinner(s), which are as follows: "
+            )
+
+        tbl = FixedTable(
+            ["TASK:>x", "PID:>", "CPU:>", "CURRENT SPINTIME:>", "COMMAND:>"]
+        )
+        for stat in stats:
+            tbl.row(stat[0], stat[1], stat[2], stat[3], stat[4])
+        tbl.write()
