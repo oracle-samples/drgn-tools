@@ -18,6 +18,7 @@ from drgn import Program
 from drgn.helpers.common.format import decode_enum_type_flags
 from drgn.helpers.linux import cgroup_path
 from drgn.helpers.linux import css_for_each_descendant_pre
+from drgn.helpers.linux import d_path
 from drgn.helpers.linux import find_slab_cache
 from drgn.helpers.linux import for_each_page
 from drgn.helpers.linux import inode_path
@@ -26,7 +27,6 @@ from drgn.helpers.linux import PageSlab
 from drgn.helpers.linux import slab_cache_for_each_allocated_object
 
 from drgn_tools.corelens import CorelensModule
-from drgn_tools.dentry import dentry_path_any_mount
 
 
 _KERNFS_TYPE_MASK = 0xF
@@ -239,7 +239,7 @@ def dump_page_cache_pages_pinning_cgroups(
                 dentry = container_of(
                     inode.i_dentry.first, "struct dentry", "d_u.d_alias"
                 )
-                path = dentry_path_any_mount(dentry).decode()
+                path = d_path(dentry).decode()
                 cgroup_state = decode_css_flags(cgrp.self.address_of_())
                 print(
                     f"page: 0x{page.value_():x} cgroup: {cgroup_path(cgrp).decode()} state: {cgroup_state} path: {path}\n"
