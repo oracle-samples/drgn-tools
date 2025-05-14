@@ -46,8 +46,6 @@ CLI_HELPERS = {
     "drgn_tools.printk": ["dmesg"],
     "drgn_tools.module": [
         "KernelModule",
-        "for_each_module",
-        "find_module",
         "load_module_debuginfo",
     ],
     "drgn_tools.util": ["redirect_stdout"],
