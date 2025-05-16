@@ -201,14 +201,20 @@ def percpu_ref_sum(prog: Program, ref: Object) -> int:
     :param ref: ``struct percpu_ref``
     :returns: sum of the percpu reference count
     """
-    ptr = ref.percpu_count_ptr
-    atomic_count = ref.count if has_member(ref, "count") else ref.data.count
+    if has_member(ref, "data"):
+        if ref.data.value_() != 0:
+            atomic_count = ref.data.count
+        else:
+            return 0
+    else:
+        atomic_count = ref.count
     # Last two bits of ptr is uses as flags, not in percpu mode if any bit set.
     # PERCPU_COUNT_BIAS = (1LU << (BITS_PER_LONG - 1)) was set to counter
     # in percpu mode.
     bits_per_long = prog.type("long").size * 8
     PERCPU_COUNT_BIAS = 1 << (bits_per_long - 1)
     counter = atomic_count.counter & ~PERCPU_COUNT_BIAS
+    ptr = ref.percpu_count_ptr
     if ptr & 0x3 != 0 or ptr == 0:
         return int(counter)
     percpu = Object(prog, "unsigned long", address=ptr)
