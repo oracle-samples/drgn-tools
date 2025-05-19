@@ -20,7 +20,6 @@ from drgn.helpers.linux.sched import task_state_to_char
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.mm import AddrKind
-from drgn_tools.module import KernelModule
 from drgn_tools.task import task_cpu
 
 __all__ = (
@@ -54,47 +53,16 @@ def func_name(prog: drgn.Program, frame: drgn.StackFrame) -> t.Optional[str]:
 
 
 def frame_name(prog: drgn.Program, frame: drgn.StackFrame) -> str:
-    """Return a suitable name for a stack frame"""
-    # Looking up the module for an address is currently a bit inefficient, since
-    # we iterate over every module. However, categorizing the address is quick!
-    # Check whether the address is kernel text, and if so, don't do the module
-    # lookup.
-    mod = None
+    """Return the function name with kernel module annotating it"""
+    mod_text = ""
     try:
-        kind = AddrKind.categorize(prog, frame.pc)
+        mod = prog.module(frame.pc)
+        if mod.name != "kernel":
+            mod_text = f" [{mod.name}]"
     except LookupError:
-        return "???"  # LookupError: program counter is not known
-    if kind not in (AddrKind.TEXT, AddrKind.INITTEXT):
-        mod = KernelModule.lookup_address(prog, frame.pc)
+        mod_text = ""
 
-    # For frames where drgn has a name, we should stick with that name: it may
-    # include inline functions that are more specific than the symbol we would
-    # lookup. However, even in that case, we still want to add on the module
-    # name.
-    if frame.name and mod:
-        return f"{frame.name} [{mod.name}]"
-    elif frame.name:
-        return frame.name
-
-    # Ok, drgn doesn't know the name of this frame: maybe it is a module which
-    # is missing debuginfo? We can start by falling back to the symbol table.
-    try:
-        name = frame.symbol().name
-    except LookupError:
-        # And the drgn symbol table doesn't know either. We can still try to
-        # lookup the symbol name for a module using whatever its kallsyms and
-        # exported symbols are.
-        if mod:
-            name = mod.get_symbol(frame.pc)
-            if not name:
-                name = "UNKNOWN"
-        else:
-            name = f"{frame.pc:016x}"
-
-    # Annotate with module name here as well.
-    if mod:
-        name = f"{name} [{mod.name}]"
-    return name
+    return f"{frame.name}{mod_text}"
 
 
 def is_pt_regs(type_: drgn.Type) -> bool:
