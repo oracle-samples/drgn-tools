@@ -3,7 +3,6 @@
 import pytest
 
 from drgn_tools.module import KernelModule
-from drgn_tools.module import module_exports
 
 
 @pytest.fixture
@@ -43,11 +42,7 @@ def test_module_build_id(prog, common_mod):
     assert len(build_id) == 40
 
 
-def test_module_exports_and_symbols(prog, common_mod):
+def test_module_exports(prog, common_mod):
     # smoke test
-    exports = module_exports(common_mod.obj)
+    exports = common_mod.exports()
     assert exports
-    kallsyms = common_mod.symbols()
-    assert kallsyms
-    unified = common_mod.unified_symbols()
-    assert unified

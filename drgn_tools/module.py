@@ -1,29 +1,23 @@
 # Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-from collections import defaultdict
 from pathlib import Path
 from typing import Dict
 from typing import Iterable
 from typing import List
 from typing import NamedTuple
 from typing import Optional
-from typing import overload
 from typing import Tuple
 from typing import Union
 
 from drgn import cast
 from drgn import FaultError
-from drgn import IntegerLike
+from drgn import Module
+from drgn import ModuleFileStatus
 from drgn import Object
 from drgn import Program
+from drgn import RelocatableModule
 from drgn import sizeof
-from drgn import Symbol
-from drgn import SymbolBinding
-from drgn import SymbolKind
 from drgn.helpers.common import escape_ascii_string
-from drgn.helpers.linux import address_to_module
-from drgn.helpers.linux import find_module
-from drgn.helpers.linux import for_each_module
 from drgn.helpers.linux import module_address_regions
 from drgn.helpers.linux import module_percpu_region
 
@@ -40,8 +34,6 @@ __all__ = (
     "module_build_id",
     "module_exports",
     "module_params",
-    "module_symbols",
-    "module_unified_symbols",
 )
 
 
@@ -192,132 +184,6 @@ def module_params(mod: Object) -> Dict[str, ParamInfo]:
     return ret
 
 
-def module_symbols(module: Object) -> List[Tuple[str, Object]]:
-    """
-    Return a list of ELF symbols for a module via kallsyms.
-
-    Kernel modules may have a ``module_kallsyms`` field which contains ELF
-    symbol objects describing all kallsyms symbols. This function accesses this
-    symbol information.
-
-    Returns a list of objects of type ``Elf_Sym``. This object is a typedef to
-    an architecture specific type (either 64 or 32 bits), either of which
-    contain the same fields -- see :manpage:`elf(5)` for their definition. Since
-    the ``st_name`` field is merely an index and can't be interpreted without
-    the string table, this helper returns a tuple of the decoded name, and the
-    symbol object.
-
-    :param module: Object of ``struct module *``
-    :returns: A list of name, ``Elf_Sym`` pairs
-    """
-    try:
-        ks = module.kallsyms
-    except AttributeError:
-        # Prior to 8244062ef1e54 ("modules: fix longstanding /proc/kallsyms vs
-        # module insertion race."), the kallsyms variables were stored directly
-        # on the module object. This commit was introduced in 4.5, but was
-        # backported to some stable kernels too. Fall back to the module object
-        # in cases where kallsyms field isn't available.
-        ks = module
-
-    prog = module.prog_
-    num_symtab = ks.num_symtab.value_()
-
-    # The symtab field is a pointer, but it points at an array of Elf_Sym
-    # objects. Indexing it requires drgn to do pointer arithmetic and issue a
-    # lot of very small /proc/kcore reads, which can be a real performance
-    # issue. So convert it into an object representing a correctly-sized array,
-    # and then read that object all at once. This does one /proc/kcore read,
-    # which is a major improvement!
-    symtab = Object(
-        prog,
-        type=prog.array_type(ks.symtab.type_.type, num_symtab),
-        address=ks.symtab.value_(),
-    ).read_()
-
-    # The strtab is similarly a pointer into a contigous array of strings packed
-    # next to each other. Reading individual strings from /proc/kcore can be
-    # quite slow. So read the entire array of bytes into a Python bytes value,
-    # and we'll extract the individual symbol strings from there.
-    last_string_start = symtab[num_symtab - 1].st_name.value_()
-    last_string_len = (
-        len(ks.strtab[last_string_start].address_of_().string_()) + 1
-    )
-    strtab = prog.read(ks.strtab.value_(), last_string_start + last_string_len)
-    syms = []
-    # Start range at index 1, because the first ELF symbol is always bogus
-    for i in range(1, ks.num_symtab.value_()):
-        elfsym = symtab[i]
-        str_index = elfsym.st_name.value_()
-        nul_byte = strtab.find(b"\x00", str_index)
-        name = strtab[str_index:nul_byte].decode("ascii")
-        syms.append((name, elfsym))
-    return syms
-
-
-def _first_kallsyms_symbols(module: Object, count: int) -> List[int]:
-    try:
-        ks = module.kallsyms
-    except AttributeError:
-        ks = module
-    end = min(count + 1, ks.num_symtab)
-    return [int(ks.symtab[i].st_value) for i in range(1, end)]
-
-
-def module_has_debuginfo(module: Object) -> bool:
-    """
-    Return true if a module has debuginfo
-
-    We do this by looking at the first symbol in the kallsyms. If drgn can find
-    a symbol for it, we return True, otherwise False. This is a fast, but
-    imperfect heuristic. In the future, drgn will have an API which lets us
-    enumerate modules directly query whether it has loaded debuginfo.
-    """
-    if module.prog_.cache.get("using_ctf"):
-        return True
-    # The common case for DWARF is that we record which modules' debuginfo we
-    # load as we do it. Then we can easily check the name in the cache.
-    name = module.name.string_().decode().replace("-", "_")
-    if name in module.prog_.cache.get("drgn-tools-loaded-mods", set()):
-        return True
-    # Otherwise, fallback to a heuristic. TODO: drgn 0.0.31 use the module API
-    # for this.
-    addrs = _first_kallsyms_symbols(module, 5)
-    for addr in addrs:
-        try:
-            module.prog_.symbol(addr)
-            return True
-        except LookupError:
-            pass
-    return False
-
-
-def _elf_sym_to_symbol(name: str, obj: Object) -> Symbol:
-    """See drgn_symbol_from_elf() in libdrgn/symbol.c"""
-    info = obj.st_info.value_()
-    binding = info >> 4
-    STB_WEAK = 2
-    STB_GNU_UNIQUE = 10
-    if binding <= STB_WEAK or binding == STB_GNU_UNIQUE:
-        binding = SymbolBinding(binding + 1)
-    else:
-        binding = SymbolBinding.UNKNOWN
-    type_ = info & 0xF
-    STT_TLS = 6
-    STT_GNU_IFUNC = 10
-    if type_ <= STT_TLS or type_ == STT_GNU_IFUNC:
-        kind = SymbolKind(type_)
-    else:
-        kind = SymbolKind.UNKNOWN
-    return Symbol(
-        name,
-        obj.st_value.value_(),
-        obj.st_size.value_(),
-        binding,
-        kind,
-    )
-
-
 def module_exports(module: Object) -> List[Tuple[int, str]]:
     """
     Return a list of names and addresses from the exported symbols
@@ -392,190 +258,6 @@ def module_exports(module: Object) -> List[Tuple[int, str]]:
     return values
 
 
-def module_unified_symbols(module: Object) -> List[Tuple[str, int, int]]:
-    """
-    Unify all sources of module symbols and return basics: name, value, length.
-
-    There are multiple possible sources of module symbol information: kallsyms,
-    exports, etc. This function unifies them all and attempts to give just basic
-    info. Note that in some cases, we have to infer the symbol length. This
-    helper does that as best it can.
-
-    :param module: Object of ``struct module *``
-    :returns: A list of (name, address, length) for each symbol. The list is in
-      sorted order, sorted by the address.
-    """
-    # We have two sources of symbols: the module_kallsyms which contains real
-    # ELF symbols, and the exports, which are just name / address pairs.
-    # If kallsyms doesn't contain data, then the exports could be helpful, but
-    # they contain less data (fewer symbols and no extra metadata like size).
-    #
-    # This function combines the symbol data sources and infers symbol length as
-    # best it can. It's not ideal, but sadily it's all we can do.
-    elf_syms = module_symbols(module)
-    elf_by_name = dict(elf_syms)
-    elf_by_addr = {sym.st_value.value_(): sym for _, sym in elf_syms}
-    exports = module_exports(module)
-
-    # Remove any exported symbols which are also present in the kallsyms - the
-    # exports have less data.
-    for i in reversed(range(len(exports))):
-        addr, name = exports[i]
-        elf_sym = elf_by_name.get(name)
-        if elf_sym is not None and elf_sym.st_value.value_() == addr:
-            del exports[i]
-            continue
-        elf_sym = elf_by_addr.get(addr)
-        if elf_sym:
-            # It's a match, but not a name match... strange.
-            print(
-                "Warning: matching address between export/kallsyms, but not matching name"
-            )
-            print(
-                "Export name: {}, ELF name: {}, address: {:x}".format(
-                    name, elf_sym.name.string_().decode("ascii"), addr
-                )
-            )
-            del exports[i]
-
-    # Create a unified list of (address, name, maybe_length)
-    unified: List[Tuple[int, str, Optional[int]]] = []
-    unified.extend((e[0], e[1], None) for e in exports)
-    unified.extend(
-        (elf_sym.st_value.value_(), name, elf_sym.st_size.value_())
-        for name, elf_sym in elf_syms
-    )
-    unified.sort()  # by address
-
-    # One strategy for finding the end of a symbol is noticing that it is within
-    # a module address region, and realizing that it should not stretch past it.
-    # Implement the strategy here.
-    regions = module_address_regions(module)
-
-    def find_end_scn(addr: int) -> Optional[int]:
-        for start, size in regions:
-            if start <= addr < start + size:
-                return start + size
-        return None
-
-    # Iterate over each symbol, and if the length is missing, try to infer.
-    final: List[Tuple[str, int, int]] = []
-    for i in range(len(unified)):
-        addr, name, maybe_len = unified[i]
-        if maybe_len:
-            final.append((name, addr, maybe_len))
-            continue
-        # Beyond the "end_scn" approach shown above, the other possibility is
-        # using the next symbol in sorted order as the boundary.
-        next_addr = None
-        if i + 1 < len(unified):
-            next_addr = unified[i + 1][0]
-        end_scn = find_end_scn(addr)
-
-        # If we have both, choose the minimum length, or 0 if we have neither.
-        if not next_addr and not end_scn:
-            # found neither, fall back to zero-length symbol
-            length = 0
-        elif next_addr and end_scn:
-            # found both, choose the smaller one
-            length = min(end_scn, next_addr) - addr
-        elif next_addr:
-            length = next_addr - addr
-        elif end_scn:
-            length = end_scn - addr
-        else:
-            # should not reach this line
-            length = 0
-        final.append((name, addr, length))
-    return final
-
-
-class ModuleSymbolFinder:
-    """
-    A symbol finder implementation for Linux kernel modules.
-
-    This finder is capable of looking up symbols from the ``struct module *``
-    objects in the kernel, so long as module kallsyms is enabled. When used with
-    :meth:`Program.add_symbol_finder()`, it allows stack traces,
-    :meth:`Program.symbol()`, and other parts of drgn to function using module
-    symbols, even when debugging information is not loaded for kernel modules.
-
-    >>> finder = ModuleSymbolFinder(prog)
-    >>> finder("nft_redir_dump", None, False)
-    [Symbol(name='nft_redir_dump', address=0xffffffffc0925000, size=0xa6, binding=<SymbolBinding.LOCAL: 1>, kind=<SymbolKind.FUNC: 2>)]
-    >>> prog.add_symbol_finder(finder)
-    >>> prog.symbol("nft_redir_dump")
-    Symbol(name='nft_redir_dump', address=0xffffffffc0925000, size=0xa6, binding=<SymbolBinding.LOCAL: 1>, kind=<SymbolKind.FUNC: 2>)
-    """
-
-    prog: Program
-
-    name_map: Dict[str, List[Symbol]]
-    """Maps name to (maybe multiple) symbols"""
-    page_map: Dict[int, List[Symbol]]
-    """Maps page address to all symbols spanning it."""
-    all_syms: List[Symbol]
-    """List of all symbols for fast return."""
-
-    def __init__(self, prog):
-        self.prog = prog
-        self.name_map = defaultdict(list)
-        self.all_syms = []
-        for mod in for_each_module(prog):
-            for name, sym in module_symbols(mod):
-                symbol = _elf_sym_to_symbol(name, sym)
-                self.name_map[name].append(symbol)
-                self.all_syms.append(symbol)
-
-        # We need to support queries by name and by address. By name is rather
-        # easy.  By address is a bit difficult. _Ideally_ we would use an
-        # interval tree, since that is the "correct" way to represent possibly
-        # overlapping ranges.  But really, that's a pain to implement, and we
-        # can be reasonably efficient by adopting a poor man's radix tree...
-        # store a list of symbols for each page of memory, and then use linear
-        # search on that.
-        self.page_map = defaultdict(list)
-        page_shift = self.prog["PAGE_SHIFT"].value_()
-        for sym in self.all_syms:
-            page_start = sym.address >> page_shift
-            page_end = (sym.address + sym.size) >> page_shift
-            for page in range(page_start, page_end + 1):
-                self.page_map[page].append(sym)
-
-    def _filter_contains(
-        self, symbols: List[Symbol], addr: int
-    ) -> List[Symbol]:
-        return [
-            sym
-            for sym in symbols
-            if sym.address <= addr < sym.address + sym.size
-        ]
-
-    def __call__(
-        self, name: Optional[str], addr: Optional[int], one: bool
-    ) -> List[Symbol]:
-        """
-        Lookup symbols by name or address.
-
-        See :meth:`Program.add_symbol_finder()` for documentation on the
-        arguments and return value.
-        """
-        if name is None and addr is None:
-            return self.all_syms
-
-        if name is not None:
-            ret = self.name_map[name]
-            if addr is not None:
-                ret = self._filter_contains(ret, addr)
-        else:
-            assert addr is not None  # mypy can't tell on its own
-            page = addr >> self.prog["PAGE_SHIFT"].value_()
-            ret = self._filter_contains(self.page_map[page], addr)
-        if one and len(ret) > 1:
-            ret = [ret[0]]
-        return ret
-
-
 class KernelModule:
     """
     Provides a more "object-oriented" interface to the module helpers.
@@ -588,12 +270,15 @@ class KernelModule:
     KernelModule(nf_nat)
     >>> km.address_regions()
     [(Object(prog, 'void *', address=0xffffffffc0878688), 0)]
-    >>> KernelModule.lookup_address(prog, 0xffffffffc087207b)
+    >>> KernelModule(prog.module("nf_nat"))
+    KernelModule(nf_nat)
+    >>> KernelModule(prog.module(0xffffffffc087207b))
     KernelModule(nf_nat)
     """
 
     name: str
     obj: Object
+    mod: Module
 
     @classmethod
     def all(cls, prog: Program) -> Iterable["KernelModule"]:
@@ -603,8 +288,9 @@ class KernelModule:
         :param prog: Program being debugged
         :returns: Iterable of kernel module helpers
         """
-        for m in for_each_module(prog):
-            yield KernelModule(m)
+        for m in prog.modules():
+            if isinstance(m, RelocatableModule):
+                yield KernelModule(m)
 
     @classmethod
     def find(cls, prog: Program, name: str) -> Optional["KernelModule"]:
@@ -614,41 +300,23 @@ class KernelModule:
         :param prog: Program being debugged
         :returns: Iterable of kernel module helpers
         """
-        maybe_mod = find_module(prog, name)
-        return KernelModule(maybe_mod) if maybe_mod.value_() != 0 else None
+        try:
+            return KernelModule(prog.module(name))
+        except LookupError:
+            return None
 
-    @classmethod
-    @overload
-    def lookup_address(cls, addr: Object) -> Optional["KernelModule"]:
-        ...
-
-    @classmethod
-    @overload
-    def lookup_address(
-        cls, prog: Program, addr: IntegerLike
-    ) -> Optional["KernelModule"]:
-        ...
-
-    @classmethod  # type: ignore  # Need positional-only arguments.
-    def lookup_address(
-        cls,
-        prog_or_addr: Union[Program, Object],
-        addr: Optional[IntegerLike] = None,
-    ) -> Optional["KernelModule"]:
-        """
-        Lookup the module containing this address and return the KernelModule
-        helper for it, if found. See :func:`address_to_module()`.
-        """
-        mod = address_to_module(prog_or_addr, addr)
-        if mod:
-            mod = KernelModule(mod)
-        return mod
-
-    def __init__(self, obj: Object):
+    def __init__(self, obj: Union[Object, Module]):
+        if isinstance(obj, Object):
+            self.obj = obj
+            self.mod = obj.prog_.linux_kernel_loadable_module(obj)
+        elif isinstance(obj, RelocatableModule):
+            self.mod = obj
+            self.obj = self.mod.object
+        else:
+            raise TypeError("Either a struct module * or Module is required")
         self.name = escape_ascii_string(
-            obj.name.string_(), escape_backslash=True
+            self.obj.name.string_(), escape_backslash=True
         )
-        self.obj = obj
 
     def __repr__(self) -> str:
         return f"KernelModule({self.name})"
@@ -662,7 +330,9 @@ class KernelModule:
 
         :returns: True if debuginfo exists for this module
         """
-        return module_has_debuginfo(self.obj)
+        if self.obj.prog_.cache.get("using_ctf") and not self.is_oot():
+            return True
+        return self.mod.debug_file_status != ModuleFileStatus.WANT
 
     def find_debuginfo(self) -> Optional[Path]:
         """
@@ -671,35 +341,6 @@ class KernelModule:
         :return: Path to file, or None on failure.
         """
         return find_debuginfo(self.obj.prog_, self.name)
-
-    def load_debuginfo(
-        self,
-        extract: bool = False,
-        need_dwarf: bool = False,
-    ) -> None:
-        """
-        If the module's debuginfo is not loaded, find and load it
-
-        :param extract: If true, attempts to extract the module
-        :param need_dwarf: Currently nused, but this will avoid using CTF/BTF
-          when full DWARF debuginfo is required
-        """
-        if not self.have_debuginfo():
-            info = self.find_debuginfo()
-            if not info and extract:
-                release = (
-                    self.obj.prog_["UTS_RELEASE"].string_().decode("ascii")
-                )
-                print("extracting from RPM...")
-                name = self.name.replace("-", "_")
-                info = fetch_debuginfo(release, [name]).get(name)
-            if info:
-                self.obj.prog_.load_debug_info([info])
-                self.obj.prog_.cache.setdefault(
-                    "drgn-tools-loaded-mods", set()
-                ).add(name)
-            else:
-                raise FileNotFoundError("Could not find debuginfo for module")
 
     def address_regions(self) -> List[Tuple[int, int]]:
         """
@@ -736,67 +377,11 @@ class KernelModule:
         """
         return module_params(self.obj)
 
-    def symbols(self) -> List[Tuple[str, Object]]:
-        """
-        Return a list of ELF symbol objects via kallsyms, and their names.
-
-        This function is intended to be used when the DWARF debuginfo for a
-        module is not available, but when the debuginfo for vmlinux is
-        available. If the module's debuginfo is loaded, this should not be used;
-        instead, just rely on drgn's built-in symbol lookup behavior.
-
-        .. note::
-
-            Please note that this only returns the symbols from the module's
-            kallsyms table, and does not include any symbols from the exported
-            symbol list. This is usually ok, but sometimes the exports are
-            useful. The ```unified_symbols()`` interface includes the rest, but
-            they are not represented as ELF symbols, instead just as names,
-            addresses, and sizes.
-
-        :returns: List of tuples: (symbol name, ``Elf64_Sym`` object)
-        """
-        return module_symbols(self.obj)
-
     def exports(self) -> List[Tuple[int, str]]:
         """
         Return a list of exported (with or without GPL) symbol name & address
         """
         return module_exports(self.obj)
-
-    def unified_symbols(self) -> List[Tuple[str, int, int]]:
-        """
-        Return a sorted list of all symbols we can find for a module.
-
-        This function is intended to be used when the DWARF debuginfo for a
-        module is not available, but when the debuginfo for vmlinux is
-        available. If the module's debuginfo is loaded, this should not be used;
-        instead, just rely on drgn's built-in symbol lookup behavior.
-
-        :returns: List of tuples: (symbol name, address, size)
-        """
-        return module_unified_symbols(self.obj)
-
-    def get_symbol(self, addr: IntegerLike) -> Optional[str]:
-        """
-        Lookup a symbol by address.
-
-        This function is intended to be used when the DWARF debuginfo for a
-        module is not available, but when the debuginfo for vmlinux is
-        available. If the module's debuginfo is loaded, this should not be used;
-        instead, just rely on drgn's built-in symbol lookup behavior.
-
-        Note that this function relies on the list of symbols returned by
-        ``unified_symbols()``, the most complete list available.
-
-        :param addr: Address to lookup
-        :returns: A symbol name, if found
-        """
-        addr = int(addr)
-        for name, sym_addr, sym_len in module_unified_symbols(self.obj):
-            if sym_addr <= addr < sym_addr + sym_len:
-                return name
-        return None
 
     def is_oot(self) -> bool:
         """
