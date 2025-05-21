@@ -12,13 +12,19 @@ from drgn import container_of
 from drgn import FaultError
 from drgn import Object
 from drgn import Program
+from drgn import sizeof
 from drgn.helpers.linux.list import list_for_each_entry
 
+from drgn_tools.block import for_each_mq_pending_request
+from drgn_tools.block import for_each_sq_pending_request
+from drgn_tools.block import is_mq
+from drgn_tools.block import request_target
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.device import class_to_subsys
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.table import print_table
 from drgn_tools.util import has_member
+from drgn_tools.util import timestamp_str
 
 
 class Opcode(enum.Enum):
@@ -100,6 +106,67 @@ def scsi_device_name(sdev: Object) -> str:
         return dev.kobj.name.string_().decode()
     except FaultError:
         return ""
+
+
+def for_each_scsi_cmnd(prog: Program, scsi_device: Object) -> Iterator[Object]:
+    """
+    Iterates thru all scsi commands for a given SCSI device.
+
+    :param scsi_device: ``struct scsi_device *``
+    :returns: an iterator of ``struct scsi_cmnd *``
+    """
+    q = scsi_device.request_queue
+    if is_mq(q):
+        for scmnd in for_each_scsi_cmd_mq(prog, scsi_device):
+            yield scmnd
+    else:
+        for scmnd in for_each_scsi_cmd_sq(prog, scsi_device):
+            yield scmnd
+
+
+def rq_to_scmnd(prog: Program, rq: Object) -> Object:
+    """
+    Fetch the scsi_cmnd from request address
+
+    :param rq: ``struct request_queue *``
+    :returns: Object of ``struct scsi_cmnd *``
+    """
+    scmnd = rq.value_() + sizeof(prog.type("struct request"))
+    return Object(prog, "struct scsi_cmnd *", value=scmnd)
+
+
+def for_each_scsi_cmd_sq(prog: Program, dev: Object) -> Iterator[Object]:
+    """
+    Iterates thru all SCSI commands from the block layer pending requests.
+
+    :param dev: ``strcut scsi_device *``
+    :returns: an iterator of ``struct scsi_cmnd *``
+    """
+    q = dev.request_queue
+    for rq in for_each_sq_pending_request(q):
+        yield rq_to_scmnd(prog, rq)
+
+
+def for_each_scsi_cmd_mq(prog: Program, dev: Object) -> Iterator[Object]:
+    """
+    Iterates thru all SCSI commands in all multi hardware queue.
+
+    :param dev: ``strcut scsi_device *``
+    :returns: an iterator of ``struct scsi_cmnd *``
+    """
+    try:
+        BLK_MQ_F_TAG_SHARED = prog.constant("BLK_MQ_F_TAG_SHARED")
+    except LookupError:
+        BLK_MQ_F_TAG_SHARED = prog.constant("BLK_MQ_F_TAG_QUEUE_SHARED")
+
+    q = dev.request_queue
+    disk = dev.request_queue.disk
+    for hwq, rq in for_each_mq_pending_request(q):
+        if (hwq.flags & BLK_MQ_F_TAG_SHARED) != 0 and request_target(
+            rq
+        ).value_() != disk.value_():
+            continue
+        yield rq_to_scmnd(prog, rq)
 
 
 def scsi_id(scsi_dev: Object) -> str:
@@ -254,6 +321,100 @@ def print_shost_devs(prog: Program) -> None:
         print_table(output)
 
 
+def print_inflight_scsi_cmnds(prog: Program):
+    """
+    print all inflight SCSI commands for all SCSI devices.
+    """
+    TotalInflight = 0
+    for shost in for_each_scsi_host(prog):
+        for scsi_dev in for_each_scsi_host_device(shost):
+            diskname = scsi_device_name(scsi_dev)
+
+            counter = 0
+            output = [
+                [
+                    "Count",
+                    "Request",
+                    "Bio",
+                    "SCSI Cmnd",
+                    "Opcode",
+                    "Length",
+                    "Age",
+                    "Sector",
+                ]
+            ]
+
+            for scsi_cmnd in for_each_scsi_cmnd(prog, scsi_dev):
+                if counter == 0:
+                    vendor = scsi_dev.vendor.string_().decode()
+                    devstate = str(
+                        scsi_dev.sdev_state.format_(type_name=False)
+                    )
+                    scsiid = scsi_id(scsi_dev)
+
+                    print(
+                        f" Diskname : {diskname} {scsiid}\t\t\tSCSI Device Addr : {hex(scsi_dev.value_())}"
+                    )
+                    print(
+                        f" Vendor   : {vendor}    \tDevice State\t : {devstate}"
+                    )
+                    print("-" * 115)
+
+                if has_member(scsi_cmnd, "request"):
+                    req = scsi_cmnd.request
+                else:
+                    reqp = scsi_cmnd.value_() - sizeof(
+                        prog.type("struct request")
+                    )
+                    req = Object(prog, "struct request *", value=reqp)
+
+                try:
+                    opcode = Opcode(scsi_cmnd.cmnd[0].value_()).name
+                except ValueError:
+                    opcode = str(hex(scsi_cmnd.cmnd[0].value_()))
+
+                if scsi_cmnd.cmnd[0] == 0x2A or scsi_cmnd.cmnd[0] == 0x28:
+                    xfer_len = (
+                        scsi_cmnd.cmnd[7] << 8 | scsi_cmnd.cmnd[8]
+                    ) * scsi_cmnd.transfersize
+                else:
+                    xfer_len = 0
+
+                if req.bio:
+                    if has_member(req.bio, "bi_sector"):
+                        sector = req.bio.bi_sector
+                    else:
+                        sector = req.bio.bi_iter.bi_sector
+                else:
+                    sector = 0
+
+                age = (
+                    prog["jiffies"] - scsi_cmnd.jiffies_at_alloc
+                ).value_() * 1000000
+                counter += 1
+
+                output.append(
+                    [
+                        f"{counter:>4}",
+                        hex(req.value_()),
+                        hex(req.bio.value_()),
+                        hex(scsi_cmnd.value_()),
+                        opcode,
+                        f"{int(xfer_len):>7}",
+                        timestamp_str(age),
+                        f"{int(sector):>11}",
+                    ]
+                )
+
+            if counter > 1:
+                TotalInflight += counter
+                print_table(output)
+                print("-" * 115)
+    print(f" Total inflight commands across all disks : {TotalInflight}")
+    print("-" * 115)
+    return
+
+
 class ScsiInfo(CorelensModule):
     """
     Corelens Module for scsi device information
@@ -267,6 +428,7 @@ class ScsiInfo(CorelensModule):
         [
             "--hosts",
             "--devices",
+            "--queue",
         ]
     ]
 
@@ -281,11 +443,18 @@ class ScsiInfo(CorelensModule):
             action="store_true",
             help="Print Scsi Devices",
         )
+        parser.add_argument(
+            "--queue",
+            action="store_true",
+            help="Print Inflight SCSI commands",
+        )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         if args.hosts:
             print_scsi_hosts(prog)
         elif args.devices:
             print_shost_devs(prog)
+        elif args.queue:
+            print_inflight_scsi_cmnds(prog)
         else:
             print_scsi_hosts(prog)
