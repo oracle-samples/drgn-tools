@@ -8,21 +8,19 @@ REPL, but with helpers to automatically find the vmlinux and modules.
 """
 import argparse
 import importlib
+import logging
 import os
 import sys
-from pathlib import Path
 from typing import Any
 from typing import Dict
-from typing import Optional
-from typing import Tuple
 
+import drgn
 from drgn import Program
 
 from drgn_tools.corelens import make_runner
-from drgn_tools.debuginfo import fetch_debuginfo
-from drgn_tools.debuginfo import find_debuginfo
+from drgn_tools.debuginfo import drgn_prog_set as register_debug_info_finders
+from drgn_tools.debuginfo import update_debug_info_policy
 from drgn_tools.module import get_module_load_summary
-from drgn_tools.module import load_module_debuginfo
 
 try:
     from drgn_tools._version import __version__
@@ -46,78 +44,9 @@ CLI_HELPERS = {
     "drgn_tools.printk": ["dmesg"],
     "drgn_tools.module": [
         "KernelModule",
-        "load_module_debuginfo",
     ],
     "drgn_tools.util": ["redirect_stdout"],
 }
-
-
-def _get_ctf_path(release: str, args: argparse.Namespace) -> Optional[str]:
-    if args.ctf_file and os.path.isfile(args.ctf_file):
-        return args.ctf_file
-    default = f"/lib/modules/{release}/kernel/vmlinux.ctfa"
-    if os.path.isfile(default):
-        return default
-    by_vmcore = Path(args.vmcore).parent / "vmlinux.ctfa"
-    if by_vmcore.is_file():
-        return str(by_vmcore)
-    return None
-
-
-def _set_debuginfo(
-    prog: Program, release: str, args: argparse.Namespace
-) -> Tuple[str, str]:
-    problems = [f"Kernel version: {release}"]
-
-    # First try to find DWARF on the system (unless we're forcing CTF). If
-    # found, continue to loading modules: we're committed to DWARF. If not, try
-    # CTF before fetching DWARF debuginfo.
-    if not args.ctf:
-        vmlinux = find_debuginfo(prog, "vmlinux")
-        if vmlinux:
-            prog.load_debug_info([vmlinux])
-            load_module_debuginfo(
-                prog, extract=args.extract_modules, quiet=True
-            )
-            return "DWARF", str(vmlinux)
-        else:
-            problems.append("DWARF debuginfo not found for vmlinux")
-
-    # Try CTF so long as we're not forcing DWARF.
-    if not args.dwarf:
-        ctf_path = _get_ctf_path(release, args)
-        if ctf_path and HAVE_CTF:
-            load_ctf(prog, ctf_path)
-            prog.cache["using_ctf"] = True
-            return "CTF", ctf_path
-        elif ctf_path:
-            problems.append(
-                "CTF found, but drgn is not built with CTF support"
-            )
-        elif not HAVE_CTF:
-            problems.append(
-                "CTF debuginfo is not found, and drgn has no CTF support"
-            )
-        else:
-            problems.append("CTF debuginfo was not found")
-
-    # Now try to fetch DWARF via a fetcher.
-    if not args.ctf:
-        print("Fetching debuginfo...")
-        fetched = fetch_debuginfo(release, ["vmlinux"])
-        if fetched and "vmlinux" in fetched:
-            vmlinux = fetched["vmlinux"]
-            prog.load_debug_info([vmlinux])
-            load_module_debuginfo(
-                prog, extract=args.extract_modules, quiet=True
-            )
-            return "DWARF", str(vmlinux)
-        else:
-            problems.append("DWARF debuginfo could not be fetched")
-
-    # Nothing worked, sorry!
-    problem_str = "\n".join(problems)
-    sys.exit(f"error: failed to find debuginfo:\n{problem_str}")
 
 
 def main() -> None:
@@ -159,6 +88,10 @@ def main() -> None:
     if args.ctf and args.dwarf:
         sys.exit("error: --dwarf and --ctf conflict, use only one")
 
+    logging.basicConfig()
+    drgnlog = logging.getLogger("drgn")
+    drgnlog.setLevel(logging.INFO)
+
     prog = Program()
     try:
         prog.set_core_dump(args.vmcore)
@@ -171,8 +104,32 @@ def main() -> None:
             except ImportError:
                 sys.exit("error: no permission to open /proc/kcore")
 
-    release = prog["UTS_RELEASE"].string_().decode("ascii")
-    db_kind, db_file = _set_debuginfo(prog, release, args)
+    # Normally, drgn-tools is installed in such a way that
+    # "drgn_tools.debuginfo" is registered as a drgn plugin, so that the debug
+    # info finders are automatically registered. However, when run from a git
+    # checkout, or if drgn-tools was not installed properly, the hook may not
+    # run. Manually check that the finders are registered before continuing.
+    if "drgn_tools.debuginfo.options" not in prog.cache:
+        register_debug_info_finders(prog)
+
+    # Instruct the debuginfo finders based on the CLI arguments
+    update_debug_info_policy(
+        prog,
+        dwarf_only=args.dwarf,
+        ctf_only=args.ctf,
+        ctf_file=args.ctf_file,
+    )
+
+    try:
+        old_level = drgnlog.getEffectiveLevel()
+        drgnlog.setLevel(logging.ERROR)
+        prog.load_default_debug_info()
+    except drgn.MissingDebugInfoError:
+        if prog.main_module().wants_debug_file():
+            sys.exit("error: unable to find vmlinux debuginfo")
+    finally:
+        drgnlog.setLevel(old_level)
+    db_kind = "CTF" if prog.cache.get("using_ctf") else "DWARF"
 
     def banner_func(banner: str) -> str:
         header = version_header()
@@ -181,7 +138,7 @@ def main() -> None:
         imports = "\n"
         for mod_name, names in CLI_HELPERS.items():
             imports += f">>> from {mod_name} import {', '.join(names)}\n"
-        db_info = f"Using {db_kind}: {db_file}"
+        db_info = f"Using {db_kind}"
         if db_kind == "DWARF":
             db_info += "\n" + str(get_module_load_summary(prog))
         return (

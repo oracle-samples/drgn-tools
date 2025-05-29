@@ -25,16 +25,15 @@ from typing import Optional
 from typing import TextIO
 from typing import Tuple
 
+import drgn
 from drgn import Program
 from drgn import ProgramFlags
 from drgn.cli import version_header as drgn_version_header
 
-from drgn_tools.debuginfo import CtfCompatibility
-from drgn_tools.debuginfo import find_debuginfo
-from drgn_tools.debuginfo import KernelVersion
+from drgn_tools.debuginfo import drgn_prog_set as register_debug_info_finders
+from drgn_tools.debuginfo import update_debug_info_policy
 from drgn_tools.module import get_module_load_summary
 from drgn_tools.module import KernelModule
-from drgn_tools.module import load_module_debuginfo
 from drgn_tools.util import redirect_stdout
 
 
@@ -334,59 +333,10 @@ def _load_candidate_modules(
     return candidate_modules_to_run
 
 
-def _get_host_ol() -> Optional[int]:
-    path = "/etc/oracle-release"
-    if not os.path.exists(path):
-        return None
-    m = re.search(r"(\d+)\.\d+", open(path).read())
-    if m:
-        return int(m.group(1))
-    return None
+def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
+    if args.ctf and args.debuginfo:
+        sys.exit("error: --debuginfo and --ctf conflict")
 
-
-def _check_ctf_compat(release: str, vmcore: str) -> bool:
-    """
-    Return True if CTF is compatible with this kernel release
-
-    If False, print a user-friendly diagnostic.
-    """
-    host_ol = _get_host_ol()
-    kver = KernelVersion.parse(release)
-    compat = CtfCompatibility.get(kver, host_ol)
-    if compat == CtfCompatibility.YES:
-        return True
-    elif compat == CtfCompatibility.LIMITED_PROC and vmcore == "/proc/kcore":
-        return True
-
-    print("error: CTF found, but incompatible with drgn-tools")
-    print(f"  uname = {release}")
-    print(f"  host_ol = {host_ol}")
-    print(f"  compat = {compat}")
-
-    # Some helpful extra info
-    if kver.uek_version and kver.uek_version < 4:
-        print("Kernels prior to UEK4 are completely unsupported.")
-        print("Please update.")
-    elif compat == CtfCompatibility.LIMITED_PROC and kver.uek_version == 4:
-        print("UEK 4 kernels can only be used with CTF in live mode")
-    elif compat == CtfCompatibility.LIMITED_PROC:
-        print("This UEK version only supports using CTF in live mode.")
-        print("More recent UEK releases support core dump debugging.")
-    elif (
-        compat == CtfCompatibility.NO and host_ol == 7 and kver.ol_version > 7
-    ):
-        print("Debugging OL8 and later vmcores on OL7 is not supported.")
-        print("Please debug on a more recent version of Oracle Linux.")
-    return False
-
-
-def _load_prog_and_debuginfo(args: argparse.Namespace) -> Tuple[Program, bool]:
-    """
-    Load up the program and debuginfo. Don't attempt extraction.
-
-    :returns: A 2-tuple. The first element is the loaded program, the second
-    element is true when CTF is in use.
-    """
     prog = Program()
     try:
         prog.set_core_dump(args.vmcore)
@@ -398,64 +348,33 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Tuple[Program, bool]:
                 prog.set_core_dump(open_via_sudo(args.vmcore, os.O_RDONLY))
             except ImportError:
                 sys.exit("error: no permission to open vmcore")
-    if args.ctf and args.debuginfo:
-        sys.exit("error: --debuginfo and --ctf conflict")
 
-    # Search for DWARF debuginfo first, unless CTF is explicitly requested.
-    vmlinux = None
-    fmts_tried = []
-    if not args.ctf:
-        fmts_tried.append("DWARF")
-        vmlinux = find_debuginfo(prog, "vmlinux", dinfo_path=args.debuginfo)
-
-    if vmlinux:
-        # Found DWARF debuginfo, continue to use that.
-        prog.load_debug_info([vmlinux])
-        load_module_debuginfo(prog, extract=False, quiet=True)
-        return prog, False
-
-    # Try to use CTF debuginfo
+    if "drgn_tools.debuginfo.options" not in prog.cache:
+        register_debug_info_finders(prog)
+    update_debug_info_policy(
+        prog,
+        ctf_only=args.ctf,
+        dwarf_path=args.debuginfo,
+    )
     try:
-        from drgn.helpers.linux.ctf import load_ctf
+        prog.load_default_debug_info()
+    except drgn.MissingDebugInfoError:
+        sys.exit("errorcould not find debuginfo")
 
-        fmts_tried.append("CTF")
-        release = prog["UTS_RELEASE"].string_().decode()
-        path = args.ctf or f"/lib/modules/{release}/kernel/vmlinux.ctfa"
-        if os.path.isfile(path) and _check_ctf_compat(release, args.vmcore):
-            load_ctf(prog, path)
-            prog.cache["using_ctf"] = True
-            return prog, True
-    except ModuleNotFoundError:
-        pass
-
-    # On failure, report what we tried so the user knows
-    tried = ", ".join(fmts_tried)
-    sys.exit(f"error: could not find debuginfo (tried {tried})")
+    return prog
 
 
 def _check_module_debuginfo(
     candidate_modules: List[Tuple[CorelensModule, argparse.Namespace]],
     prog: Program,
-    ctf: bool = False,
     warn_not_present: bool = True,
 ) -> Tuple[
     List[Tuple[CorelensModule, argparse.Namespace]], List[str], List[str]
 ]:
-    # When running with CTF debuginfo, there's no need to check which modules
-    # have debuginfo: CTF contains info for every module. Thus, skip the module
-    # load summary, which may not be cheap.
-    if not ctf:
-        summary = get_module_load_summary(prog)
-
-    # Now we check whether module requirements are satisfied. Some kmods may not
-    # be present in the kernel at all, whereas others are present, but with no
-    # debuginfo. If the required kmod is not present, then skip the module. If
-    # the kmod is present but with no debuginfo, log an error but continue to
-    # run the remainder.
+    summary = get_module_load_summary(prog)
     all_kmod_names = set(km.name for km in KernelModule.all(prog))
-    if not ctf:
-        loaded_kmods = set(km.name for km in summary.loaded_mods)
-        missing_kmods = set(km.name for km in summary.missing_mods)
+    loaded_kmods = set(km.name for km in summary.loaded_mods)
+    missing_kmods = set(km.name for km in summary.missing_mods)
 
     modules_to_run = []
     errors = []
@@ -483,20 +402,14 @@ def _check_module_debuginfo(
             continue
 
         # Corelens modules requiring DWARF can't be run when using CTF
-        if mod.need_dwarf and ctf:
+        if mod.need_dwarf and prog.cache.get("using_ctf"):
             warnings.append(
                 f"{mod.name} skipped because it requires DWARF debuginfo, but "
                 "CTF is loaded instead"
             )
             continue
 
-        # At this point, all that's remaining to do is check whether the
-        # necessary DWARF debuginfo files are loaded for this Corelens module.
-        # If we're using CTF, we can skip this and move on.
-        if ctf:
-            modules_to_run.append((mod, args))
-            continue
-
+        # All modules that require debuginfo should have it loaded
         if mod.skip_unless_have_kmods is not None and (
             not all(m in loaded_kmods for m in mod.skip_unless_have_kmods)
         ):
@@ -709,11 +622,10 @@ def _do_main() -> None:
         print("         Data may be inconsistent, or corelens may crash.")
 
     start_time = time.time()
-    prog, ctf = _load_prog_and_debuginfo(args)
+    prog = _load_prog_and_debuginfo(args)
     modules_to_run, errors, warnings = _check_module_debuginfo(
         candidate_modules_to_run,
         prog,
-        ctf=ctf,
         # "warning: A skipped because A was not loaded in the kernel"
         # messages are useful when the user explicitly requested module A to
         # run, but it's not applicable. However, when we run the report mode (-a
@@ -774,7 +686,7 @@ def _do_main() -> None:
             pass
 
     info_msg(_version_string())
-    kind = "CTF" if ctf else "DWARF"
+    kind = "CTF" if prog.cache.get("using_ctf") else "DWARF"
     info_msg(f"Loaded {kind} debuginfo in in {load_time:.03f}s")
 
     for mod, mod_args in modules_to_run:

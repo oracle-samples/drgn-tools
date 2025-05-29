@@ -15,7 +15,6 @@ __all__ = ("get_config",)
 
 CONFIG_PATHS = [
     Path("/etc/drgn_tools.ini"),
-    Path("/share/linuxtools/bin/drgn_tools.ini"),
     Path.home() / ".config/drgn_tools.ini",
 ]
 
