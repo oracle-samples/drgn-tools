@@ -131,36 +131,18 @@ def load_virtio_mods(prog: Program) -> t.List[str]:
     :raises Exception: if the debuginfo isn't already loaded and we couldn't
       find the file for it
     """
-    mods = KernelModule.all(prog)
-    debuginfo_files = []
-    module_names = []
-    for mod in mods:
-        if mod.name not in virtio_mod_drv:
+    to_load = []
+    mods = []
+    for modname in virtio_mod_drv.keys():
+        try:
+            mod = prog.module(modname)
+        except LookupError:
             continue
-        if not mod.have_debuginfo():
-            log.debug("Kernel has module %s loaded, needs debuginfo", mod.name)
-            maybe_dinfo = mod.find_debuginfo()
-            if not maybe_dinfo:
-                if mod.name in ("virtio", "virtio_ring"):
-                    raise Exception(f"Debuginfo for {mod.name} is required")
-                log.warn(
-                    "Kernel has module %s loaded but can't find "
-                    "debuginfo, continuing without it. Results will "
-                    "be missing information about virtio driver.",
-                    mod.name,
-                )
-                continue
-            log.debug("=> Found debuginfo file: %s", str(maybe_dinfo))
-            debuginfo_files.append(maybe_dinfo)
-        else:
-            log.debug(
-                "Kernel has module %s loaded, debuginfo already present",
-                mod.name,
-            )
-        module_names.append(mod.name)
-    if debuginfo_files:
-        prog.load_debug_info(debuginfo_files)
-    return module_names
+        mods.append(mod.name)
+        if mod.wants_debug_file():
+            to_load.append(mod)
+    prog.load_module_debug_info(*to_load)
+    return mods
 
 
 def get_virtio_devices(virtio_drv: Object) -> t.List[Object]:

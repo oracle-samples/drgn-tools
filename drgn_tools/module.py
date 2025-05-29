@@ -1,6 +1,5 @@
-# Copyright (c) 2024, Oracle and/or its affiliates.
+# Copyright (c) 2024-2025, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-from pathlib import Path
 from typing import Dict
 from typing import Iterable
 from typing import List
@@ -21,8 +20,6 @@ from drgn.helpers.common import escape_ascii_string
 from drgn.helpers.linux import module_address_regions
 from drgn.helpers.linux import module_percpu_region
 
-from drgn_tools.debuginfo import fetch_debuginfo
-from drgn_tools.debuginfo import find_debuginfo
 from drgn_tools.taint import Taint
 
 
@@ -30,7 +27,6 @@ __all__ = (
     "KernelModule",
     "ParamInfo",
     "ensure_debuginfo",
-    "load_module_debuginfo",
     "module_build_id",
     "module_exports",
     "module_params",
@@ -334,14 +330,6 @@ class KernelModule:
             return True
         return self.mod.debug_file_status != ModuleFileStatus.WANT
 
-    def find_debuginfo(self) -> Optional[Path]:
-        """
-        Search for a debuginfo file matching this module.
-
-        :return: Path to file, or None on failure.
-        """
-        return find_debuginfo(self.obj.prog_, self.name)
-
     def address_regions(self) -> List[Tuple[int, int]]:
         """
         Return the core region of the module. See
@@ -403,129 +391,30 @@ class KernelModule:
         return bool(self.obj.taints & oot_taints)
 
 
-def load_module_debuginfo(
-    prog: Program,
-    modules: Union[None, List[str], List[KernelModule]] = None,
-    extract: bool = False,
-    strict: bool = False,
-    quiet: bool = False,
-) -> None:
-    """
-    Load all available debuginfo for all modules, with optional extraction
-
-    This function uses the normal search paths to find debuginfo (See
-    find_debuginfo() for details). For modules whose debuginfo is not found, if
-    extract is True, it attempts to extract the debuginfo from the vmlinux
-    repo. When strict is true, it raises an error if not all module debuginfo
-    could be found and loaded.
-
-    This function ignores all modules which are tainted as OOT_MODULE,
-    PROPRIETARY_MODULE, or UNSIGNED_MODULE. These modules will not be found in
-    the debuginfo RPMs so there's no point in looking.
-
-    :param modules: list of modules to load. The list may be provided as a
-      list of strings, or a list of ``KernelModule`` objects -- but they cannot
-      be mixed! If not provided, we fall back to loading all modules.
-    :param extract: when true, attempt to extract debuginfo
-    :param strict: when true, raise an exception if we couldn't load all modules
-    :param quiet: when true, silence output regarding missing or OOT modules
-    """
-
-    # mypy can be really great sometimes, but it also really sucks sometimes.
-    # The statements below have the effect of ensuring that modules is a list of
-    # KernelModule, but mypy won't allow it. So there's some unpleasantness in
-    # this function to satisfy the beast.
-    if modules and isinstance(modules[0], str):
-        # Support a list of str
-        mod_set = set(modules)
-        modules = [km for km in KernelModule.all(prog) if km.name in mod_set]
-        not_loaded = mod_set - set(km.name for km in modules)
-        if not_loaded and strict:
-            raise ValueError(
-                "The following modules are not loaded: {}".format(
-                    ", ".join(str(s) for s in not_loaded)
-                )
-            )
-    elif not modules:
-        # Fall back to all modules
-        modules = list(KernelModule.all(prog))
-    to_load = []
-    name_set = {m.name.replace("-", "_") for m in modules}  # type: ignore
-    in_tree = set()
-    already_loaded = set()
-    found_set = set()
-    to_extract = set()
-    for mod_ in modules:
-        # mypy silliness:
-        mod: KernelModule = mod_  # type: ignore
-        # no use wasting time searching for out-of-tree modules
-        if mod.is_oot():
-            continue
-
-        mod_name = mod.name.replace("-", "_")
-        in_tree.add(mod_name)
-
-        # no need to load debuginfo we already have
-        if mod.have_debuginfo():
-            already_loaded.add(mod_name)
-            continue
-
-        dinfo = mod.find_debuginfo()
-        if dinfo:
-            to_load.append(dinfo)
-            found_set.add(mod_name)
-        elif extract:
-            to_extract.add(mod_name)
-
-    if extract and to_extract:
-        print("extracting debuginfo from vmlinux_repo...")
-        extracted = fetch_debuginfo(
-            prog["UTS_RELEASE"].string_().decode("ascii"), list(to_extract)
-        )
-        for extracted_name, path in extracted.items():
-            to_load.append(path)
-            found_set.add(extracted_name)
-
-    missing = in_tree - already_loaded - found_set
-    if missing and strict:
-        raise FileNotFoundError(
-            "Could not load debuginfo for: {}".format(", ".join(missing))
-        )
-    elif missing and not quiet:
-        print(
-            "warning: Could not load debuginfo for: {}".format(
-                ", ".join(missing)
-            )
-        )
-
-    oot = name_set - in_tree
-    if oot and not quiet:
-        print(
-            "warning: out-of-tree modules not loaded: {}".format(
-                ", ".join(oot)
-            )
-        )
-
-    prog.load_debug_info(to_load)
-    prog.cache.setdefault("drgn-tools-loaded-mods", set()).update(found_set)
-
-
 def ensure_debuginfo(prog: Program, modules: List[str]) -> Optional[str]:
     """
     Ensure that the modules listed are loaded in the kernel and have
     debuginfo available. If the modules are not present in the kernel or
     the debuginfo cannot be loaded, return an error message.
     """
-    try:
-        load_module_debuginfo(
-            prog,
-            modules,
-            strict=True,
+    mods = []
+    missing = []
+    for modname in modules:
+        try:
+            module = prog.module(modname)
+            mods.append(module)
+        except LookupError:
+            missing.append(modname)
+    if missing:
+        return "error: the following modules are not loaded: " + ", ".join(
+            missing
         )
-    except FileNotFoundError as e:
-        return str(e)
-    except ValueError as e:
-        return str(e)
+    prog.load_module_debug_info(*mods)
+    for mod in mods:
+        if mod.wants_debug_file():
+            missing.append(mod.name)
+    if missing:
+        return "error: could not find debuginfo for: " + ", ".join(missing)
     return None
 
 
