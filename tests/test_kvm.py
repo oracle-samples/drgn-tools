@@ -7,3 +7,5 @@ def test_kvmutil(prog):
     kvm.print_vm_list(prog)
     kvm.print_vcpu_list(prog)
     kvm.print_memslot_info(prog)
+    kvm.print_ioeventfd_info(prog)
+    kvm.print_kvmstat_info(prog)
