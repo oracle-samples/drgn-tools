@@ -10,6 +10,8 @@ from typing import Optional
 import drgn
 import pytest
 
+from drgn_tools.debuginfo import KernelVersion
+
 
 VMCORE: Optional[Path] = None
 VMCORE_NAME: Optional[str] = None
@@ -73,6 +75,11 @@ def log_global_env_facts(prog, record_testsuite_property):
         record_testsuite_property("target", "live")
     release = prog["UTS_RELEASE"].string_().decode("utf-8")
     record_testsuite_property("release", release)
+
+
+@pytest.fixture(scope="session")
+def kver(prog):
+    return KernelVersion.parse(prog["UTS_RELEASE"].string_().decode())
 
 
 def pytest_addoption(parser):
