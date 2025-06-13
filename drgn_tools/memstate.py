@@ -342,13 +342,11 @@ def display_top_swap_consumers(
     print("")
     header = "TOP 10 SWAP SPACE CONSUMERS:" if not verbose else "SWAP USERS:"
     print(header)
-    print(tasks_infos[0])
     filtered = {
         pid: {"cmd": info["cmd"], "swap": info["swap"]}
         for pid, info in tasks_infos[0].items()
         if info.get("swap", 0) > 0
     }
-    print("the swap:", filtered)
     if not filtered:
         print("No swap usage found.")
         return
