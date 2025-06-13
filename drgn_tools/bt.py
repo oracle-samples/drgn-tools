@@ -631,6 +631,20 @@ def print_online_bt(
         print()
 
 
+def print_panic_bt(prog: Program) -> None:
+    """
+    Prints the panic task bt
+
+    """
+    try:
+        thread = prog.crashed_thread()
+    except Exception:
+        pid = cpu_curr(prog, prog["crashing_cpu"]).pid.value_()
+        thread = prog.thread(pid)
+    bt(thread)
+    print()
+
+
 def print_all_bt(
     prog: Program, states: t.Optional[t.Container[str]] = None, **kwargs: t.Any
 ) -> None:
@@ -689,6 +703,12 @@ class Bt(CorelensModule):
             help="A PID, or address of a task_struct to unwind",
         )
         op.add_argument(
+            "-p",
+            "--panic",
+            action="store_true",
+            help="Print a backtrace for panic task",
+        )
+        op.add_argument(
             "-c",
             "--cpu",
             type=int,
@@ -725,6 +745,9 @@ class Bt(CorelensModule):
                 print("On-CPU tasks are not supported for /proc/kcore")
             else:
                 bt(prog, cpu=args.cpu, **kwargs)
+        elif args.panic:
+            print("Panic task:")
+            print_panic_bt(prog)
         elif args.pid_or_task is not None:
             try:
                 task = prog.thread(int(args.pid_or_task, 10)).object
