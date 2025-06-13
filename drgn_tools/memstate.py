@@ -6,8 +6,11 @@
 import argparse
 import time
 from collections import defaultdict
+from numbers import Number
+from typing import Any
 from typing import Dict
 from typing import List
+from typing import Tuple
 
 from drgn import Program
 from drgn.helpers.linux.cpumask import for_each_present_cpu
@@ -30,6 +33,11 @@ from drgn_tools.task import get_pid
 from drgn_tools.task import get_task_rss
 
 
+"""
+    these are common global constants used by oled-memstate.
+    source : https://github.com/oracle/oled-tools/blob/main/tools/memstate/memstate_lib/constants.py
+"""
+
 FRAG_LEVEL_LOW_ORDERS = 95
 FRAG_THRESHOLD = 95
 UNACCOUNTED_THRESHOLD = 0.1
@@ -41,46 +49,46 @@ NUMASTAT_MIN_MEMFREE_PERCENT = 0.1
 NUMASTAT_DIFF_PERCENT = 2
 
 
-def order_to_kb(prog, order):
+def order_to_kb(prog: Program, order: int) -> float:
     return 1 << order + prog["PAGE_SHIFT"].value_()
 
 
 # print in pretty format
-def pages_to_gb(page_size, pages):
+def pages_to_gb(page_size: int, pages: int) -> float:
     """Convert number of memory pages to kilobytes (GB)."""
     gb_val = float(pages * (page_size / (1024 * 1024 * 1024)))
     return gb_val
 
 
-def pages_to_kb(page_size, pages):
+def pages_to_kb(page_size: int, pages: int) -> float:
     """Convert number of memory pages to kilobytes (KB)."""
-    kb_val = float((pages * page_size) // 1024)
+    kb_val = float((pages * page_size) / 1024)
     return kb_val
 
 
-def convert_kb_to_gb(val_in_kb):
+def convert_kb_to_gb(val_in_kb: int) -> float:
     """Return KBs to GBs."""
     val_in_gb = float(val_in_kb) / (1024**2)
     return val_in_gb
 
 
-def print_pretty_kb(str_msg, int_arg):
+def print_pretty_kb(str_msg: str, int_arg: float) -> None:
     """Print KB value in a pretty format."""
     print(f"{str_msg: <30}{int_arg: >12}")
 
 
-def print_pretty_gb(str_msg, int_arg):
+def print_pretty_gb(str_msg: str, int_arg: float) -> None:
     """Print GB value in a pretty format."""
     print(f"{str_msg: <30}{int_arg: >12.1f}")
 
 
-def print_pretty_gb_l1(str_msg, int_arg):
+def print_pretty_gb_l1(str_msg: str, int_arg: float) -> None:
     """Pretty-print a GBs value with 1-level indentation."""
     printstr = (" " * 2) + str_msg
     print_pretty_gb(printstr, int_arg)
 
 
-def print_pretty_gb_l2(str_msg, int_arg):
+def print_pretty_gb_l2(str_msg: str, int_arg: float) -> None:
     """
     Pretty-print a GBs value with 2-level indentation.
     """
@@ -88,38 +96,38 @@ def print_pretty_gb_l2(str_msg, int_arg):
     print_pretty_gb(printstr, int_arg)
 
 
-def print_time(sys_time):
+def print_time(sys_time: str) -> None:
     """
     Print time
     """
     print(f"{'TIME: ': >12}{sys_time}")
 
 
-def print_warn(err_str):
+def print_warn(err_str: str) -> None:
     """Print a warning message."""
     print(f"{'[WARN] ': <8}{err_str}")
 
 
-def print_info(msg_str):
+def print_info(msg_str: str) -> None:
     """Print an info message."""
     print(f"{'[OK] ': <8}{msg_str}")
 
 
-def print_numastat_headers(num_numa_nodes):
+def print_numastat_headers(num_numa_nodes: int) -> None:
     print(f"{'NODE 0': >45}", end=" ")
     for i in range(1, num_numa_nodes):
         print(f"{'NODE '  + str(i): >14}", end=" ")
     print("")
 
 
-def print_pretty_numastat_kb(str_msg, numa_arr_kb):
+def print_pretty_numastat_kb(str_msg: str, numa_arr_kb: List) -> None:
     print(f"{str_msg: <30}", end=" ")
     for _, val in enumerate(numa_arr_kb):
         print(f"{str(val): >14}", end=" ")
     print("")
 
 
-def get_time(prog: Program):
+def get_time(prog: Program) -> str:
     try:
         timekeeper = prog["shadow_timekeeper"]
     except KeyError:
@@ -127,13 +135,11 @@ def get_time(prog: Program):
     return time.ctime(timekeeper.xtime_sec)
 
 
-def memstate_header(prog: Program, print_header=True):
+def memstate_header(prog: Program, print_header: bool = True) -> None:
     """
     Print memstate header to stdout if it has not been printed yet.
     """
-    kernel_version = kernel_version = (
-        prog["UTS_RELEASE"].string_().decode("utf-8")
-    )
+    kernel_version = prog["UTS_RELEASE"].string_().decode("utf-8")
     hostname = prog["init_uts_ns"].name.nodename.string_().decode("utf-8")
     sys_time = get_time(prog)
     if print_header:
@@ -142,33 +148,24 @@ def memstate_header(prog: Program, print_header=True):
         print_time(sys_time)
 
 
-def get_processes_mm(prog: Program, mm_stats):
-    """calculate in page level the processes used memory"""
-    ps_mem = mm_stats["AnonPages"] + mm_stats["Mapped"]
-    return ps_mem
-
-
-def get_cache_mm(prog: Program, mm_stats):
-    """get cached memory in page level"""
-    cached = mm_stats["Cached"]
-    return cached
-
-
-def get_shared_memory(prog: Program, mm_stats):
-    """get shared memory in page level"""
-    sh_mm = mm_stats["Shmem"]
-    return sh_mm
-
-
-def user_space_mm(prog, mm_stats):
-    """computing the userprocess memory usage and return it as dictionnary"""
+def display_userspace_mm(
+    prog: Program, mm_stats: Dict[str, int]
+) -> Dict[str, Any]:
+    """
+    displaying the userspace memory usage , passing the userspace_mm calculated before as parameter
+    """
     page_size = prog["PAGE_SIZE"].value_()
     buffers = pages_to_gb(page_size, mm_stats["Buffers"])
     anonpages = pages_to_gb(page_size, mm_stats["AnonPages"])
-    ps_mem = pages_to_gb(page_size, get_processes_mm(prog, mm_stats))
-    cached_mm = pages_to_gb(page_size, get_cache_mm(prog, mm_stats))
-    sh_mm = pages_to_gb(page_size, get_shared_memory(prog, mm_stats))
+    ps_mem = pages_to_gb(page_size, mm_stats["AnonPages"] + mm_stats["Mapped"])
+    cached_mm = pages_to_gb(page_size, mm_stats["Cached"])
+    sh_mm = pages_to_gb(page_size, mm_stats["Shmem"])
     total = anonpages + cached_mm + buffers
+
+    print_pretty_gb_l1("Userspace", total)
+    print_pretty_gb_l2("Processes", ps_mem)
+    print_pretty_gb_l2("Page cache", cached_mm)
+    print_pretty_gb_l2("Shared mem", sh_mm)
 
     return {
         "ps_mem": ps_mem,
@@ -178,18 +175,16 @@ def user_space_mm(prog, mm_stats):
     }
 
 
-def display_userspace_mm(userspace_mm):
+def display_kernel_mm(
+    prog: Program,
+    mm_stats: Dict[str, int],
+    mem_total: float,
+    mem_free: float,
+    user_alloc: float,
+) -> Dict[str, float]:
     """
-    displaying the userspace memory usage , passing the userspace_mm calculated before as parameter
+    compute the kernel memory usage statistics and display the kernel memory usage
     """
-    print_pretty_gb_l1("Userspace", userspace_mm["total"])
-    print_pretty_gb_l2("Processes", userspace_mm["ps_mem"])
-    print_pretty_gb_l2("Page cache", userspace_mm["cached_mm"])
-    print_pretty_gb_l2("Shared mem", userspace_mm["sh_mm"])
-
-
-def kernel_mm(prog, mm_stats, mem_total, mem_free, user_alloc):
-    """computing the kernel memory usage statistics and return it as dictionnary"""
     page_size = prog["PAGE_SIZE"].value_()
     slab_mm = pages_to_gb(page_size, mm_stats["Slab"])
     vmalloc = pages_to_gb(page_size, mm_stats["VmallocUsed"])
@@ -200,6 +195,12 @@ def kernel_mm(prog, mm_stats, mem_total, mem_free, user_alloc):
     hugepagessize = get_total_hugetlb_pages(prog)
     ukn = mem_total - (mem_free + total + user_alloc + hugepagessize)
     total = round(total + ukn, 1)
+
+    print_pretty_gb_l1("Kernel", total)
+    print_pretty_gb_l2("Slabs", round(slab_mm, 1))
+    print_pretty_gb_l2("Percpu", round(percpu, 1))
+    print_pretty_gb_l2("Unknown", round(ukn, 1))
+
     return {
         "slab_mm": slab_mm,
         "vmalloc": vmalloc,
@@ -211,17 +212,9 @@ def kernel_mm(prog, mm_stats, mem_total, mem_free, user_alloc):
     }
 
 
-def display_kernel_mm(kernel_mm):
-    """
-    displaying the userspace memory usage , passing the userspace_mm calculated before as parameter
-    """
-    print_pretty_gb_l1("Kernel", round(kernel_mm["total"], 1))
-    print_pretty_gb_l2("Slabs", round(kernel_mm["slab_mm"], 1))
-    print_pretty_gb_l2("Percpu", round(kernel_mm["percpu"], 1))
-    print_pretty_gb_l2("Unknown", round(kernel_mm["ukn"], 1))
-
-
-def memory_usage(prog: Program, hp_stats):
+def memory_usage(
+    prog: Program, hp_stats: Dict[int, List[Dict[str, Any]]]
+) -> Dict[str, Any]:
     """ " This is a wrapper API that displays a memory summary"""
     print("")
     pages_size = prog["PAGE_SIZE"].value_()
@@ -234,12 +227,10 @@ def memory_usage(prog: Program, hp_stats):
     print_pretty_gb("Total memory", round(total_memory, 1))
     print_pretty_gb("Free memory", round(free_memory, 1))
     print_pretty_gb("Used memory", round(used_memory, 1))
-    user_space_memory = user_space_mm(prog, mm_stats)
-    display_userspace_mm(user_space_memory)
-    kernel_mm_usage = kernel_mm(
+    user_space_memory = display_userspace_mm(prog, mm_stats)
+    kernel_mm_usage = display_kernel_mm(
         prog, mm_stats, total_memory, free_memory, user_space_memory["total"]
     )
-    display_kernel_mm(kernel_mm_usage)
     display_hugepages_state(prog, hp_stats)
     used_swap = pages_to_gb(
         pages_size, mm_stats["SwapTotal"] - mm_stats["SwapFree"]
@@ -254,34 +245,36 @@ def memory_usage(prog: Program, hp_stats):
     }
 
 
-def get_slab_inof(prog: Program):
+def get_slab_inof(prog: Program) -> Dict[str, Dict[str, Any]]:
     """
     this api is returning a dictionnary that contain the slab cache , it size and their aliases
     """
-    slabs_infos: dict = defaultdict()
+    slab_infos: Dict[str, Dict[str, Any]] = defaultdict()
     cache_to_aliases = defaultdict(list)
     for alias, cache in get_slab_cache_aliases(prog).items():
         cache_to_aliases[cache].append(alias)
 
     for slab in for_each_slab_cache(prog):
         slab_info = get_kmem_cache_slub_info(slab)
-        if slab_info.name not in slabs_infos:
-            slabs_infos[slab_info.name] = {}
-        slabs_infos[slab_info.name]["size"] = (
+        if slab_info.name not in slab_infos:
+            slab_infos[slab_info.name] = {}
+        slab_infos[slab_info.name]["size"] = (
             slab_info.nr_slabs * slab_info.ssize
         ) / 1024
-        slabs_infos[slab_info.name]["aliases"] = cache_to_aliases[
+        slab_infos[slab_info.name]["aliases"] = cache_to_aliases[
             slab_info.name
         ]
     sslab_info = dict(
         sorted(
-            slabs_infos.items(), key=lambda item: item[1]["size"], reverse=True
+            slab_infos.items(), key=lambda item: item[1]["size"], reverse=True
         )
     )
     return sslab_info
 
 
-def display_top_slab_caches(sslab_info, verbose):
+def display_top_slab_caches(
+    sslab_info: Dict[str, Dict[str, Any]], verbose: bool
+) -> None:
     print("")
     header = (
         "TOP 10 SLAB CACHES (in KB):"
@@ -309,11 +302,7 @@ def display_top_slab_caches(sslab_info, verbose):
     print(">> Total memory used by all slab caches: " f"{total_mem} KB")
 
 
-def calculate_pss(task):
-    """ " """
-
-
-def get_proc_infos(prog: Program):
+def get_proc_infos(prog: Program) -> Tuple[Dict[Any, Any], int]:
     tasks = list(for_each_task(prog))
     task_infos: Dict = {}
     rss_cache: Dict = {}
@@ -346,14 +335,22 @@ def get_proc_infos(prog: Program):
     return sorted_task_infos, mem_total
 
 
-def display_top_swap_consumers(tasks_infos, verbose):
+def display_top_swap_consumers(
+    tasks_infos: Tuple[Dict[Any, Any], int], verbose: bool
+):
+    count = 0
+
     print("")
-    print("TOP 10 SWAP SPACE CONSUMERS:")
+    header = "TOP 10 SWAP SPACE CONSUMERS:" if not verbose else "SWAP USERS:"
+    print(header)
     filtered = {
         pid: {"cmd": info["cmd"], "swap": info["swap"]}
         for pid, info in tasks_infos[0].items()
         if info.get("swap", 0) > 0
     }
+    if not filtered:
+        print("No swap usage found.")
+        return
 
     sorted_swap_info = dict(
         sorted(
@@ -361,13 +358,17 @@ def display_top_swap_consumers(tasks_infos, verbose):
         )
     )
     for pid, task in sorted_swap_info.items():
+        if count >= 10:
+            break
         print(
             f"{task['cmd']+'(' +str((pid)) +')': <30}"
             f"{int(task['swap']): >16}"
         )
 
 
-def display_process_infos(task_infos, verbose):
+def display_process_infos(
+    task_infos: Tuple[Dict[Any, Any], int], verbose: bool
+):
     print("")
     header = (
         "TOP 10 MEMORY CONSUMERS (in KB):"
@@ -427,11 +428,16 @@ def check_committed_as(prog: Program, mm_stats, total_hugepages_gb):
         print("")
         print_warn(
             "Max virtual memory allocated is more than available physical"
-            f" memory (Committed_AS = {committed_as_gb} GB)."
+            f" memory (Committed_AS = {round(committed_as_gb,1)} GB)."
         )
 
 
-def health_check(prog: Program, mm_stats, total_mm, free_mm, userspace):
+def health_check(
+    prog: Program,
+    mm_stats: Dict[str, int],
+    total_mm: float,
+    kernel_mm_stats: Dict[str, float],
+):
     print("")
     print("HEALTH CHECKS:")
     """
@@ -481,7 +487,6 @@ def health_check(prog: Program, mm_stats, total_mm, free_mm, userspace):
         print_warn(f"\nvm.watermark_scale_factor has been increased to {wsf}.")
     else:
         print_info(f"The value of vm.watermark_scale_factor is: {wsf}.")
-    kernel_mm_stats = kernel_mm(prog, mm_stats, total_mm, free_mm, userspace)
 
     """
         Page tables health check
@@ -564,16 +569,7 @@ def check_fragmentation_status(prog: Program):
             )
 
 
-def find_vm_event_start(first_vm, prog) -> int:
-    vmstat_text = prog["vmstat_text"]
-    for i in range(len(vmstat_text)):
-        label = vmstat_text[i].string_().decode()
-        if label == first_vm:
-            return i
-    raise RuntimeError(f"{first_vm} not found in vmstat_text[]")
-
-
-def get_vm_event_total(prog) -> dict:
+def get_vm_event_total(prog: Program) -> Dict:
     """
     Return the total value of interesting vm_event_item counters by summing all per-CPU values.
     """
@@ -632,7 +628,7 @@ def display_vm_events(prog: Program, vm_events: dict) -> None:
     print("")
 
 
-def is_low_memfree(memfree_kb, memtotal_kb):
+def is_low_memfree(memfree_kb: list, memtotal_kb: list) -> bool:
     lowest_ratio = min(
         round(float(free) / float(total), 2)
         for total, free in zip(memtotal_kb, memfree_kb)
@@ -642,15 +638,15 @@ def is_low_memfree(memfree_kb, memtotal_kb):
     return False
 
 
-def check_for_numa_imbalance(numa_row_str, numa_val_mb):
+def check_for_numa_imbalance(numa_row_str: str, numa_val_mb: List) -> None:
     lowest = min(float(val) for val in numa_val_mb)
     highest = max(float(val) for val in numa_val_mb)
     if float(highest) > float(NUMASTAT_DIFF_PERCENT * float(lowest)):
         print_warn(f"{numa_row_str} is imbalanced across NUMA nodes.")
 
 
-def huge_pages_stats(prog: Program):
-    hp_per_node = defaultdict(list)
+def huge_pages_stats(prog: Program) -> Dict[int, List[Dict[str, Any]]]:
+    hp_per_node: Dict[int, List[Dict[str, Number]]] = defaultdict(list)
     hstates = prog["hstates"]
 
     for nid in range(prog["nr_node_ids"].value_()):
@@ -665,12 +661,13 @@ def huge_pages_stats(prog: Program):
                     nid
                 ].value_(),
             }
-
             hp_per_node[nid].append(stats)
     return hp_per_node
 
 
-def display_hugepages_state(prog, hp_per_node):
+def display_hugepages_state(
+    prog: Program, hp_per_node: Dict[int, List[Dict[str, Any]]]
+):
     sizes = set()
     for stats in hp_per_node.values():
         for stat in stats:
@@ -705,15 +702,17 @@ def display_hugepages_state(prog, hp_per_node):
             print_pretty_numastat_kb(f"Free Hugepages ({size} KB)", free)
 
 
-def numa_stats(prog: Program, hp_stats):
+def numa_stats(
+    prog: Program, hp_stats: Dict[int, List[Dict[str, Any]]]
+) -> None:
     print("")
     print("NUMA STATISTICS:")
-    numa_memtotal_kb: List[int] = []
-    numa_memfree_kb: List[int] = []
-    numa_filepages_kb: List[int] = []
-    numa_anonpages_kb: List[int] = []
-    numa_slab_kb: List[int] = []
-    numa_shmem_kb: List[int] = []
+    numa_memtotal_kb: List[float] = []
+    numa_memfree_kb: List[float] = []
+    numa_filepages_kb: List[float] = []
+    numa_anonpages_kb: List[float] = []
+    numa_slab_kb: List[float] = []
+    numa_shmem_kb: List[float] = []
     page_size = prog["PAGE_SIZE"].value_()
     active_nodes = get_active_numa_nodes(prog)
     num_nodes = len(active_nodes)
@@ -776,26 +775,24 @@ def run_memstate(
         hp_stats = huge_pages_stats(prog)
         memory_summary = memory_usage(prog, hp_stats)
         mm_stats = get_all_meminfo(prog)
+    if run_all or numa:
+        if numa:
+            hp_stats = huge_pages_stats(prog)
+        numa_stats(prog, hp_stats)
+    if run_all or slab:
+        slab_infos = get_slab_inof(prog)
+        display_top_slab_caches(slab_infos, verbose)
     if run_all or per_process:
         proc_infos = get_proc_infos(prog)
         display_process_infos(proc_infos, verbose)
     if run_all:
         display_top_swap_consumers(proc_infos, verbose)
-    if run_all or slab:
-        slab_infos = get_slab_inof(prog)
-        display_top_slab_caches(slab_infos, verbose)
-
-    if run_all or numa:
-        hp_stats = huge_pages_stats(prog)
-        numa_stats(prog, hp_stats)
-
     if run_all:
         health_check(
             prog,
             mm_stats,
             memory_summary["total_memory"],
-            memory_summary["free_memory"],
-            memory_summary["user_space"]["total"],
+            memory_summary["kernel_mm_usage"],
         )
         check_fragmentation_status(prog)
         vm_events = get_vm_event_total(prog)
