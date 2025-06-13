@@ -116,7 +116,7 @@ def print_info(msg_str: str) -> None:
 def print_numastat_headers(num_numa_nodes: int) -> None:
     print(f"{'NODE 0': >45}", end=" ")
     for i in range(1, num_numa_nodes):
-        print(f"{'NODE '  + str(i): >14}", end=" ")
+        print(f"{'NODE ' + str(i): >14}", end=" ")
     print("")
 
 
@@ -360,7 +360,7 @@ def display_top_swap_consumers(
         if count >= 10:
             break
         print(
-            f"{task['cmd']+'(' +str((pid)) +')': <30}"
+            f"{task['cmd'] + '(' + str((pid)) + ')': <30}"
             f"{int(task['swap']): >16}"
         )
 
@@ -380,7 +380,7 @@ def display_process_infos(
     for pid, task in task_infos[0].items():
         if (count < 10 or verbose) and task["rss"] > 0:
             print(
-                f"{task['cmd']+'(' +str((pid)) +')': <30}"
+                f"{task['cmd'] + '(' + str((pid)) + ')': <30}"
                 f"{int(task['rss']): >16}"
             )
             count += 1
@@ -427,7 +427,7 @@ def check_committed_as(prog: Program, mm_stats, total_hugepages_gb):
         print("")
         print_warn(
             "Max virtual memory allocated is more than available physical"
-            f" memory (Committed_AS = {round(committed_as_gb,1)} GB)."
+            f" memory (Committed_AS = {round(committed_as_gb, 1)} GB)."
         )
 
 
@@ -500,11 +500,11 @@ def health_check(
         print("")
         print_warn(
             "Unaccounted kernel memory use is larger than expected: "
-            f"{round(ukn,1)} GB."
+            f"{round(ukn, 1)} GB."
         )
     elif ukn >= 0:
         print("")
-        print_info(f"Unaccounted kernel memory is: {round(ukn,1)} GB.")
+        print_info(f"Unaccounted kernel memory is: {round(ukn, 1)} GB.")
     """
         check for the commited virtual memory
     """
