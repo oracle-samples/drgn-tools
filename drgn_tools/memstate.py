@@ -339,15 +339,16 @@ def display_top_swap_consumers(
     tasks_infos: Tuple[Dict[Any, Any], int], verbose: bool
 ):
     count = 0
-
     print("")
     header = "TOP 10 SWAP SPACE CONSUMERS:" if not verbose else "SWAP USERS:"
     print(header)
+    print(tasks_infos[0])
     filtered = {
         pid: {"cmd": info["cmd"], "swap": info["swap"]}
         for pid, info in tasks_infos[0].items()
         if info.get("swap", 0) > 0
     }
+    print("the swap:", filtered)
     if not filtered:
         print("No swap usage found.")
         return
@@ -667,7 +668,7 @@ def huge_pages_stats(prog: Program) -> Dict[int, List[Dict[str, Any]]]:
 
 def display_hugepages_state(
     prog: Program, hp_per_node: Dict[int, List[Dict[str, Any]]]
-):
+) -> None:
     sizes = set()
     for stats in hp_per_node.values():
         for stat in stats:
