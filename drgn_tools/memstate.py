@@ -72,28 +72,28 @@ def convert_kb_to_gb(val_in_kb: int) -> float:
     return val_in_gb
 
 
-def print_pretty_kb(str_msg: str, int_arg: float) -> None:
+def print_pretty_kb(str_msg: str, arg: float) -> None:
     """Print KB value in a pretty format."""
-    print(f"{str_msg: <30}{int_arg: >12}")
+    print(f"{str_msg: <30}{arg: >12}")
 
 
-def print_pretty_gb(str_msg: str, int_arg: float) -> None:
+def print_pretty_gb(str_msg: str, arg: float) -> None:
     """Print GB value in a pretty format."""
-    print(f"{str_msg: <30}{int_arg: >12.1f}")
+    print(f"{str_msg: <30}{arg: >12.1f}")
 
 
-def print_pretty_gb_l1(str_msg: str, int_arg: float) -> None:
+def print_pretty_gb_l1(str_msg: str, arg: float) -> None:
     """Pretty-print a GBs value with 1-level indentation."""
     printstr = (" " * 2) + str_msg
-    print_pretty_gb(printstr, int_arg)
+    print_pretty_gb(printstr, arg)
 
 
-def print_pretty_gb_l2(str_msg: str, int_arg: float) -> None:
+def print_pretty_gb_l2(str_msg: str, arg: float) -> None:
     """
     Pretty-print a GBs value with 2-level indentation.
     """
     printstr = (" " * 4) + str_msg
-    print_pretty_gb(printstr, int_arg)
+    print_pretty_gb(printstr, arg)
 
 
 def print_time(sys_time: str) -> None:
