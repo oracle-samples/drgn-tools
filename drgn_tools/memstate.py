@@ -518,6 +518,7 @@ def check_fragmentation_status(prog: Program):
     print("  (Low orders are 0-3, high orders are 4-10).")
 
     fragmented_nodes = []
+    is_fragmented: bool = False
 
     for zone in for_each_zone(prog):
         zone_name = zone.name.string_().decode("utf-8")
