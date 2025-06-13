@@ -22,20 +22,6 @@ class LibCorelens(Plugin, RedHatPlugin):
         PluginOpt("task-days", default=3, desc="days of task history")
     ]
 
-    def check_version(self):
-        # This function is to validate the corelens version which is available
-        # along with drgn-tools version above 1.1.2 and higher
-        version_command = (
-            "rpm -qa | grep drgn-tools | cut -d '-' -f3 | tr -d '.'"
-        )
-        try:
-            corelens_version = int(
-                subprocess.check_output(version_command, shell=True).strip()
-            )
-            return corelens_version >= 112
-        except Exception:
-            return False
-
     def get_vmcore_dir_path(self):
         try:
             storage = None
@@ -164,24 +150,4 @@ class LibCorelens(Plugin, RedHatPlugin):
 
     def setup(self):
         days = self.get_option("task-days")
-        corelens_binary = Path("/usr/bin/corelens")
-        if corelens_binary.exists() and self.check_version():
-            self.process_recent_vmcores(days)
-        else:
-            corelens_info_header = "Corelens details::"
-            rpm_cmd = "rpm -qa | grep -E 'oled|drgn'"
-            try:
-                corelens_pkg = subprocess.check_output(
-                    rpm_cmd, shell=True, universal_newlines=True
-                ).decode("utf-8")
-            except Exception:
-                corelens_pkg = "Error fetching package details either oled-tools or drgn package is missing"
-            failure_message = (
-                "File not created. Either vmlinux.ctfa or vmcore not found"
-            )
-            corelens_report = (
-                f"{corelens_info_header}\n{corelens_pkg}\n{failure_message}"
-            )
-            self.add_string_as_file(
-                "%s" % (corelens_report), filename="corelens"
-            )
+        self.process_recent_vmcores(days)
