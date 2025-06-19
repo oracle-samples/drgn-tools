@@ -659,10 +659,8 @@ def show_unexpired_delayed_works(
                                 "struct delayed_work",
                                 "timer",
                             )
-                            tte = (
-                                timer.expires.value_()
-                                - prog["jiffies"].value_()
-                            )
+                            jiffies = prog["jiffies"].value_()
+                            tte = timer.expires.value_() - jiffies
                             work = dwork.work.address_
                             try:
                                 func = prog.symbol(
@@ -672,8 +670,28 @@ def show_unexpired_delayed_works(
                                 func = (
                                     f"UNKNOWN: 0x{dwork.work.func.value_():x}"
                                 )
+                            if (
+                                timer_base.value_()
+                                == per_cpu(
+                                    prog["timer_bases"][0], cpu
+                                ).value_()
+                            ):
+                                base_type = "BASE_STD"
+                            elif (
+                                timer_base.value_()
+                                == per_cpu(
+                                    prog["timer_bases"][1], cpu
+                                ).value_()
+                            ):
+                                base_type = "BASE_DEF"
+                            else:
+                                base_type = "BASE_UNKNOWN"
+
                             print(
                                 f"timer: {timer.value_():x} tte(jiffies): {tte} work: {work:x} func: {func}"
+                            )
+                            print(
+                                f"timer_base: {timer_base.address_:x} base_type: {base_type} jiffies: {jiffies} clk: {timer_base.clk.value_()} next_expiry: {timer_base.next_expiry.value_()}"
                             )
 
         except FaultError:
@@ -697,7 +715,7 @@ class OfflinedDelayedWorksModule(CorelensModule):
     name = "offlined_delayed_works"
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
-        show_unexpired_delayed_works(prog)
+        show_unexpired_delayed_works(prog, False)
 
 
 class WorkqueueModule(CorelensModule):
