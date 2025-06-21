@@ -345,7 +345,9 @@ def _get_debuginfo_paths(
     return paths
 
 
-def _find_debuginfo(paths: List[Path], mod: str) -> Optional[Path]:
+def _find_debuginfo(
+    prog_or_release: Union["Program", str], paths: List[Path], mod: str
+) -> Optional[Path]:
     replace_pat = re.compile(r"[_-]")
     for search_dir in paths:
         if "lib/modules" in str(search_dir) and mod != "vmlinux":
@@ -379,6 +381,32 @@ def _find_debuginfo(paths: List[Path], mod: str) -> Optional[Path]:
                     candidate = search_dir / f"{name_alt}{ext}"
                     if candidate.exists():
                         return candidate
+
+    if mod == "vmlinux":
+        # On some distributions (e.g., Ubuntu), vmlinux may not reside in the modules directory.
+        # Search common locations for vmlinux, as referenced in:
+        # https://github.com/anakryiko/retsnoop/blob/389e2c9ddfc686ee048b063ce0c17b94b55398d2/src/retsnoop.c#L59-L67
+
+        if isinstance(prog_or_release, str):
+            release = prog_or_release
+        else:
+            # Assume to be a program, without explicitly using the name
+            prog = prog_or_release
+            release = prog["UTS_RELEASE"].string_().decode()
+
+        locations = [
+            f"/boot/vmlinux-{release}",
+            f"/lib/modules/{release}/vmlinux-{release}",
+            f"/lib/modules/{release}/build/vmlinux",
+            f"/usr/lib/modules/{release}/kernel/vmlinux",
+            f"/usr/lib/debug/boot/vmlinux-{release}",
+            f"/usr/lib/debug/boot/vmlinux-{release}.debug",
+            f"/usr/lib/debug/lib/modules/{release}/vmlinux",
+        ]
+        for loc in locations:
+            if os.path.exists(loc):
+                return Path(loc)
+
     return None
 
 
@@ -428,7 +456,7 @@ def find_debuginfo(
     if dinfo_path:
         user_paths.append(dinfo_path)
     paths = _get_debuginfo_paths(prog_or_release, dinfo_path=user_paths)
-    return _find_debuginfo(paths, mod)
+    return _find_debuginfo(prog_or_release, paths, mod)
 
 
 # Mapping of kernel version (without release) to the UEK major version. The
