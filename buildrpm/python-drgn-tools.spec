@@ -20,8 +20,8 @@
 
 
 Name:           python-drgn-tools
-Version:        2.1.0
-Release:        2%{?dist}
+Version:        2.1.1
+Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
 License:        UPL
@@ -132,6 +132,12 @@ rm %{buildroot}/usr/bin/DRGN
 %endif
 
 %changelog
+* Tue Jun 24 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.1.1-1
+- Mountinfo fails on a (nearly) empty struct mount [Orabug: 37911511]
+- Test failure for module_build_id() in Linux 6.14 [Orabug: 37973190]
+- Make md helper not crash with uninitialized percpu refcount (Junxiao Bi) [Orabug: 37968883]
+- Add support for drgn 0.0.32
+
 * Wed Apr 30 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.1.0-2
 - Resolve cpuinfo issue for aarch64 on Linux 6.0+ [Orabug: 37879692]
 - Avoid traceback on Ctrl-C and broken pipe error [Orabug: 37879205]
