@@ -126,7 +126,13 @@ class LibCorelens(Plugin, RedHatPlugin):
             corelens_output_path.mkdir(parents=True, exist_ok=True)
 
             for vmcore_subdir in recent_vmcore_dirs:
-                vmcore_file = vmcore_subdir / "vmcore"
+                try:
+                    vmcore_file = next(vmcore_subdir.glob("*vmcore"))
+                except StopIteration:
+                    error_logs.append(
+                        f"Error: missing vmcore in {vmcore_subdir}"
+                    )
+                    continue
                 corelens_output_file = (
                     corelens_output_path / vmcore_subdir.name
                 )
