@@ -271,7 +271,7 @@ class SimpleProgress:
         self.notty_update_every = notty_update_every
         self.start_time = time.time()
         self.next_report = self.start_time
-        self.isatty = sys.stdout.isatty()
+        self.isatty = sys.stderr.isatty()
 
     def __enter__(self):
         self.start_time = time.time()
@@ -303,16 +303,21 @@ class SimpleProgress:
                 f"\033[1k\r{self.desc}: {pct}% @ {rstr} ({cbstr} / {tbstr})",
                 end="",
                 flush=True,
+                file=sys.stderr,
             )
             self.next_report = current_time + self.update_every
         else:
-            print(f"{self.desc}: {pct}% @ {rstr} ({cbstr} / {tbstr})")
+            print(
+                f"{self.desc}: {pct}% @ {rstr} ({cbstr} / {tbstr})",
+                file=sys.stderr,
+            )
             self.next_report = current_time + self.notty_update_every
 
     def complete(self):
-        self.print_report()
-        if self.isatty and not self.quiet:
-            print()
+        if not self.quiet:
+            self.print_report()
+            if self.isatty:
+                print()
 
 
 def head_file(url: str) -> bool:
