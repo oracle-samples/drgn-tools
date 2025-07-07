@@ -9,6 +9,7 @@ import collections
 import contextlib
 import importlib
 import inspect
+import logging
 import os
 import pkgutil
 import re
@@ -17,12 +18,12 @@ import sys
 import time
 import traceback
 from fnmatch import fnmatch
+from logging.handlers import MemoryHandler
 from pathlib import Path
 from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
-from typing import TextIO
 from typing import Tuple
 
 import drgn
@@ -32,9 +33,13 @@ from drgn.cli import version_header as drgn_version_header
 
 from drgn_tools.debuginfo import drgn_prog_set as register_debug_info_finders
 from drgn_tools.debuginfo import update_debug_info_policy
+from drgn_tools.logging import FilterMissingDebugSymbolsMessages
 from drgn_tools.module import get_module_load_summary
 from drgn_tools.module import KernelModule
 from drgn_tools.util import redirect_stdout
+
+
+log = logging.getLogger("corelens")
 
 
 class _CorelensArgparseEscapeException(Exception):
@@ -359,7 +364,9 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
     try:
         prog.load_default_debug_info()
     except drgn.MissingDebugInfoError:
-        sys.exit("errorcould not find debuginfo")
+        if prog.main_module().wants_debug_file():
+            sys.exit("error: could not find vmlinux debuginfo")
+        # otherwise, let's see whether we have enough module debuginfo
 
     return prog
 
@@ -468,19 +475,11 @@ def _run_module(
     return time.time() - start_time
 
 
-def _report_errors(
-    errors: List[str],
-    warnings: List[str],
-    err_file: Optional[TextIO],
-) -> None:
+def _report_errors(errors: List[str], warnings: List[str]) -> None:
     for error in errors:
-        print("error: " + error, file=sys.stderr)
-        if err_file:
-            print("error: " + error, file=err_file)
+        log.error("error: " + error)
     for warning in warnings:
-        print("warning: " + warning, file=sys.stderr)
-        if err_file:
-            print("warning: " + warning, file=err_file)
+        log.warning("warning: " + warning)
 
 
 def _split_args(arg_list: List[str], delim: str = "-M") -> List[List[str]]:
@@ -621,6 +620,8 @@ def _do_main() -> None:
         print("warning: Running corelens against a live system.")
         print("         Data may be inconsistent, or corelens may crash.")
 
+    logging.getLogger("drgn").addFilter(FilterMissingDebugSymbolsMessages())
+
     start_time = time.time()
     prog = _load_prog_and_debuginfo(args)
     modules_to_run, errors, warnings = _check_module_debuginfo(
@@ -657,52 +658,46 @@ def _do_main() -> None:
     #     - Corelens metadata & runtime info is suppressed
     #     - Corelens module output is printed to stdout
     out_dir: Optional[Path] = None
-    err_file: Optional[TextIO] = None
     print_header = False
-    deferred_output: List[str] = []
+    root_logger = logging.getLogger()
+    log.setLevel(logging.INFO)
     if args.output_directory:
         out_dir = Path(args.output_directory)
         try:
             out_dir.mkdir(exist_ok=True)
         except OSError as e:
             sys.exit(f"error creating output directory: {e}")
-        err_file = (out_dir / "corelens").open("w")
 
-        def info_msg(*args, **kwargs):
-            print(*args, **kwargs)
-            print(*args, **kwargs, file=err_file)
-
+        root_logger.addHandler(logging.StreamHandler())
+        root_logger.addHandler(
+            logging.FileHandler(out_dir / "corelens", mode="w")
+        )
     elif len(modules_to_run) > 1:
         print_header = True
-        deferred_output.append("\n====== corelens ======\n")
+        root_logger.addHandler(
+            MemoryHandler(
+                capacity=float("inf"),  # type: ignore
+                target=logging.StreamHandler(),
+            )
+        )
+        log.info("%s", "\n====== corelens ======")
 
-        def info_msg(*args, **kwargs):
-            end = kwargs.get("end", "\n")
-            deferred_output.append(" ".join(map(str, args)) + end)
-
-    else:
-
-        def info_msg(*args, **kwargs):
-            pass
-
-    info_msg(_version_string())
+    log.info("%s", _version_string())
     kind = "CTF" if prog.cache.get("using_ctf") else "DWARF"
-    info_msg(f"Loaded {kind} debuginfo in in {load_time:.03f}s")
+    log.info("Loaded %s debuginfo in in %.03fs", kind, load_time)
 
     for mod, mod_args in modules_to_run:
-        info_msg(f"Running module {mod.name}... ", end="", flush=True)
+        log.info("Running module %s...", mod.name)
         with contextlib.ExitStack() as es:
             if out_dir:
                 out_file = out_dir / mod.name
                 es.enter_context(redirect_stdout(str(out_file), append=True))
             runtime = _run_module(mod, prog, mod_args, errors, print_header)
-        info_msg(f"completed in {runtime:.3f}s")
+        log.info("  completed in %.3fs", runtime)
 
     corelens_total_time = time.time() - corelens_begin_time
-    info_msg(f"corelens total runtime: {corelens_total_time:.3f}s")
-    if deferred_output:
-        print("".join(deferred_output))
-    _report_errors(errors, warnings, err_file)
+    log.info("corelens total runtime: %.3fs", corelens_total_time)
+    _report_errors(errors, warnings)
     if errors:
         sys.exit(1)
 
@@ -740,7 +735,7 @@ def run(prog: Program, cl_cmd: str) -> None:
     except _CorelensArgparseEscapeException:
         return
     to_run, errors, warnings = _check_module_debuginfo([(module, ns)], prog)
-    _report_errors(errors, warnings, None)
+    _report_errors(errors, warnings)
     if to_run:
         module.run(prog, ns)
 
