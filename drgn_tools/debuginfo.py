@@ -27,6 +27,7 @@ from typing import Dict
 from typing import List
 from typing import NamedTuple
 from typing import Optional
+from typing import Set
 from typing import Tuple
 from urllib.error import HTTPError
 from urllib.error import URLError
@@ -40,6 +41,7 @@ from drgn import ProgramFlags
 from drgn import RelocatableModule
 
 from drgn_tools.config import get_config
+from drgn_tools.taint import Taint
 from drgn_tools.util import download_file
 
 try:
@@ -55,6 +57,7 @@ __all__ = (
     "KernelVersion",
 )
 
+log = logging.getLogger("drgn.plugin.oracle")
 
 CTF_PATHS = [
     "./vmlinux.ctfa",
@@ -223,11 +226,23 @@ def is_vmlinux(module: Module) -> bool:
     )
 
 
+def is_ksplice_cold_patch(module: RelocatableModule) -> bool:
+    # Normally, ksplice modules are live patches, which are loaded into the
+    # kernel and patch the already loaded code. For patched kernel modules,
+    # ksplices may also contain a "cold-patched" module which is a new copy of
+    # the module with the updated code, avoiding the need to live-patch if the
+    # module is not yet loaded. The downside is that these are new build
+    # artifacts with different build IDs. The packaged debuginfo does not apply
+    # to them, and drgn rightly rejects them.
+    return "__tripwire_table" in module.section_addresses
+
+
 def is_in_tree_module(module: Module) -> bool:
     return (
         module.prog.flags & ProgramFlags.IS_LINUX_KERNEL
         and isinstance(module, RelocatableModule)
-        and not (module.object.taints & (1 << TAINT_OOT_MODULE))
+        and not (module.object.taints & (1 << Taint.OOT_MODULE))
+        and not is_ksplice_cold_patch(module)
     )
 
 
@@ -286,6 +301,14 @@ def ol_vmlinux_repo_finder(modules: List[Module]) -> None:
 def ol_local_rpm_finder(modules: List[Module]) -> None:
     prog = modules[0].prog
     opts: DebugInfoOptionsExt = prog.cache["drgn_tools.debuginfo.options"]
+    # The "tried" set here protects against an edge-case. In-tree modules
+    # *should* appear in the debuginfo RPM. But if for some reason they don't,
+    # the debuginfo finders may be invoked multiple times, repeating the
+    # expensive extraction or download. Instead, record each module which we've
+    # tried to extract from an RPM, to avoid re-doing it.
+    tried: Set[str] = prog.cache.setdefault(
+        "drgn_tools.debuginfo.extracted", set()
+    )
     uname = prog["UTS_RELEASE"].string_().decode()
     try:
         version = KernelVersion.parse(uname)
@@ -311,8 +334,10 @@ def ol_local_rpm_finder(modules: List[Module]) -> None:
 
     mods_needing_debuginfo = []
     for module in modules:
-        if module.wants_debug_file() and (
-            is_vmlinux(module) or is_in_tree_module(module)
+        if (
+            module.wants_debug_file()
+            and module.name not in tried
+            and (is_vmlinux(module) or is_in_tree_module(module))
         ):
             mods_needing_debuginfo.append(module)
 
@@ -325,11 +350,20 @@ def ol_local_rpm_finder(modules: List[Module]) -> None:
     modnames = [m.name for m in mods_needing_debuginfo]
     extract_rpm(source_rpm, dest_dir, modnames, permissions=0o777)
     find_debug_info_vmlinux_repo(dest_dir, mods_needing_debuginfo)
+    tried.update(modnames)
 
 
 def ol_download_finder(modules: List[Module]) -> None:
     prog = modules[0].prog
     opts: DebugInfoOptionsExt = prog.cache["drgn_tools.debuginfo.options"]
+    # The "tried" set here protects against an edge-case. In-tree modules
+    # *should* appear in the debuginfo RPM. But if for some reason they don't,
+    # the debuginfo finders may be invoked multiple times, repeating the
+    # expensive extraction or download. Instead, record each module which we've
+    # tried to extract from an RPM, to avoid re-doing it.
+    tried: Set[str] = prog.cache.setdefault(
+        "drgn_tools.debuginfo.extracted", set()
+    )
     uname = prog["UTS_RELEASE"].string_().decode()
     try:
         version = KernelVersion.parse(uname)
@@ -351,8 +385,10 @@ def ol_download_finder(modules: List[Module]) -> None:
 
     mods_needing_debuginfo = []
     for module in modules:
-        if module.wants_debug_file() and (
-            is_vmlinux(module) or is_in_tree_module(module)
+        if (
+            module.wants_debug_file()
+            and module.name not in tried
+            and (is_vmlinux(module) or is_in_tree_module(module))
         ):
             mods_needing_debuginfo.append(module)
 
@@ -391,6 +427,7 @@ def ol_download_finder(modules: List[Module]) -> None:
         out_dir.mkdir(parents=True, exist_ok=True)
         extract_rpm(path, out_dir, modnames)
         find_debug_info_vmlinux_repo(out_dir, mods_needing_debuginfo)
+        tried.update(modnames)
 
 
 def _get_host_ol() -> Optional[int]:
@@ -483,7 +520,7 @@ def ctf_finder(modules: List["Module"]):
                 log.debug("failed to find vmlinux.ctfa")
         elif isinstance(module, RelocatableModule) and ctf_loaded:
             # CTF contains symbols for all in-tree modules. Mark them DONT_NEED
-            if not module.object.taints & TAINT_OOT_MODULE:
+            if not module.object.taints & (1 << Taint.OOT_MODULE):
                 module.debug_file_status = ModuleFileStatus.DONT_NEED
 
 
