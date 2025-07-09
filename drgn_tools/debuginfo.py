@@ -13,6 +13,7 @@ Finally, this module may also be run from the command line, in which case it
 find (maybe extract, depending on config) and print the locations of the
 debuginfo for a vmcore.
 """
+import atexit
 import enum
 import logging
 import os
@@ -27,8 +28,6 @@ from typing import NamedTuple
 from typing import Optional
 from typing import Set
 from typing import Tuple
-from urllib.error import HTTPError
-from urllib.error import URLError
 
 from drgn import DebugInfoOptions
 from drgn import MainModule
@@ -364,6 +363,7 @@ class OracleDebuginfo:
     prog: Program
     version: KernelVersion
     extracted: Set[str]
+    cached_rpm: Optional[Path]
 
     def __init__(self, opts: DebugInfoOptionsExt, prog: Program):
         self.opts = opts
@@ -371,6 +371,7 @@ class OracleDebuginfo:
         uname = prog["UTS_RELEASE"].string_().decode()
         self.version = KernelVersion.parse(uname)
         self.extracted = set()
+        self.cached_rpm = None
 
     def ol_vmlinux_repo_finder(self, modules: List[Module]) -> None:
         fmtparams = self.version.format_params()
@@ -391,7 +392,10 @@ class OracleDebuginfo:
             return
         fmtparams = self.version.format_params()
         dest_dir = Path(self.opts.repo_paths[-1].format(**fmtparams))
-        source_rpm = Path(self.opts.local_path.format(**fmtparams))
+        if self.cached_rpm and self.cached_rpm.exists():
+            source_rpm = self.cached_rpm
+        else:
+            source_rpm = Path(self.opts.local_path.format(**fmtparams))
 
         if not source_rpm.exists():
             log.debug("ol-local-rpm: local RPM is missing: %s", source_rpm)
@@ -423,6 +427,10 @@ class OracleDebuginfo:
         find_debug_info_vmlinux_repo(dest_dir, mods_needing_debuginfo)
         self.extracted.update(modnames)
 
+    def _delete_cached_rpm(self):
+        if self.cached_rpm and self.cached_rpm.exists():
+            self.cached_rpm.unlink()
+
     def ol_download_finder(self, modules: List[Module]) -> None:
         # The download RPM finder must extract to a directory: the vmlinux repo.
         # We allow the "repo_paths" option to contain multiple elements, but the
@@ -436,6 +444,16 @@ class OracleDebuginfo:
         fmtparams = self.version.format_params()
         out_dir = Path(self.opts.repo_paths[-1].format(**fmtparams))
         dest_rpm = Path(self.opts.local_path.format(**fmtparams))
+
+        # Normally, ol-local-rpm is enabled whenever ol-download is. But it's
+        # possible for that not to be the case. In that case, ensure that a
+        # previously downloaded RPM will be reused rather than re-downloaded.
+        if dest_rpm.exists() or (self.cached_rpm and self.cached_rpm.exists()):
+            log.debug(
+                "ol-download: previously cached RPM exists, calling ol-local-rpm"
+            )
+            self.ol_local_rpm_finder(modules)
+            return
 
         mods_needing_debuginfo = []
         for module in modules:
@@ -453,41 +471,53 @@ class OracleDebuginfo:
             return
 
         urls = [url_fmt.format(**fmtparams) for url_fmt in self.opts.urls]
-        with tempfile.NamedTemporaryFile(suffix=".rpm", mode="wb") as f:
-            for url in urls:
-                try:
-                    # Apparently a temporary file is not a "BytesIO", so type
-                    # checking fails. Ignore that error.
-                    download_file(
-                        url,
-                        f,  # type: ignore
-                        desc="Downloading RPM",
-                        quiet=False,
-                        logger=log,
-                        caller="ol-download: ",
-                    )
-                    break
-                except (HTTPError, URLError):
-                    pass
-            else:
-                log.warning(
-                    "ol-download: tried all URLs and download failed:\n%s",
-                    "\n".join(urls),
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".rpm", mode="wb", delete=False
+        )
+        tmp_path = Path(tmp.name)
+        for url in urls:
+            try:
+                # Apparently a temporary file is not a "BytesIO", so type
+                # checking fails. Ignore that error.
+                download_file(
+                    url,
+                    tmp,  # type: ignore
+                    desc="Downloading RPM",
+                    quiet=False,
+                    logger=log,
+                    caller="ol-download: ",
                 )
-                return
-            f.flush()
+                break
+            except Exception:
+                # If a connection is lost in the middle of a download, we could
+                # get a partial file. Ensure this does not happen.
+                tmp.truncate(0)
+        else:
+            log.warning(
+                "ol-download: tried all URLs and download failed:\n%s",
+                "\n".join(urls),
+            )
+            tmp.close()
+            tmp_path.unlink()
+            return
+        tmp.close()
 
-            path = Path(f.name)
-            if self.opts.rpm_cache:
-                dest_rpm.parent.mkdir(exist_ok=True, parents=True)
-                shutil.move(str(path), str(dest_rpm))
-                path.touch()  # prevent error in tempfile unlink
-                path = dest_rpm
-            modnames = [m.name for m in mods_needing_debuginfo]
-            out_dir.mkdir(parents=True, exist_ok=True)
-            extract_rpm(path, out_dir, modnames, caller="ol-download: ")
-            find_debug_info_vmlinux_repo(out_dir, mods_needing_debuginfo)
-            self.extracted.update(modnames)
+        # The rpm_cache option controls whether we save the RPM so that it
+        # persists after we exit. If not, we still save the RPM in case we need
+        # to extract more debuginfo from it.
+        if self.opts.rpm_cache:
+            dest_rpm.parent.mkdir(exist_ok=True, parents=True)
+            shutil.move(str(tmp_path), str(dest_rpm))
+            path = dest_rpm
+        else:
+            self.cached_rpm = tmp_path
+            atexit.register(self._delete_cached_rpm)
+            path = tmp_path
+        modnames = [m.name for m in mods_needing_debuginfo]
+        out_dir.mkdir(parents=True, exist_ok=True)
+        extract_rpm(path, out_dir, modnames, caller="ol-download: ")
+        find_debug_info_vmlinux_repo(out_dir, mods_needing_debuginfo)
+        self.extracted.update(modnames)
 
     def ctf_finder(self, modules: List["Module"]):
         ctf_loaded = self.prog.cache.get("using_ctf", False)
