@@ -43,9 +43,6 @@ except (ImportError, ModuleNotFoundError):
 CLI_HELPERS = {
     "drgn_tools.bt": ["bt"],
     "drgn_tools.printk": ["dmesg"],
-    "drgn_tools.module": [
-        "KernelModule",
-    ],
     "drgn_tools.util": ["redirect_stdout"],
 }
 

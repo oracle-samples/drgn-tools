@@ -2,31 +2,24 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 from textwrap import fill
 from typing import Dict
-from typing import Iterable
 from typing import List
 from typing import NamedTuple
 from typing import Optional
 from typing import Tuple
-from typing import Union
 
 from drgn import cast
 from drgn import FaultError
 from drgn import Module
-from drgn import ModuleFileStatus
 from drgn import Object
 from drgn import Program
 from drgn import ProgramFlags
 from drgn import RelocatableModule
 from drgn import sizeof
-from drgn.helpers.common import escape_ascii_string
-from drgn.helpers.linux import module_address_regions
-from drgn.helpers.linux import module_percpu_region
 
 from drgn_tools.taint import Taint
 
 
 __all__ = (
-    "KernelModule",
     "ParamInfo",
     "ensure_debuginfo",
     "module_build_id",
@@ -274,143 +267,6 @@ def module_exports(module: Object) -> List[Tuple[int, str]]:
 
     values.sort()
     return values
-
-
-class KernelModule:
-    """
-    Provides a more "object-oriented" interface to the module helpers.
-
-    This class wraps an object of type ``struct module *``, and adds methods
-    which can be used to interact with it. For example:
-
-    >>> km = KernelModule.find(prog, "nf_nat")
-    >>> km
-    KernelModule(nf_nat)
-    >>> km.address_regions()
-    [(Object(prog, 'void *', address=0xffffffffc0878688), 0)]
-    >>> KernelModule(prog.module("nf_nat"))
-    KernelModule(nf_nat)
-    >>> KernelModule(prog.module(0xffffffffc087207b))
-    KernelModule(nf_nat)
-    """
-
-    name: str
-    obj: Object
-    mod: Module
-
-    @classmethod
-    def all(cls, prog: Program) -> Iterable["KernelModule"]:
-        """
-        Get an iterator of KernelModule helpers for each loaded module
-
-        :param prog: Program being debugged
-        :returns: Iterable of kernel module helpers
-        """
-        for m in prog.modules():
-            if isinstance(m, RelocatableModule):
-                yield KernelModule(m)
-
-    @classmethod
-    def find(cls, prog: Program, name: str) -> Optional["KernelModule"]:
-        """
-        Return a KernelModule helper for ``name`` if present
-
-        :param prog: Program being debugged
-        :returns: Iterable of kernel module helpers
-        """
-        try:
-            return KernelModule(prog.module(name))
-        except LookupError:
-            return None
-
-    def __init__(self, obj: Union[Object, Module]):
-        if isinstance(obj, Object):
-            self.obj = obj
-            self.mod = obj.prog_.linux_kernel_loadable_module(obj)
-        elif isinstance(obj, RelocatableModule):
-            self.mod = obj
-            self.obj = self.mod.object
-        else:
-            raise TypeError("Either a struct module * or Module is required")
-        self.name = escape_ascii_string(
-            self.obj.name.string_(), escape_backslash=True
-        )
-
-    def __repr__(self) -> str:
-        return f"KernelModule({self.name})"
-
-    def __str__(self) -> str:
-        return repr(self)
-
-    def have_debuginfo(self) -> bool:
-        """
-        Determine whether debuginfo is loaded for this module.
-
-        :returns: True if debuginfo exists for this module
-        """
-        if self.obj.prog_.cache.get("using_ctf") and not self.is_oot():
-            return True
-        return self.mod.debug_file_status != ModuleFileStatus.WANT
-
-    def address_regions(self) -> List[Tuple[int, int]]:
-        """
-        Return the core region of the module. See
-        :func:`module_address_region()`.
-
-        :returns: Layout of the "core" (non-init) region
-        """
-        return module_address_regions(self.obj)
-
-    def mem_usage(self) -> int:
-        """
-        Return the sum of the memory usage of this module.
-        """
-        return sum(r[1] for r in self.address_regions())
-
-    def percpu_region(self) -> Optional[Tuple[Object, int]]:
-        """
-        Return the percpu memory region of the module, see
-        :func:`module_percpu_region()`.
-        """
-        return module_percpu_region(self.obj)
-
-    def build_id(self) -> str:
-        """
-        Return the build ID of this module, useful for matching debuginfo.
-        """
-        return module_build_id(self.obj)
-
-    def params(self) -> Dict[str, ParamInfo]:
-        """
-        Return a dictionary of the parameters of the module, see
-        :func:`module_params()`
-        """
-        return module_params(self.obj)
-
-    def exports(self) -> List[Tuple[int, str]]:
-        """
-        Return a list of exported (with or without GPL) symbol name & address
-        """
-        return module_exports(self.obj)
-
-    def is_oot(self) -> bool:
-        """
-        Return true if the module is out of tree.
-
-        This is determined using the module.taints field: modules which are
-        tainted OOT_MODULE, PROPRIETARY_MODULE, or UNSIGNED_MODULE, could not
-        have come from our debuginfo RPMs, and so they are considered out of
-        tree. Unfortunately, OOT_MODULE itself is not enough: for some reason,
-        it seems that not all out-of-tree modules get that taint applied.
-        """
-        # Any of the following flags means that a module could not have come
-        # from the debuginfo RPMs, and that's what matters in our case.
-        oot_taints = (
-            (1 << Taint.OOT_MODULE)
-            | (1 << Taint.PROPRIETARY_MODULE)
-            | (1 << Taint.UNSIGNED_MODULE)
-        )
-        return bool(self.obj.taints & oot_taints)
 
 
 def ensure_debuginfo(prog: Program, modules: List[str]) -> Optional[str]:

@@ -8,9 +8,11 @@ from drgn import Object
 from drgn import Program
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.list import list_for_each_entry
+from drgn.helpers.linux.module import for_each_module
+from drgn.helpers.linux.module import module_address_regions
 
 from drgn_tools.corelens import CorelensModule
-from drgn_tools.module import KernelModule
+from drgn_tools.module import module_params
 from drgn_tools.table import print_table
 
 
@@ -28,17 +30,18 @@ def for_each_module_use(source_list_addr: Object) -> Iterable[Object]:
 
 def print_module_parameters(prog: Program) -> None:
     """Prints each loaded module and its parameter values"""
-    for mod in KernelModule.all(prog):
+    for mod in for_each_module(prog):
         print("\n")
-        print("MODULE NAME:".ljust(15), mod.name)
-        print("PARAM COUNT:", str(mod.obj.num_kp.value_()))
-        print("ADDRESS    :", hex(mod.obj.num_kp.address_of_()))
-        if not mod.obj.num_kp:
+        name = escape_ascii_string(mod.name.string_())
+        print("MODULE NAME:".ljust(15), name)
+        print("PARAM COUNT:", str(mod.num_kp.value_()))
+        print("ADDRESS    :", hex(mod.num_kp.address_of_()))
+        if not mod.num_kp:
             continue
 
         table_value = []
         table_value.append(["PARAMETER", "ADDRESS", "TYPE", "VALUE"])
-        for name, info in mod.params().items():
+        for name, info in module_params(mod).items():
             try:
                 if info.value is None:
                     formatted = ""
@@ -75,16 +78,18 @@ def print_module_summary(prog: Program) -> None:
     # List all loaded modules
     table_value = []
     table_value.append(["MODULE", "NAME", "SIZE", "REF", "DEPENDENT MODULES"])
-    for mod in KernelModule.all(prog):
+    for mod in for_each_module(prog):
         dep_mod = []
-        for depuse in for_each_module_use(mod.obj.source_list.address_of_()):
+        for depuse in for_each_module_use(mod.source_list.address_of_()):
             dep_mod.append(depuse.source.name.string_().decode("utf-8"))
+        mem_usage = sum(r[1] for r in module_address_regions(mod))
+        name = escape_ascii_string(mod.name.string_())
         table_value.append(
             [
-                hex(mod.obj.value_()),
-                mod.name,
-                str(mod.mem_usage()),
-                str(int(mod.obj.refcnt.counter)),
+                hex(mod.value_()),
+                name,
+                str(mem_usage),
+                str(int(mod.refcnt.counter)),
                 ",".join(dep_mod),
             ]
         )
