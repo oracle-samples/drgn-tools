@@ -88,7 +88,7 @@ setup(
     description="drgn helper script repository",
     long_description=long_description,
     install_requires=[
-        "drgn>=0.0.31,<0.0.33",
+        "drgn>=0.0.32,<0.0.33",
     ],
     url="https://github.com/oracle-samples/drgn-tools",
     author="Oracle Linux Sustaining Engineering Team",
