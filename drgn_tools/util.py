@@ -1,5 +1,6 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import logging
 import re
 import sys
 import time
@@ -334,11 +335,16 @@ def download_file(
     f: t.BinaryIO,
     quiet: bool = True,
     desc: str = "Downloading",
+    logger: t.Optional[logging.Logger] = None,
+    caller: t.Optional[str] = None,
 ) -> None:
     response = urlopen(url)
 
     if response.status >= 400:
         raise Exception(f"HTTP {response.status} while fetching {url}")
+
+    if logger:
+        logger.info("%sDownloading %s", caller, url)
 
     buf = bytearray(4096 * 4)
     total_bytes = int(response.headers.get("Content-Length", "0"))

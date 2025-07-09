@@ -5,7 +5,7 @@
 .nh
 .ad l
 .\" Begin generated content:
-.TH "CORELENS" "1" "2024-04-19"
+.TH "CORELENS" "1" "2025-07-08"
 .P
 .P
 .SH NAME
@@ -108,6 +108,11 @@ output, \fIVMCORE\fR is not required.\&
 List all modules and exit.\& \fIVMCORE\fR is not required.\&
 .P
 .RE
+\fB-V\fR
+.RS 4
+Print the version of Corelens and exit.\& \fIVMCORE\fR is not required.\&
+.P
+.RE
 As a special case, when corelens is run without any of the above mode
 selection arguments, it runs the "sys" corelens module (as if the
 arguments provided were: \fB-M sys\fR).\&
@@ -120,16 +125,30 @@ The following options disable the standard behavior for searching for
 debuginfo, and manually provide it.\& They are not required.\& They are
 mutually exclusive to each other.\&
 .P
-\fB--ctf\fR \fICTF\fR
+\fB--ctf\fR, \fB-C\fR
 .RS 4
-Corelens will manually load the CTF file \fICTF\fR.\&
+Corelens will only try to load CTF, disabling DWARF.\&
 .P
 .RE
-\fB--debuginfo\fR \fIDEBUGINFO\fR, \fB-d\fR \fIDEBUGINFO\fR
+\fB--dwarf\fR, \fB-D\fR
+.RS 4
+Corelens will only try to load DWARF, disabling CTF.\&
+.P
+.RE
+\fB--ctf-file\fR \fICTF\fR, \fB-c\fR \fICTF\fR
+.RS 4
+Corelens will manually load the CTF file \fICTF\fR.\& This also
+implies \fB--ctf\fR, disabling the search for DWARF files.\&
+.P
+.RE
+\fB--dwarf-dir\fR \fIDWARF\fR, \fB-d\fR \fIDWARF\fR
 .RS 4
 Corelens will search for DWARF debuginfo within the directory
-\fIDEBUGINFO\fR, which should contain a "vmlinux" file as well as
+\fIDWARF\fR, which should contain a "vmlinux" file as well as
 ".\&ko.\&debug" files for each relevant kernel module.\&
+Alternatively, this directory could be a directory into which a
+debuginfo RPM file was extracted into.\& The use of this argument
+implies \fB--dwarf\fR, disabling the search for CTF files.\&
 .P
 .RE
 .RE
@@ -155,7 +174,7 @@ kernels (\fBkernel-uek\fR), CTF is always available.\&
 .RE
 Corelens automatically searches for debuginfo at startup.\& It prefers DWARF when
 available, and uses CTF as a second choice.\& The search may be overridden by
-using the options \fB--ctf\fR or \fB--debuginfo\fR.\&
+using the options \fB--ctf\fR, \fB--ctf-file\fR, \fB--dwarf\fR, or \fB--dwarf-file\fR.\&
 .P
 .SH MODULES
 .P

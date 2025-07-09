@@ -48,18 +48,30 @@
 <blockquote>
 <p>List all modules and exit. <em>VMCORE</em> is not required.</p>
 </blockquote>
+<p><strong>-V</strong></p>
+<blockquote>
+<p>Print the version of Corelens and exit. <em>VMCORE</em> is not required.</p>
+</blockquote>
 <p>As a special case, when corelens is run without any of the above mode selection arguments, it runs the "sys" corelens module (as if the arguments provided were: <strong>-M sys</strong>).</p>
 </blockquote>
 <p><strong>Debuginfo Selection:</strong></p>
 <blockquote>
 <p>The following options disable the standard behavior for searching for debuginfo, and manually provide it. They are not required. They are mutually exclusive to each other.</p>
-<p><strong>--ctf</strong> <em>CTF</em></p>
+<p><strong>--ctf</strong>, <strong>-C</strong></p>
 <blockquote>
-<p>Corelens will manually load the CTF file <em>CTF</em>.</p>
+<p>Corelens will only try to load CTF, disabling DWARF.</p>
 </blockquote>
-<p><strong>--debuginfo</strong> <em>DEBUGINFO</em>, <strong>-d</strong> <em>DEBUGINFO</em></p>
+<p><strong>--dwarf</strong>, <strong>-D</strong></p>
 <blockquote>
-<p>Corelens will search for DWARF debuginfo within the directory <em>DEBUGINFO</em>, which should contain a "vmlinux" file as well as ".ko.debug" files for each relevant kernel module.</p>
+<p>Corelens will only try to load DWARF, disabling CTF.</p>
+</blockquote>
+<p><strong>--ctf-file</strong> <em>CTF</em>, <strong>-c</strong> <em>CTF</em></p>
+<blockquote>
+<p>Corelens will manually load the CTF file <em>CTF</em>. This also implies <strong>--ctf</strong>, disabling the search for DWARF files.</p>
+</blockquote>
+<p><strong>--dwarf-dir</strong> <em>DWARF</em>, <strong>-d</strong> <em>DWARF</em></p>
+<blockquote>
+<p>Corelens will search for DWARF debuginfo within the directory <em>DWARF</em>, which should contain a "vmlinux" file as well as ".ko.debug" files for each relevant kernel module. Alternatively, this directory could be a directory into which a debuginfo RPM file was extracted into. The use of this argument implies <strong>--dwarf</strong>, disabling the search for CTF files.</p>
 </blockquote>
 </blockquote>
 <h1>DEBUGINFO</h1>
@@ -72,17 +84,20 @@
 <blockquote>
 <p>CTF (Compact Type Format) is a lightweight type format. For Oracle UEK kernels (<strong>kernel-uek</strong>), CTF is always available.</p>
 </blockquote>
-<p>Corelens automatically searches for debuginfo at startup. It prefers DWARF when available, and uses CTF as a second choice. The search may be overridden by using the options <strong>--ctf</strong> or <strong>--debuginfo</strong>.</p>
+<p>Corelens automatically searches for debuginfo at startup. It prefers DWARF when available, and uses CTF as a second choice. The search may be overridden by using the options <strong>--ctf</strong>, <strong>--ctf-file</strong>, <strong>--dwarf</strong>, or <strong>--dwarf-file</strong>.</p>
 <h1>MODULES</h1>
 <p>Corelens' functionality is divided into modules. Modules have a name and can accept command-line arguments. They are broken into three categories based on when they are run:</p>
 <blockquote>
-<p>1. Standard modules run whenever <strong>-a</strong> is specified</p>
+<p>1.</p>
+<p>Standard modules run whenever <strong>-a</strong> is specified</p>
 </blockquote>
 <blockquote>
-<p>2. Detailed modules are run whenever <strong>-A</strong> is specified</p>
+<p>2.</p>
+<p>Detailed modules are run whenever <strong>-A</strong> is specified</p>
 </blockquote>
 <blockquote>
-<p>3. Manual modules are only run when explicitly requested</p>
+<p>3.</p>
+<p>Manual modules are only run when explicitly requested</p>
 </blockquote>
 <p>Some corelens modules will only run if a relevant kernel module is loaded. Others require DWARF debuginfo. Some modules may only run against core dumps (not /proc/kcore). Corelens will provide appropriate warnings or errors at runtime if these situations are encountered.</p>
 <p>The full list of modules can be viewed by running <strong>corelens -L</strong>. To view more information about a specific module, including its command-line arguments, you can run <strong>corelens -M</strong> <em>MODULE</em> <strong>-h</strong>.</p>

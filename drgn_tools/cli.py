@@ -19,7 +19,8 @@ from drgn import Program
 
 from drgn_tools.corelens import make_runner
 from drgn_tools.debuginfo import drgn_prog_set as register_debug_info_finders
-from drgn_tools.debuginfo import update_debug_info_policy
+from drgn_tools.debuginfo import get_debuginfo_config
+from drgn_tools.logging import FilterMissingDebugSymbolsMessages
 from drgn_tools.module import get_module_load_summary
 
 try:
@@ -53,36 +54,42 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="drgn wrapper")
     parser.add_argument("vmcore", help="vmcore to open")
     parser.add_argument(
-        "--extract-modules",
-        "-x",
+        "--main-symbols",
         action="store_true",
-        help=(
-            "extract the debuginfo for all loaded modules (requires "
-            "a vmlinux repository, implies --dwarf)"
-        ),
+        help="only search for vmlinux debuginfo",
     )
     parser.add_argument(
         "--ctf",
         "-C",
         action="store_true",
-        help="force the use of CTF",
+        help="only use CTF debuginfo (disable DWARF)",
     )
     parser.add_argument(
         "--ctf-file",
+        "-c",
         help="specify a CTF file to use (implies --ctf)",
     )
     parser.add_argument(
         "--dwarf",
         "-D",
         action="store_true",
-        help="force the use of DWARF debuginfo",
+        help="only use DWARF debuginfo (disable CTF)",
+    )
+    parser.add_argument(
+        "--dwarf-dir",
+        "-d",
+        help="directory to add to the debuginfo search path (should contain"
+        " vmlinux and .ko.debug DWARF debuginfo files)",
+    )
+    parser.add_argument(
+        "--enable-download", "-g", help="enable downloading debuginfo RPMs"
     )
     args = parser.parse_args()
 
     # Set the implied arguments
     if args.ctf_file:
         args.ctf = True
-    if args.extract_modules:
+    if args.dwarf_dir:
         args.dwarf = True
 
     if args.ctf and args.dwarf:
@@ -90,9 +97,22 @@ def main() -> None:
 
     logging.basicConfig()
     drgnlog = logging.getLogger("drgn")
-    drgnlog.setLevel(logging.INFO)
+    drgnlog.addFilter(FilterMissingDebugSymbolsMessages())
+
+    opts = get_debuginfo_config()
+    opts.enable_ctf = True
+    if args.ctf:
+        opts.enable_ctf = True
+        opts.disable_dwarf = True
+    if args.dwarf:
+        opts.enable_ctf = False
+        opts.disable_dwarf = False
+    # This tool has always existed to allow automatic extraction
+    opts.enable_extract = True
+    opts.enable_download = args.enable_download
 
     prog = Program()
+    prog.cache["drgn_tools.debuginfo.options"] = opts
     try:
         prog.set_core_dump(args.vmcore)
     except PermissionError:
@@ -109,27 +129,26 @@ def main() -> None:
     # info finders are automatically registered. However, when run from a git
     # checkout, or if drgn-tools was not installed properly, the hook may not
     # run. Manually check that the finders are registered before continuing.
-    if "drgn_tools.debuginfo.options" not in prog.cache:
+    if "drgn_tools.debuginfo" not in prog.cache:
         register_debug_info_finders(prog)
-
-    # Instruct the debuginfo finders based on the CLI arguments
-    update_debug_info_policy(
-        prog,
-        dwarf_only=args.dwarf,
-        ctf_only=args.ctf,
-        ctf_file=args.ctf_file,
-    )
 
     try:
         old_level = drgnlog.getEffectiveLevel()
         drgnlog.setLevel(logging.ERROR)
-        prog.load_default_debug_info()
+        if args.main_symbols:
+            prog.load_debug_info(main=True)
+        else:
+            prog.load_debug_info(default=True)
     except drgn.MissingDebugInfoError:
         if prog.main_module().wants_debug_file():
             sys.exit("error: unable to find vmlinux debuginfo")
     finally:
         drgnlog.setLevel(old_level)
-    db_kind = "CTF" if prog.cache.get("using_ctf") else "DWARF"
+
+    if prog.cache.get("using_ctf"):
+        db_kind = "CTF"
+    else:
+        db_kind = f"DWARF: {prog.main_module().debug_file_path}"
 
     def banner_func(banner: str) -> str:
         header = version_header()
@@ -139,8 +158,7 @@ def main() -> None:
         for mod_name, names in CLI_HELPERS.items():
             imports += f">>> from {mod_name} import {', '.join(names)}\n"
         db_info = f"Using {db_kind}"
-        if db_kind == "DWARF":
-            db_info += "\n" + str(get_module_load_summary(prog))
+        db_info += "\n" + str(get_module_load_summary(prog))
         return (
             header
             + "\n"
