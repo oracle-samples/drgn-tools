@@ -2,7 +2,7 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import pytest
 
-from drgn_tools.module import KernelModule
+from drgn_tools.module import module_exports
 
 
 @pytest.fixture
@@ -14,35 +14,13 @@ def common_mod(prog):
         "libcrc32c",
     ]
     for name in COMMON_MODS:
-        km = KernelModule.find(prog, name)
-        if km is not None:
-            return km
+        try:
+            return prog.module(name).object
+        except LookupError:
+            pass
     pytest.fail("No common kernel module found in program")
-
-
-def test_not_exist(prog):
-    assert KernelModule.find(prog, "i am not a module") is None
-
-
-def test_list_modules(prog):
-    # smoke test
-    mods = list(KernelModule.all(prog))
-    assert len(mods) > 1
-
-
-def test_module_memory(prog, common_mod):
-    # smoke test
-    common_mod.address_regions()
-
-
-def test_module_build_id(prog, common_mod):
-    # smoke test
-    build_id = common_mod.build_id()
-    assert isinstance(build_id, str)
-    assert len(build_id) == 40
 
 
 def test_module_exports(prog, common_mod):
     # smoke test
-    exports = common_mod.exports()
-    assert exports
+    assert module_exports(common_mod)

@@ -35,7 +35,6 @@ from drgn_tools.debuginfo import drgn_prog_set as register_debug_info_finders
 from drgn_tools.debuginfo import get_debuginfo_config
 from drgn_tools.logging import FilterMissingDebugSymbolsMessages
 from drgn_tools.module import get_module_load_summary
-from drgn_tools.module import KernelModule
 from drgn_tools.util import redirect_stdout
 
 
@@ -392,7 +391,7 @@ def _check_module_debuginfo(
     List[Tuple[CorelensModule, argparse.Namespace]], List[str], List[str]
 ]:
     summary = get_module_load_summary(prog)
-    all_kmod_names = set(km.name for km in KernelModule.all(prog))
+    all_kmod_names = set(km.name for km in summary.all_mods())
     loaded_kmods = set(km.name for km in summary.loaded_mods)
     missing_kmods = set(km.name for km in summary.missing_mods)
 
