@@ -38,6 +38,7 @@ from drgn import ProgramFlags
 from drgn import RelocatableModule
 
 from drgn_tools.config import get_config
+from drgn_tools.module import module_is_in_tree
 from drgn_tools.taint import Taint
 from drgn_tools.util import download_file
 
@@ -223,33 +224,13 @@ def is_vmlinux(module: Module) -> bool:
     )
 
 
-def is_ksplice_cold_patch(module: RelocatableModule) -> bool:
-    # Normally, ksplice modules are live patches, which are loaded into the
-    # kernel and patch the already loaded code. For patched kernel modules,
-    # ksplices may also contain a "cold-patched" module which is a new copy of
-    # the module with the updated code, avoiding the need to live-patch if the
-    # module is not yet loaded. The downside is that these are new build
-    # artifacts with different build IDs. The packaged debuginfo does not apply
-    # to them, and drgn rightly rejects them.
-    return "__tripwire_table" in module.section_addresses
-
-
-def is_in_tree_module(module: Module) -> bool:
-    return (
-        module.prog.flags & ProgramFlags.IS_LINUX_KERNEL
-        and isinstance(module, RelocatableModule)
-        and not (module.object.taints & (1 << Taint.OOT_MODULE))
-        and not is_ksplice_cold_patch(module)
-    )
-
-
 def find_debug_info_vmlinux_repo(repo_dir: Path, modules: List[Module]):
     for module in modules:
         if not module.wants_debug_file():
             continue
         if is_vmlinux(module):
             module.try_file(repo_dir / "vmlinux")
-        elif is_in_tree_module(module):
+        elif module_is_in_tree(module):
             filename = f"{module.name.replace('-', '_')}.ko.debug"
             module.try_file(repo_dir / filename)
 
@@ -406,7 +387,7 @@ class OracleDebuginfo:
             if (
                 module.wants_debug_file()
                 and module.name not in self.extracted
-                and (is_vmlinux(module) or is_in_tree_module(module))
+                and (is_vmlinux(module) or module_is_in_tree(module))
             ):
                 mods_needing_debuginfo.append(module)
 
@@ -460,7 +441,7 @@ class OracleDebuginfo:
             if (
                 module.wants_debug_file()
                 and module.name not in self.extracted
-                and (is_vmlinux(module) or is_in_tree_module(module))
+                and (is_vmlinux(module) or module_is_in_tree(module))
             ):
                 mods_needing_debuginfo.append(module)
 

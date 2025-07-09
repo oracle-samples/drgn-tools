@@ -1,5 +1,6 @@
 # Copyright (c) 2024-2025, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+from textwrap import fill
 from typing import Dict
 from typing import Iterable
 from typing import List
@@ -14,6 +15,7 @@ from drgn import Module
 from drgn import ModuleFileStatus
 from drgn import Object
 from drgn import Program
+from drgn import ProgramFlags
 from drgn import RelocatableModule
 from drgn import sizeof
 from drgn.helpers.common import escape_ascii_string
@@ -68,6 +70,26 @@ def module_build_id(mod: Object) -> str:
             # math.
             return data[-20:].hex()
     raise ValueError("Build ID not found!")
+
+
+def module_is_ksplice_cold_patch(module: RelocatableModule) -> bool:
+    # Normally, ksplice modules are live patches, which are loaded into the
+    # kernel and patch the already loaded code. For patched kernel modules,
+    # ksplices may also contain a "cold-patched" module which is a new copy of
+    # the module with the updated code, avoiding the need to live-patch if the
+    # module is not yet loaded. The downside is that these are new build
+    # artifacts with different build IDs. The packaged debuginfo does not apply
+    # to them, and drgn rightly rejects them.
+    return "__tripwire_table" in module.section_addresses
+
+
+def module_is_in_tree(module: Module) -> bool:
+    return (
+        module.prog.flags & ProgramFlags.IS_LINUX_KERNEL
+        and isinstance(module, RelocatableModule)
+        and not (module.object.taints & (1 << Taint.OOT_MODULE))
+        and not module_is_ksplice_cold_patch(module)
+    )
 
 
 class ParamInfo(NamedTuple):
@@ -428,16 +450,22 @@ class ModuleLoadSummary(NamedTuple):
     """
 
     total_mods: int
-    ksplice_mods: List[KernelModule]
-    other_oot: List[KernelModule]
-    loaded_mods: List[KernelModule]
-    missing_mods: List[KernelModule]
+    ksplice_mods: List[RelocatableModule]
+    ksplice_cold_patch_mods: List[RelocatableModule]
+    other_oot: List[RelocatableModule]
+    loaded_mods: List[RelocatableModule]
+    missing_mods: List[RelocatableModule]
 
     def __str__(self) -> str:
         text = f"{self.total_mods} kernel modules are loaded: "
         details = []
         if self.ksplice_mods:
             details.append(f"{len(self.ksplice_mods)} are ksplices")
+        if self.ksplice_cold_patch_mods:
+            details.append(
+                f"{len(self.ksplice_cold_patch_mods)} are cold-patched "
+                "ksplice modules"
+            )
         if self.other_oot:
             details.append(
                 f"{len(self.other_oot)} are other out-of-tree modules"
@@ -448,26 +476,70 @@ class ModuleLoadSummary(NamedTuple):
         details.append(f"{len(self.missing_mods)} are missing debuginfo")
         return text + ", ".join(details)
 
+    def verbose_str(self, width: int = 80) -> str:
+        lines = [f"{self.total_mods} kernel_modules are loaded."]
+
+        def add(mods: List[RelocatableModule], kind: str) -> None:
+            if not mods:
+                return
+            lines.append(f"{len(mods)} are {kind}:")
+            lines.append(
+                fill(
+                    " ".join(sorted(m.name for m in mods)),
+                    width=(width - 4),
+                    initial_indent="    ",
+                    subsequent_indent="    ",
+                )
+            )
+
+        add(self.loaded_mods, "in-tree with debuginfo")
+        add(self.missing_mods, "in-tree, but missing debuginfo")
+        add(self.ksplice_mods, "ksplice patches")
+        add(self.ksplice_cold_patch_mods, "ksplice cold-patched modules")
+        add(self.other_oot, "other out-of-tree modules")
+        return "\n".join(lines)
+
+    def all_mods(self) -> List[RelocatableModule]:
+        return (
+            self.ksplice_mods
+            + self.ksplice_cold_patch_mods
+            + self.other_oot
+            + self.loaded_mods
+            + self.missing_mods
+        )
+
 
 def get_module_load_summary(prog: Program) -> ModuleLoadSummary:
     """
-    Compute the current status of all modules.
+    Compute the current status of all kernel modules.
     """
     total_mods = 0
     ksplice_mods = []
+    ksplice_cold_patch_mods = []
     other_oot = []
     loaded_mods = []
     missing_mods = []
-    for mod in KernelModule.all(prog):
+    using_ctf = prog.cache.get("using_ctf")
+    for mod in prog.modules():
+        if not isinstance(mod, RelocatableModule):
+            continue
         total_mods += 1
-        if mod.name.startswith("ksplice"):
+        if module_is_in_tree(mod):
+            if mod.wants_debug_file() and not using_ctf:
+                missing_mods.append(mod)
+            else:
+                loaded_mods.append(mod)
+        elif mod.name.startswith("ksplice"):
             ksplice_mods.append(mod)
-        elif mod.is_oot():
-            other_oot.append(mod)
-        elif mod.have_debuginfo():
-            loaded_mods.append(mod)
+        elif module_is_ksplice_cold_patch(mod):
+            ksplice_cold_patch_mods.append(mod)
         else:
-            missing_mods.append(mod)
+            other_oot.append(mod)
     return ModuleLoadSummary(
-        total_mods, ksplice_mods, other_oot, loaded_mods, missing_mods
+        total_mods,
+        ksplice_mods,
+        ksplice_cold_patch_mods,
+        other_oot,
+        loaded_mods,
+        missing_mods,
     )
