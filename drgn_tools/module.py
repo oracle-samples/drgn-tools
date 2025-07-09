@@ -22,47 +22,9 @@ from drgn_tools.taint import Taint
 __all__ = (
     "ParamInfo",
     "ensure_debuginfo",
-    "module_build_id",
     "module_exports",
     "module_params",
 )
-
-
-def module_build_id(mod: Object) -> str:
-    """
-    Return the build ID (as a hex string) for this module.
-
-    :param mod: Object of ``struct module *``
-    :returns: Build ID as hex string
-    """
-    prog = mod.prog_
-    notes_attrs = mod.notes_attrs
-
-    if hasattr(notes_attrs, "grp"):
-        # In 6.14, 4723f16de64e1 ("module: sysfs: Add notes attributes through
-        # attribute_group") changes the storage to use an attribute, and the
-        # array here is null-terminated.
-        def attrs():
-            attr = notes_attrs.grp.bin_attrs[0]
-            while attr:
-                yield attr
-                attr += 1
-
-    else:
-        # Pre-6.14, there was an array with an explicit length.
-        def attrs():
-            for i in range(notes_attrs.notes.value_()):
-                yield notes_attrs.attrs[i]
-
-    for attr in attrs():
-        if attr.attr.name.string_() == b".note.gnu.build-id":
-            data = prog.read(attr.private, attr.size.value_())
-            # Hack / simplification: note data comes at the end of the ELF note
-            # structure. It's 4-byte padded, but build IDs are 20 bytes. So
-            # just use the last 20 bytes rather than fiddling with the offset
-            # math.
-            return data[-20:].hex()
-    raise ValueError("Build ID not found!")
 
 
 def module_is_ksplice_cold_patch(module: RelocatableModule) -> bool:
