@@ -21,8 +21,12 @@ from drgn_tools.taint import Taint
 
 __all__ = (
     "ParamInfo",
+    "ModuleLoadSummary",
     "ensure_debuginfo",
+    "get_module_load_summary",
     "module_exports",
+    "module_is_in_tree",
+    "module_is_ksplice_cold_patch",
     "module_params",
 )
 
@@ -74,7 +78,7 @@ _MOD_PARAM_TYPES = {
 }
 
 
-def decode_param(kp: Object) -> ParamInfo:
+def _decode_param(kp: Object) -> ParamInfo:
     """
     Given a ``struct kernel_param *``, return its value
 
@@ -152,7 +156,7 @@ def module_params(mod: Object) -> Dict[str, ParamInfo]:
     """
     ret = {}
     for i in range(mod.num_kp):
-        info = decode_param(mod.kp[i])
+        info = _decode_param(mod.kp[i])
         ret[info.name] = info
     return ret
 
