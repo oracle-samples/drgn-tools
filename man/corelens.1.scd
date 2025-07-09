@@ -1,6 +1,6 @@
 CORELENS(1)
 
-; Copyright (c) 2024, Oracle and/or its affiliates.
+; Copyright (c) 2025, Oracle and/or its affiliates.
 ; Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 
 # NAME
@@ -84,6 +84,9 @@ _VMCORE_
 	*-L*
 		List all modules and exit. _VMCORE_ is not required.
 
+	*-V*
+		Print the version of Corelens and exit. _VMCORE_ is not required.
+
 	As a special case, when corelens is run without any of the above mode
 	selection arguments, it runs the "sys" corelens module (as if the
 	arguments provided were: *-M sys*).
@@ -94,13 +97,23 @@ _VMCORE_
 	debuginfo, and manually provide it. They are not required. They are
 	mutually exclusive to each other.
 
-	*--ctf* _CTF_
-		Corelens will manually load the CTF file _CTF_.
+	*--ctf*, *-C*
+		Corelens will only try to load CTF, disabling DWARF.
 
-	*--debuginfo* _DEBUGINFO_, *-d* _DEBUGINFO_
+	*--dwarf*, *-D*
+		Corelens will only try to load DWARF, disabling CTF.
+
+	*--ctf-file* _CTF_, *-c* _CTF_
+		Corelens will manually load the CTF file _CTF_. This also
+		implies *--ctf*, disabling the search for DWARF files.
+
+	*--dwarf-dir* _DWARF_, *-d* _DWARF_
 		Corelens will search for DWARF debuginfo within the directory
-		_DEBUGINFO_, which should contain a "vmlinux" file as well as
+		_DWARF_, which should contain a "vmlinux" file as well as
 		".ko.debug" files for each relevant kernel module.
+		Alternatively, this directory could be a directory into which a
+		debuginfo RPM file was extracted into. The use of this argument
+		implies *--dwarf*, disabling the search for CTF files.
 
 # DEBUGINFO
 
@@ -120,7 +133,7 @@ debugging information for _VMCORE_. There are two possibilities:
 
 Corelens automatically searches for debuginfo at startup. It prefers DWARF when
 available, and uses CTF as a second choice. The search may be overridden by
-using the options *--ctf* or *--debuginfo*.
+using the options *--ctf*, *--ctf-file*, *--dwarf*, or *--dwarf-file*.
 
 # MODULES
 

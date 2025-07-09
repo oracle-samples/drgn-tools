@@ -20,9 +20,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from functools import lru_cache
 from pathlib import Path
-from typing import Any
 from typing import Dict
 from typing import List
 from typing import NamedTuple
@@ -57,7 +55,7 @@ __all__ = (
     "KernelVersion",
 )
 
-log = logging.getLogger("drgn.plugin.oracle")
+log = logging.getLogger("drgn_tools.debuginfo")
 
 CTF_PATHS = [
     "./vmlinux.ctfa",
@@ -258,176 +256,49 @@ def find_debug_info_vmlinux_repo(repo_dir: Path, modules: List[Module]):
 
 
 class DebugInfoOptionsExt:
+    # These configure the behavior of finders, but not whether or not they are
+    # enabled. They come from the configuration file.
     repo_paths: List[str]
     local_path: str
     urls: List[str]
-    ctf_file: Optional[str]
     rpm_cache: bool
+
+    # These configure which finders get enabled. They come from the
+    # configuration file, but they may be overridden on the command line.
+    enable_download: bool
+    enable_extract: bool
+    enable_ctf: bool
+    disable_dwarf: bool
+
+    # These configure additional lookup locations, from the command line only.
+    ctf_file: Optional[str]
+    dwarf_dir: Optional[str]
 
     def __init__(
         self,
         repo_paths: List[str],
         local_path: str,
         urls: List[str],
-        ctf_file: Optional[str] = None,
         rpm_cache: bool = False,
+        enable_download: bool = False,
+        enable_extract: bool = False,
+        enable_ctf: bool = False,
+        disable_dwarf: bool = False,
+        ctf_file: Optional[str] = None,
+        dwarf_dir: Optional[str] = None,
     ) -> None:
         self.repo_paths = repo_paths
         self.local_path = local_path
         self.urls = urls
-        self.ctf_file = ctf_file
         self.rpm_cache = rpm_cache
 
+        self.enable_download = enable_download
+        self.enable_extract = enable_extract or enable_download
+        self.enable_ctf = enable_ctf
+        self.disable_dwarf = disable_dwarf
 
-def ol_vmlinux_repo_finder(modules: List[Module]) -> None:
-    prog = modules[0].prog
-    opts: DebugInfoOptionsExt = prog.cache["drgn_tools.debuginfo.options"]
-    uname = prog["UTS_RELEASE"].string_().decode()
-    try:
-        version = KernelVersion.parse(uname)
-    except ValueError as e:
-        log.warning(
-            "ol-vmlinux-repo: error parsing kernel version: %s", str(e)
-        )
-        return
-    fmtparams = version.format_params()
-    for repo_format in opts.repo_paths:
-        repo_dir = Path(repo_format.format(**fmtparams))
-        if repo_dir.is_dir():
-            log.debug("ol-vmlinux-repo: loading from %s", repo_dir)
-            find_debug_info_vmlinux_repo(repo_dir, modules)
-
-
-def ol_local_rpm_finder(modules: List[Module]) -> None:
-    prog = modules[0].prog
-    opts: DebugInfoOptionsExt = prog.cache["drgn_tools.debuginfo.options"]
-    # The "tried" set here protects against an edge-case. In-tree modules
-    # *should* appear in the debuginfo RPM. But if for some reason they don't,
-    # the debuginfo finders may be invoked multiple times, repeating the
-    # expensive extraction or download. Instead, record each module which we've
-    # tried to extract from an RPM, to avoid re-doing it.
-    tried: Set[str] = prog.cache.setdefault(
-        "drgn_tools.debuginfo.extracted", set()
-    )
-    uname = prog["UTS_RELEASE"].string_().decode()
-    try:
-        version = KernelVersion.parse(uname)
-    except ValueError as e:
-        log.warning("ol-local: error parsing kernel version: %s", str(e))
-        return
-    fmtparams = version.format_params()
-
-    # The local RPM finder must extract to a directory: the vmlinux repo. We
-    # allow the "repo_paths" option to contain multiple elements, but the one at
-    # the end of the list is the one which we would extract to. (The one(s) at
-    # the beginning of the list may have been prepended there by a CLI
-    # argument.)
-    if not opts.repo_paths:
-        log.debug("ol-local-rpm: no vmlinux repo to extract to, exiting")
-        return
-    dest_dir = Path(opts.repo_paths[-1].format(**fmtparams))
-    source_rpm = Path(opts.local_path.format(**fmtparams))
-
-    if not source_rpm.exists():
-        log.debug("ol-local-rpm: local RPM is missing: %s", source_rpm)
-        return
-
-    mods_needing_debuginfo = []
-    for module in modules:
-        if (
-            module.wants_debug_file()
-            and module.name not in tried
-            and (is_vmlinux(module) or is_in_tree_module(module))
-        ):
-            mods_needing_debuginfo.append(module)
-
-    if not mods_needing_debuginfo:
-        log.debug(
-            "ol-local-rpm: no vmlinux/in-tree modules need debug info, exiting"
-        )
-        return
-
-    modnames = [m.name for m in mods_needing_debuginfo]
-    extract_rpm(source_rpm, dest_dir, modnames, permissions=0o777)
-    find_debug_info_vmlinux_repo(dest_dir, mods_needing_debuginfo)
-    tried.update(modnames)
-
-
-def ol_download_finder(modules: List[Module]) -> None:
-    prog = modules[0].prog
-    opts: DebugInfoOptionsExt = prog.cache["drgn_tools.debuginfo.options"]
-    # The "tried" set here protects against an edge-case. In-tree modules
-    # *should* appear in the debuginfo RPM. But if for some reason they don't,
-    # the debuginfo finders may be invoked multiple times, repeating the
-    # expensive extraction or download. Instead, record each module which we've
-    # tried to extract from an RPM, to avoid re-doing it.
-    tried: Set[str] = prog.cache.setdefault(
-        "drgn_tools.debuginfo.extracted", set()
-    )
-    uname = prog["UTS_RELEASE"].string_().decode()
-    try:
-        version = KernelVersion.parse(uname)
-    except ValueError as e:
-        log.warning("ol-download: error parsing kernel version: %s", str(e))
-        return
-    fmtparams = version.format_params()
-
-    # The download RPM finder must extract to a directory: the vmlinux repo. We
-    # allow the "repo_paths" option to contain multiple elements, but the one at
-    # the end of the list is the one which we would extract to. (The one(s) at
-    # the beginning of the list may have been prepended there by a CLI
-    # argument.)
-    if not opts.repo_paths:
-        log.debug("ol-download: no vmlinux repo to extract to, exiting")
-        return
-    out_dir = Path(opts.repo_paths[-1].format(**fmtparams))
-    dest_rpm = Path(opts.local_path.format(**fmtparams))
-
-    mods_needing_debuginfo = []
-    for module in modules:
-        if (
-            module.wants_debug_file()
-            and module.name not in tried
-            and (is_vmlinux(module) or is_in_tree_module(module))
-        ):
-            mods_needing_debuginfo.append(module)
-
-    if not mods_needing_debuginfo:
-        log.debug(
-            "ol-download: no vmlinux/in-tree modules need debug info, exiting"
-        )
-        return
-
-    urls = [url_fmt.format(**fmtparams) for url_fmt in opts.urls]
-    with tempfile.NamedTemporaryFile(suffix=".rpm", mode="wb") as f:
-        for url in urls:
-            try:
-                # Apparently a temporary file is not a "BytesIO", so type
-                # checking fails. Ignore that error.
-                download_file(url, f, desc="Downloading RPM", quiet=False)  # type: ignore
-                break
-            except (HTTPError, URLError):
-                pass
-        else:
-            log.warning(
-                "ol-download: tried all URLs and download failed:\n%s",
-                "\n".join(urls),
-            )
-            return
-        f.flush()
-
-        path = Path(f.name)
-        if opts.rpm_cache:
-            dest_rpm.parent.mkdir(exist_ok=True, parents=True)
-            shutil.move(str(path), str(dest_rpm))
-            path.touch()  # prevent error in tempfile unlink
-            path = dest_rpm
-        log.info("ol-download: extracting to %s", out_dir)
-        modnames = [m.name for m in mods_needing_debuginfo]
-        out_dir.mkdir(parents=True, exist_ok=True)
-        extract_rpm(path, out_dir, modnames)
-        find_debug_info_vmlinux_repo(out_dir, mods_needing_debuginfo)
-        tried.update(modnames)
+        self.ctf_file = ctf_file
+        self.dwarf_dir = dwarf_dir
 
 
 def _get_host_ol() -> Optional[int]:
@@ -478,56 +349,193 @@ def _check_ctf_compat(prog: Program, kver: KernelVersion) -> bool:
     return False
 
 
-def ctf_finder(modules: List["Module"]):
-    prog = modules[0].prog
-    opts: DebugInfoOptionsExt = prog.cache["drgn_tools.debuginfo.options"]
-    uname = prog["UTS_RELEASE"].string_().decode()
-    version = KernelVersion.parse(uname)
+class OracleDebuginfo:
+    """
+    Implements Oracle Linux debuginfo finding logic
 
-    ctf_loaded = prog.cache.get("using_ctf", False)
-    log.debug("ctf: enter debuginfo finder ctf_loaded=%r", ctf_loaded)
+    The Oracle drgn-tools plugin creates an instance of this for any kernel
+    program and places it into the Program cache at ``drgn_tools.debuginfo``.
+    This object contains implementations for four different debuginfo finders:
+    ol-vmlinux-repo, ol-local-rpm, ol-download, and ctf. The implementations are
+    registered for each program, and enabled based upon the debuginfo options.
+    """
 
-    ctf_paths = CTF_PATHS.copy()
-    if opts.ctf_file:
-        ctf_paths.insert(0, opts.ctf_file)
+    opts: DebugInfoOptionsExt
+    prog: Program
+    version: KernelVersion
+    extracted: Set[str]
 
-    # Internal systems may have a `vmlinux.ctfa` file in the normal vmlinux repo
-    # path.
-    if opts.repo_paths:
-        fmtparams = version.format_params()
-        ctf_paths.append(
-            os.path.join(
-                opts.repo_paths[-1].format(**fmtparams),
-                "vmlinux.ctfa",
+    def __init__(self, opts: DebugInfoOptionsExt, prog: Program):
+        self.opts = opts
+        self.prog = prog
+        uname = prog["UTS_RELEASE"].string_().decode()
+        self.version = KernelVersion.parse(uname)
+        self.extracted = set()
+
+    def ol_vmlinux_repo_finder(self, modules: List[Module]) -> None:
+        fmtparams = self.version.format_params()
+        for repo_format in self.opts.repo_paths:
+            repo_dir = Path(repo_format.format(**fmtparams))
+            if repo_dir.is_dir():
+                log.debug("ol-vmlinux-repo: loading from %s", repo_dir)
+                find_debug_info_vmlinux_repo(repo_dir, modules)
+
+    def ol_local_rpm_finder(self, modules: List[Module]) -> None:
+        # The local RPM finder must extract to a directory: the vmlinux repo. We
+        # allow the "repo_paths" option to contain multiple elements, but the
+        # one at the end of the list is the one which we would extract to. (The
+        # one(s) at the beginning of the list may have been prepended there by a
+        # CLI argument.)
+        if not self.opts.repo_paths:
+            log.debug("ol-local-rpm: no vmlinux repo to extract to, exiting")
+            return
+        fmtparams = self.version.format_params()
+        dest_dir = Path(self.opts.repo_paths[-1].format(**fmtparams))
+        source_rpm = Path(self.opts.local_path.format(**fmtparams))
+
+        if not source_rpm.exists():
+            log.debug("ol-local-rpm: local RPM is missing: %s", source_rpm)
+            return
+
+        mods_needing_debuginfo = []
+        for module in modules:
+            if (
+                module.wants_debug_file()
+                and module.name not in self.extracted
+                and (is_vmlinux(module) or is_in_tree_module(module))
+            ):
+                mods_needing_debuginfo.append(module)
+
+        if not mods_needing_debuginfo:
+            log.debug(
+                "ol-local-rpm: no vmlinux/in-tree modules need debug info, exiting"
             )
+            return
+
+        modnames = [m.name for m in mods_needing_debuginfo]
+        extract_rpm(
+            source_rpm,
+            dest_dir,
+            modnames,
+            permissions=0o777,
+            caller="ol-local-rpm: ",
         )
+        find_debug_info_vmlinux_repo(dest_dir, mods_needing_debuginfo)
+        self.extracted.update(modnames)
 
-    for module in modules:
-        if isinstance(module, MainModule) and not ctf_loaded:
-            uname = prog["UTS_RELEASE"].string_().decode()
-            for path in ctf_paths:
-                path = path.format(uname=uname)
-                if os.path.isfile(path) and _check_ctf_compat(prog, version):
-                    load_ctf(prog, path)
-                    prog.cache["using_ctf"] = True
-                    ctf_loaded = True
-                    module.debug_file_status = ModuleFileStatus.DONT_NEED
-                    log.info("ctf: loaded %s", path)
+    def ol_download_finder(self, modules: List[Module]) -> None:
+        # The download RPM finder must extract to a directory: the vmlinux repo.
+        # We allow the "repo_paths" option to contain multiple elements, but the
+        # one at the end of the list is the one which we would extract to. (The
+        # one(s) at the beginning of the list may have been prepended there by a
+        # CLI argument.)
+        if not self.opts.repo_paths:
+            log.debug("ol-download: no vmlinux repo to extract to, exiting")
+            return
+
+        fmtparams = self.version.format_params()
+        out_dir = Path(self.opts.repo_paths[-1].format(**fmtparams))
+        dest_rpm = Path(self.opts.local_path.format(**fmtparams))
+
+        mods_needing_debuginfo = []
+        for module in modules:
+            if (
+                module.wants_debug_file()
+                and module.name not in self.extracted
+                and (is_vmlinux(module) or is_in_tree_module(module))
+            ):
+                mods_needing_debuginfo.append(module)
+
+        if not mods_needing_debuginfo:
+            log.debug(
+                "ol-download: no vmlinux/in-tree modules need debug info, exiting"
+            )
+            return
+
+        urls = [url_fmt.format(**fmtparams) for url_fmt in self.opts.urls]
+        with tempfile.NamedTemporaryFile(suffix=".rpm", mode="wb") as f:
+            for url in urls:
+                try:
+                    # Apparently a temporary file is not a "BytesIO", so type
+                    # checking fails. Ignore that error.
+                    download_file(
+                        url,
+                        f,  # type: ignore
+                        desc="Downloading RPM",
+                        quiet=False,
+                        logger=log,
+                        caller="ol-download: ",
+                    )
                     break
-                else:
-                    log.debug("ctf: skip %s", path)
+                except (HTTPError, URLError):
+                    pass
             else:
-                log.debug("failed to find vmlinux.ctfa")
-        elif isinstance(module, RelocatableModule) and ctf_loaded:
-            # CTF contains symbols for all in-tree modules. Mark them DONT_NEED
-            if not module.object.taints & (1 << Taint.OOT_MODULE):
-                module.debug_file_status = ModuleFileStatus.DONT_NEED
+                log.warning(
+                    "ol-download: tried all URLs and download failed:\n%s",
+                    "\n".join(urls),
+                )
+                return
+            f.flush()
+
+            path = Path(f.name)
+            if self.opts.rpm_cache:
+                dest_rpm.parent.mkdir(exist_ok=True, parents=True)
+                shutil.move(str(path), str(dest_rpm))
+                path.touch()  # prevent error in tempfile unlink
+                path = dest_rpm
+            modnames = [m.name for m in mods_needing_debuginfo]
+            out_dir.mkdir(parents=True, exist_ok=True)
+            extract_rpm(path, out_dir, modnames, caller="ol-download: ")
+            find_debug_info_vmlinux_repo(out_dir, mods_needing_debuginfo)
+            self.extracted.update(modnames)
+
+    def ctf_finder(self, modules: List["Module"]):
+        ctf_loaded = self.prog.cache.get("using_ctf", False)
+        log.debug("ctf: enter debuginfo finder ctf_loaded=%r", ctf_loaded)
+        if not HAVE_CTF:
+            log.warning("ctf: CTF is not supported")
+            return
+
+        ctf_paths = CTF_PATHS.copy()
+        if self.opts.ctf_file:
+            ctf_paths.insert(0, self.opts.ctf_file)
+
+        # Internal systems may have a `vmlinux.ctfa` file in the normal vmlinux
+        # repo path.
+        if self.opts.repo_paths:
+            fmtparams = self.version.format_params()
+            ctf_paths.append(
+                os.path.join(
+                    self.opts.repo_paths[-1].format(**fmtparams),
+                    "vmlinux.ctfa",
+                )
+            )
+
+        for module in modules:
+            if isinstance(module, MainModule) and not ctf_loaded:
+                uname = self.prog["UTS_RELEASE"].string_().decode()
+                for path in ctf_paths:
+                    path = path.format(uname=uname)
+                    if os.path.isfile(path) and _check_ctf_compat(
+                        self.prog, self.version
+                    ):
+                        load_ctf(self.prog, path)
+                        self.prog.cache["using_ctf"] = True
+                        ctf_loaded = True
+                        module.debug_file_status = ModuleFileStatus.DONT_NEED
+                        log.info("ctf: loaded %s", path)
+                        break
+                    else:
+                        log.debug("ctf: skip %s", path)
+                else:
+                    log.debug("failed to find vmlinux.ctfa")
+            elif isinstance(module, RelocatableModule) and ctf_loaded:
+                # CTF contains symbols for all in-tree modules. Mark them DONT_NEED
+                if not module.object.taints & (1 << Taint.OOT_MODULE):
+                    module.debug_file_status = ModuleFileStatus.DONT_NEED
 
 
-@lru_cache(maxsize=1)
-def _debug_info_finders() -> (
-    Tuple[DebugInfoOptionsExt, List[Tuple[str, Optional[int], Any]]]
-):
+def get_debuginfo_config() -> DebugInfoOptionsExt:
     """
     Return debug info finders as configured by the user
 
@@ -546,41 +554,66 @@ def _debug_info_finders() -> (
             repo_format = "/share/linuxrpm/vmlinux_repo/{bits}/{uname}"
         else:
             repo_format = str(Path.home()) + "/vmlinux_repo/{bits}/{uname}"
+    else:
+        repo_format = os.path.expanduser(repo_format)
 
     # The path where the local finder checks if there is a debuginfo RPM.
+    # The default is a system directory if present, otherwise ~/vmlinux_repo
     path_format = config.get("debuginfo", "rpm_path_format", fallback=None)
     if path_format is None:
         if os.path.isdir("/share/linuxrpm/debuginfo-rpms"):
             path_format = "/share/linuxrpm/debuginfo-rpms/build-output-{olver}-debuginfo/{rpm}"
         else:
             path_format = str(Path.home()) + "/vmlinux_repo/{bits}/rpms/{rpm}"
+    else:
+        path_format = os.path.expanduser(path_format)
 
-    # Finding RPMs via Yum / remote URL fetching is disabled by default:
-    # drgn-tools should never make network requests without the user explicitly
-    # enabling it.
+    # The URL(s) that the ol-download finder attempts to download from.
+    # The default is the Oracle debuginfo URL.
     urls = config.get("debuginfo", "urls", fallback=None)
     if urls:
         url_list = urls.split()
     else:
         url_list = ["https://oss.oracle.com/ol{olver}/debuginfo/{rpm}"]
-    enable_download = config.get(
-        "debuginfo", "enable_download", fallback="f"
-    ).lower() in ("t", "true", "1", "y", "yes")
-    rpm_cache = config.get("debuginfo", "rpm_cache", fallback="f").lower() in (
-        "t",
-        "true",
-        "1",
-        "y",
-        "yes",
-    )
 
-    opts = DebugInfoOptionsExt(
+    def getbool(name, default):
+        truthy = ("t", "true", "1", "y", "yes")
+        strval = config.get("debuginfo", name, fallback=default).lower()
+        return strval in truthy
+
+    rpm_cache = getbool("rpm_cache", "f")
+    enable_download = getbool("enable_download", "f")
+    enable_extract = getbool("enable_extract", "f")
+    enable_ctf = getbool("enable_ctf", "f")
+    disable_dwarf = getbool("disable_dwarf", "f")
+
+    return DebugInfoOptionsExt(
         repo_paths=[repo_format],
         local_path=path_format,
         urls=url_list,
         ctf_file=None,
         rpm_cache=rpm_cache,
+        enable_download=enable_download,
+        enable_extract=enable_extract,
+        enable_ctf=enable_ctf,
+        disable_dwarf=disable_dwarf,
     )
+
+
+def drgn_prog_set(prog: Program) -> None:
+    if not prog.flags & ProgramFlags.IS_LINUX_KERNEL:
+        return
+
+    if "drgn_tools.debuginfo.options" in prog.cache:
+        opts = prog.cache["drgn_tools.debuginfo.options"]
+    else:
+        opts = get_debuginfo_config()
+
+    try:
+        dbinfo = OracleDebuginfo(opts, prog)
+    except Exception as e:
+        log.error("error setting up Oracle debuginfo finder: %s", str(e))
+        return
 
     # The end result here is that, when registered, the fetchers should be
     # ordered as follows:
@@ -595,75 +628,42 @@ def _debug_info_finders() -> (
     #    the command line or by the config file.
     # 5. "ctf" - This is last, so that if we find any DWARF debuginfo, we'll use
     #    it first.
-    return opts, [
-        ("ol-vmlinux-repo", 0, ol_vmlinux_repo_finder),
-        ("ol-local-rpm", -1, ol_local_rpm_finder),
-        ("ol-download", -1 if enable_download else None, ol_download_finder),
-        ("ctf", None, ctf_finder),
-    ]
+    prog.register_debug_info_finder(
+        "ol-vmlinux-repo", dbinfo.ol_vmlinux_repo_finder
+    )
+    prog.register_debug_info_finder("ol-local-rpm", dbinfo.ol_local_rpm_finder)
+    prog.register_debug_info_finder("ol-download", dbinfo.ol_download_finder)
+    prog.register_debug_info_finder("ctf", dbinfo.ctf_finder)
 
-
-def drgn_prog_set(prog: Program) -> None:
-    if not prog.flags & ProgramFlags.IS_LINUX_KERNEL:
-        return
-    opts, finders = _debug_info_finders()
-    prog.cache["drgn_tools.debuginfo.options"] = opts
-    for name, enable_idx, finder in finders:
-        prog.register_debug_info_finder(name, finder, enable_index=enable_idx)
-
-
-def update_debug_info_policy(
-    prog: Program,
-    dwarf_only: bool = False,
-    ctf_only: bool = False,
-    ctf_file: Optional[str] = None,
-    dwarf_path: Optional[str] = None,
-    enable_download: Optional[bool] = None,
-) -> None:
-    """
-    Configure the debug info finders on a program based on CLI arguments
-
-    Once the finders are registered, we can still customize their behavior based
-    on the command line argument, for example provided to corelens. This allows
-    the user to control, for example, whether CTF gets used, or whether we
-    enable downloading RPMs from Yum.
-
-    :param dwarf_only: if set, then CTF will be disabled
-    :param ctf_only: if set, then CTF will be the only registered debuginfo
-      finder
-    :param ctf_file: provide an explicit path to load the CTF from
-    :param dwarf_path: provide an explicit path to find DWARF from. This can be
-      interpreted in two ways: first, as a directory which contains the vmlinux
-      and .ko files. Second, as a directory into which the debuginfo RPM was
-      extracted.
-    :param enable_download: if set to a non-None value, then we will enable or
-      disable the URL finder, depending on that value. When unset, the
-      configured behavior is left.
-    """
     finders = prog.enabled_debug_info_finders()
-    if dwarf_only and "ctf" in finders:
-        finders.remove("ctf")
-    if ctf_only:
-        finders = ["ctf"]
-    if enable_download and "ol-download" not in finders:
-        if "ctf" in finders:
-            finders.insert(finders.index("ctf"), "ol-download")
-        else:
-            finders.append("ol-download")
-    if enable_download is False and "ol-download" in finders:
-        finders.remove("ol-download")
+    if opts.disable_dwarf:
+        finders.remove("standard")
+    else:
+        finders.insert(0, "ol-vmlinux-repo")
+
+    if (
+        opts.enable_extract or opts.enable_download
+    ) and not opts.disable_dwarf:
+        # The "local rpm" finder should be enabled whenever downloads are
+        # enabled, so that cached RPMs get correctly used..
+        finders.append("ol-local-rpm")
+    if opts.enable_download and not opts.disable_dwarf:
+        finders.append("ol-download")
+    if opts.enable_ctf:
+        finders.append("ctf")
+
     prog.set_enabled_debug_info_finders(finders)
-    opts: DebugInfoOptionsExt = prog.cache["drgn_tools.debuginfo.options"]
-    if ctf_file:
-        opts.ctf_file = ctf_file
-    if dwarf_path:
-        opts.repo_paths.insert(0, dwarf_path)
-        debug_dir = os.path.abspath(os.path.join(dwarf_path, "usr/lib/debug"))
+    if opts.dwarf_dir:
+        opts.repo_paths.insert(0, opts.dwarf_dir)
+        debug_dir = os.path.abspath(
+            os.path.join(opts.dwarf_dir, "usr/lib/debug")
+        )
         if os.path.isdir(debug_dir):
             drgn_opts = prog.debug_info_options
             prog.debug_info_options = DebugInfoOptions(
                 drgn_opts, directories=drgn_opts.directories + (debug_dir,)
             )
+    prog.cache["drgn_tools.debuginfo"] = dbinfo
 
 
 def extract_rpm(
@@ -671,9 +671,11 @@ def extract_rpm(
     dest_dir: Path,
     modules: List[str],
     permissions: Optional[int] = None,
+    caller: Optional[str] = None,
 ) -> Dict[str, Path]:
     log.info(
-        "extracting %d debuginfo modules (%s) from %s...",
+        "%sextracting %d debuginfo modules (%s) from %s...",
+        caller or "",
         len(modules),
         ", ".join(f"{s}" for s in modules[:3])
         + ("..." if len(modules) > 3 else ""),

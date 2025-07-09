@@ -32,7 +32,7 @@ from drgn import ProgramFlags
 from drgn.cli import version_header as drgn_version_header
 
 from drgn_tools.debuginfo import drgn_prog_set as register_debug_info_finders
-from drgn_tools.debuginfo import update_debug_info_policy
+from drgn_tools.debuginfo import get_debuginfo_config
 from drgn_tools.logging import FilterMissingDebugSymbolsMessages
 from drgn_tools.module import get_module_load_summary
 from drgn_tools.module import KernelModule
@@ -339,10 +339,28 @@ def _load_candidate_modules(
 
 
 def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
-    if args.ctf and args.debuginfo:
-        sys.exit("error: --debuginfo and --ctf conflict")
+    if args.ctf and args.dwarf:
+        sys.exit("error: --dwarf and --ctf conflict")
+
+    # Corelens doesn't fully respect the configurations in drgn_tools.ini.
+    # Downloads are disabled, but extraction from a local vmlinux-repo is
+    # allowed. CTF is enabled by default.
+    # CLI flags allow using CTF only, DWARF only, as well as enabling downloads.
+    opts = get_debuginfo_config()
+    opts.enable_ctf = True
+    opts.disable_dwarf = False
+
+    if args.ctf:
+        opts.disable_dwarf = True
+    elif args.dwarf:
+        opts.enable_ctf = False
+    opts.enable_extract = True
+    opts.enable_download = args.enable_download
+    opts.dwarf_dir = args.dwarf_dir
+    opts.ctf_file = args.ctf_file
 
     prog = Program()
+    prog.cache["drgn_tools.debuginfo.options"] = opts
     try:
         prog.set_core_dump(args.vmcore)
     except PermissionError:
@@ -354,13 +372,8 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
             except ImportError:
                 sys.exit("error: no permission to open vmcore")
 
-    if "drgn_tools.debuginfo.options" not in prog.cache:
+    if "drgn_tools.debuginfo" not in prog.cache:
         register_debug_info_finders(prog)
-    update_debug_info_policy(
-        prog,
-        ctf_only=args.ctf,
-        dwarf_path=args.debuginfo,
-    )
     try:
         prog.load_default_debug_info()
     except drgn.MissingDebugInfoError:
@@ -566,14 +579,33 @@ def _do_main() -> None:
         help="print the version of corelens",
     )
     parser.add_argument(
-        "--debuginfo",
+        "--dwarf",
+        "-D",
+        action="store_true",
+        help="only use DWARF debuginfo (disable CTF)",
+    )
+    parser.add_argument(
+        "--dwarf-dir",
         "-d",
         help="directory to add to the debuginfo search path (should contain"
         " vmlinux and .ko.debug DWARF debuginfo files)",
     )
     parser.add_argument(
         "--ctf",
-        help="CTF archive to load (overrides debuginfo and module search)",
+        "-C",
+        action="store_true",
+        help="only use CTF debuginfo (disable DWARF)",
+    )
+    parser.add_argument(
+        "--ctf-file",
+        "-c",
+        help="specify a CTF file to use (implies --ctf)",
+    )
+    parser.add_argument(
+        "--enable-download",
+        "-g",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     grp = parser.add_mutually_exclusive_group()
     grp.add_argument(
@@ -594,8 +626,23 @@ def _do_main() -> None:
         metavar="OUT",
         help="store output in a directory (each module has its own output file)",
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="output diagnostic information as debuginfo is loaded",
+    )
     split_args = _split_args(sys.argv[1:])
     args = parser.parse_args(split_args[0])
+
+    # Set the implied arguments
+    if args.ctf_file:
+        args.ctf = True
+    if args.dwarf_dir:
+        args.dwarf = True
+    if args.ctf and args.dwarf:
+        sys.exit("error: --dwarf and --ctf conflict, use only one")
+
     if args.list:
         _print_module_listing()
         sys.exit(0)
@@ -620,23 +667,6 @@ def _do_main() -> None:
         print("warning: Running corelens against a live system.")
         print("         Data may be inconsistent, or corelens may crash.")
 
-    logging.getLogger("drgn").addFilter(FilterMissingDebugSymbolsMessages())
-
-    start_time = time.time()
-    prog = _load_prog_and_debuginfo(args)
-    modules_to_run, errors, warnings = _check_module_debuginfo(
-        candidate_modules_to_run,
-        prog,
-        # "warning: A skipped because A was not loaded in the kernel"
-        # messages are useful when the user explicitly requested module A to
-        # run, but it's not applicable. However, when we run the report mode (-a
-        # or -A), the user never requisted these specific modules: they just
-        # expect that relevant modules will run. Suppress the warning for those
-        # modes.
-        warn_not_present=not (args.run_all or args.run_all_verbose),
-    )
-    load_time = time.time() - start_time
-
     # We have a few kinds of CLI output:
     # - Information regarding corelens & runtime (debuginfo version, how long
     #   each module runs, etc).
@@ -660,7 +690,10 @@ def _do_main() -> None:
     out_dir: Optional[Path] = None
     print_header = False
     root_logger = logging.getLogger()
-    log.setLevel(logging.INFO)
+    root_logger.setLevel(logging.DEBUG if args.verbose else logging.INFO)
+    drgnlog = logging.getLogger("drgn")
+    drgnlog.addFilter(FilterMissingDebugSymbolsMessages())
+    drgnlog.setLevel(logging.DEBUG if args.verbose else logging.WARNING)
     if args.output_directory:
         out_dir = Path(args.output_directory)
         try:
@@ -672,7 +705,7 @@ def _do_main() -> None:
         root_logger.addHandler(
             logging.FileHandler(out_dir / "corelens", mode="w")
         )
-    elif len(modules_to_run) > 1:
+    elif len(candidate_modules_to_run) > 2:
         print_header = True
         root_logger.addHandler(
             MemoryHandler(
@@ -681,10 +714,27 @@ def _do_main() -> None:
             )
         )
         log.info("%s", "\n====== corelens ======")
+    start_time = time.time()
+    prog = _load_prog_and_debuginfo(args)
+    modules_to_run, errors, warnings = _check_module_debuginfo(
+        candidate_modules_to_run,
+        prog,
+        # "warning: A skipped because A was not loaded in the kernel"
+        # messages are useful when the user explicitly requested module A to
+        # run, but it's not applicable. However, when we run the report mode (-a
+        # or -A), the user never requisted these specific modules: they just
+        # expect that relevant modules will run. Suppress the warning for those
+        # modes.
+        warn_not_present=not (args.run_all or args.run_all_verbose),
+    )
+    load_time = time.time() - start_time
 
     log.info("%s", _version_string())
     kind = "CTF" if prog.cache.get("using_ctf") else "DWARF"
     log.info("Loaded %s debuginfo in in %.03fs", kind, load_time)
+    log.debug(
+        "Enabled debuginfo finders: %r", prog.enabled_debug_info_finders()
+    )
 
     for mod, mod_args in modules_to_run:
         log.info("Running module %s...", mod.name)
