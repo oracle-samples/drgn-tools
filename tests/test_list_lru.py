@@ -25,7 +25,8 @@ def test_list_lru(
     fstype: Optional[Union[str, bytes]] = None,
     verbose: Optional[IntegerLike] = None,
     verify: Optional[IntegerLike] = None,
-    maxitems: Optional[IntegerLike] = None,
+    maxitems: int = 100,
+    maxmounts: int = 20,
 ) -> None:
     """
     Tests memcg aware and unaware lru by walking the lru and for every
@@ -37,16 +38,16 @@ def test_list_lru(
     argument, maxitems, with a value of zero, will find all entries, else
     maxitems specifies the number of items found per filesystem.
     """
-    if maxitems is None:
-        items = 10000
-    else:
-        items = maxitems
+    mount_count = 0
     for mnt in for_each_mount(
         prog,
         src=None,
         dst=dst,
         fstype=fstype,
     ):
+        if maxmounts and mount_count >= maxmounts:
+            break
+        mount_count += 1
         mnt_dst = escape_ascii_string(mount_dst(mnt), escape_backslash=True)
         mnt_fstype = escape_ascii_string(
             mount_fstype(mnt), escape_backslash=True
@@ -63,7 +64,7 @@ def test_list_lru(
             "struct dentry", lru.address_of_(), "d_lru"
         ):
             d_cnt = d_cnt + 1
-            if (items != 0) and (d_cnt >= items):
+            if maxitems and d_cnt >= maxitems:
                 # limit the items searched unless maxitems was 0
                 break
             memcg = slab_object_to_memcgidx(dentry)
@@ -111,7 +112,7 @@ def test_list_lru(
                 "struct xfs_buf", lru.address_of_(), "b_lru"
             ):
                 d_cnt = d_cnt + 1
-                if (items != 0) and (d_cnt >= items):
+                if maxitems and d_cnt >= maxitems:
                     # limit the items searched unless maxitems was 0
                     break
                 memcg = slab_object_to_memcgidx(bp)
