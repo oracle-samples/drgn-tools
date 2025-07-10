@@ -242,9 +242,9 @@ def dump_page_cache_pages_pinning_cgroups(
                 path = d_path(dentry).decode()
                 cgroup_state = decode_css_flags(cgrp.self.address_of_())
                 print(
-                    f"page: 0x{page.value_():x} cgroup: {cgroup_path(cgrp).decode()} state: {cgroup_state} path: {path}\n"
+                    f"page: 0x{page.value_():x} cgroup: {cgroup_path(cgrp).decode()} state: {cgroup_state} path: {path}"
                 )
-                if max_pages and found_count == max_pages:
+                if max_pages and found_count >= max_pages:
                     break
         except FaultError:
             fault_count = fault_count + 1
