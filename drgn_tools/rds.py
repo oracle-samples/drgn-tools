@@ -1038,6 +1038,68 @@ def rds_info_verbose(
     else:
         return None
 
+def rds_ib_qp_states(prog: drgn.Program, outfile: Optional[str] = None, report: bool = False) -> None:
+    """
+    Display the QP states of each rds_ib_connection
+    """
+    msg = ensure_debuginfo(prog, ["rds", "mlx5_ib"])
+    if msg:
+        print(msg)
+        return
+
+    QP_STATES = {
+        0: "RESET",
+        1: "INIT",
+        2: "RTR",
+        3: "RTS",
+        4: "SQD",
+        5: "SQE",
+        6: "ERROR",
+    }
+
+    table = Table(
+        ["LocalAddr", "RemoteAddr", "SrcQP", "QP State"],
+        outfile=outfile,
+        report=report,
+    )
+
+    for rds_ib_dev in for_each_rds_ib_device(prog):
+        for ib_conn in list_for_each_entry("struct rds_ib_connection", rds_ib_dev.conn_list.address_of_(), "ib_node"):
+            conn = ib_conn.conn
+            if not conn:
+                continue
+
+            # Use base helper for better IP formatting
+            try:
+                src_ip = rds_inet_ntoa(conn.c_laddr)
+            except Exception:
+                src_ip = "?"
+
+            try:
+                dst_ip = rds_inet_ntoa(conn.c_faddr)
+            except Exception:
+                dst_ip = "?"
+
+            qp_num = "-"
+            qp_state_str = "N/A"
+
+            try:
+                qp_num = int(ib_conn.i_qp_num)
+                ibqp = ib_conn.i_cm_id.qp
+
+                if ibqp:
+                    mlx5_qp = container_of(ibqp, "struct mlx5_ib_qp", "ibqp")
+                    qp_state = int(mlx5_qp.state)
+                    qp_state_str = QP_STATES.get(qp_state, f"Unknown({qp_state})")
+                else:
+                    qp_state_str = "N/A"
+            except Exception:
+                continue
+
+            table.row(src_ip, dst_ip, qp_num, qp_state_str)
+
+    print("\nQP States Info:")
+    table.write()
 
 def rds_sock_info(
     prog: drgn.Program,
@@ -1532,6 +1594,7 @@ def report(prog: drgn.Program, outfile: Optional[str] = None) -> None:
     rds_sock_info(prog, outfile=outfile, report=True)
     rds_conn_info(prog, outfile=outfile, report=True)
     rds_info_verbose(prog, outfile=outfile, report=True)
+    rds_ib_qp_states(prog, outfile=outfile, report=True)
     rds_stats(prog, outfile=outfile, report=True)
     rds_print_msg_queue(prog, queue="All", outfile=outfile, report=True)
 
