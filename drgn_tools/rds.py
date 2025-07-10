@@ -21,6 +21,7 @@ from typing import Union
 import drgn
 from drgn import cast
 from drgn import container_of
+from drgn import FaultError
 from drgn import Object
 from drgn import PlatformFlags
 from drgn import Program
@@ -889,6 +890,7 @@ def rds_info_verbose(
             "Tos",
             "SL",
             "SrcQPNo",
+            "SrcQPState",
             "DstQPNo",
             "Cache_allocs",
             "Recv_alloc_ctr",
@@ -909,6 +911,7 @@ def rds_info_verbose(
             "RCV IRQN",
         ]
     ]
+    qp_state_type = prog.type("enum ib_qp_state")
     for rds_ib_dev in for_each_rds_ib_device(prog):
         dev_name = rds_ib_dev.dev.name.string_().decode("utf-8")
         debuginfo = ensure_mlx_core_ib_debuginfo(prog, dev_name)
@@ -924,6 +927,14 @@ def rds_info_verbose(
                 dstqpnum: Any = int(con.i_dst_qp_num)
             except AttributeError:
                 dstqpnum = "N/A"
+            try:
+                ibqp = con.i_cm_id.qp
+                mlx5_srcqp = container_of(ibqp, "struct mlx5_ib_qp", "ibqp")
+                srcqpstate = str(cast(qp_state_type, mlx5_srcqp.state)).split(
+                    "_"
+                )[-1]
+            except FaultError:
+                srcqpstate = "N/A"
             sl = int(con.i_sl)
             cache_allocs = int(con.i_cache_allocs.counter)
             recv_free_ctr = int(con.i_recv_ring.w_free_ctr.counter)
@@ -1041,6 +1052,7 @@ def rds_info_verbose(
                     conn_tos,
                     sl,
                     srcqpnum,
+                    srcqpstate,
                     dstqpnum,
                     cache_allocs,
                     recv_alloc_ctr,
@@ -1083,6 +1095,80 @@ def rds_info_verbose(
         return ics
     else:
         return None
+
+
+def rds_conn_cq_eq_info(
+    prog: drgn.Program,
+    outfile: Optional[str] = None,
+    report: bool = False,
+) -> None:
+    """
+    Display CQ and EQ info per RDS IB connection in a table format
+    """
+    msg = ensure_debuginfo(prog, ["rds", "mlx5_core", "mlx5_ib"])
+    if msg:
+        print(msg)
+        return
+
+    table = Table(
+        [
+            "LocalAddr",
+            "RemoteAddr",
+            "SCQNo",
+            "SCQ_ptr",
+            "RCQNo",
+            "RCQ_ptr",
+            "SCQ_EQNo",
+            "SCQ_EQ_ptr",
+            "RCQ_EQNo",
+            "RCQ_EQ_ptr",
+        ],
+        outfile=outfile,
+        report=report,
+    )
+
+    for dev in for_each_rds_ib_device(prog):
+        for ib_conn in list_for_each_entry(
+            "struct rds_ib_connection", dev.conn_list.address_of_(), "ib_node"
+        ):
+            conn = ib_conn.conn
+
+            try:
+                src_ip = rds_inet_ntoa(conn.c_laddr)
+                dst_ip = rds_inet_ntoa(conn.c_faddr)
+
+                scq = ib_conn.i_scq
+                rcq = ib_conn.i_rcq
+                scq_no = int(ib_conn.i_scq_vector)
+                rcq_no = int(ib_conn.i_rcq_vector)
+
+                scq_parent = container_of(scq, "struct mlx5_ib_cq", "ibcq")
+                rcq_parent = container_of(rcq, "struct mlx5_ib_cq", "ibcq")
+
+                scq_eq_no = int(scq_parent.eq.eqn)
+                rcq_eq_no = int(rcq_parent.eq.eqn)
+                scq_eq_ptr = hex(scq_parent.eq.value_())
+                rcq_eq_ptr = hex(rcq_parent.eq.value_())
+                scq_ptr = hex(scq.value_())
+                rcq_ptr = hex(rcq.value_())
+            except Exception:
+                continue
+
+            table.row(
+                src_ip,
+                dst_ip,
+                scq_no,
+                scq_ptr,
+                rcq_no,
+                rcq_ptr,
+                scq_eq_no,
+                scq_eq_ptr,
+                rcq_eq_no,
+                rcq_eq_ptr,
+            )
+
+    print("\nRDS conn CQ/EQ info:")
+    table.write()
 
 
 def rds_sock_info(
@@ -1578,6 +1664,7 @@ def report(prog: drgn.Program, outfile: Optional[str] = None) -> None:
     rds_sock_info(prog, outfile=outfile, report=True)
     rds_conn_info(prog, outfile=outfile, report=True)
     rds_info_verbose(prog, outfile=outfile, report=True)
+    rds_conn_cq_eq_info(prog, outfile, report=True)
     rds_stats(prog, outfile=outfile, report=True)
     rds_print_msg_queue(prog, queue="All", outfile=outfile, report=True)
 
