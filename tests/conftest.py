@@ -9,8 +9,11 @@ from typing import Optional
 
 import drgn
 import pytest
+from drgn import MainModule
+from drgn import ModuleFileStatus
 
 from drgn_tools.debuginfo import KernelVersion
+from drgn_tools.module import module_is_in_tree
 
 
 VMCORE: Optional[Path] = None
@@ -42,6 +45,11 @@ def prog() -> drgn.Program:
             # is loaded if we don't have a path).
             load_ctf(p, path=CTF_FILE)
             p.cache["using_ctf"] = True
+            # Mark in-tree modules as having debuginfo, so that the module API
+            # doesn't attempt to load debuginfo implicitly.
+            for module in p.modules():
+                if isinstance(module, MainModule) or module_is_in_tree(module):
+                    module.debug_file_status = ModuleFileStatus.DONT_NEED
         except ModuleNotFoundError:
             raise Exception("CTF is not supported, cannot run CTF test")
     elif DEBUGINFO:
