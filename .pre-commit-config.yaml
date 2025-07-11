@@ -42,5 +42,5 @@ repos:
     rev: 0.1.1
     hooks:
     -   id: copyright-notice
-        exclude: ((man|doc)/.*|.*requirements.*\.txt)
+        exclude: ((man|doc|testing/heavyvm/ks)/.*|.*requirements.*\.txt)
         args: [--notice=.header.txt]
