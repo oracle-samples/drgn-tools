@@ -843,7 +843,9 @@ def rds_info_verbose(
             "Tos",
             "SL",
             "SrcQPNo",
+            "SrcQPState",
             "DstQPNo",
+            "DstQPState",
             "Cache_allocs",
             "Recv_alloc_ctr",
             "Recv_free_ctr",
@@ -878,6 +880,28 @@ def rds_info_verbose(
                 dstqpnum: Any = int(con.i_dst_qp_num)
             except AttributeError:
                 dstqpnum = "N/A"
+            # Define QP_STATES
+            QP_STATES = {
+                0: "RESET", 1: "INIT", 2: "RTR", 3: "RTS",
+                4: "SQD", 5: "SQE", 6: "ERROR",
+            }
+            try:
+                ibqp = con.i_cm_id.qp
+                if ibqp:
+                    mlx5_srcqp = container_of(ibqp, "struct mlx5_ib_qp", "ibqp")
+                    srcqpstate = QP_STATES.get(int(mlx5_srcqp.state), "UNKNOWN")
+                else:
+                    srcqpstate = "N/A"
+            except:
+                srcqpstate = "N/A"
+            try:
+                if ibqp:
+                    mlx5_dstqp = container_of(ibqp, "struct mlx5_ib_qp", "ibqp")
+                    dstqpstate = QP_STATES.get(int(mlx5_dstqp.state), "UNKNOWN")
+                else:
+                    dstqpstate = "N/A"
+            except:
+                    dstqpstate = "N/A"
             sl = int(con.i_sl)
             cache_allocs = int(con.i_cache_allocs.counter)
             recv_free_ctr = int(con.i_recv_ring.w_free_ctr.counter)
@@ -995,7 +1019,9 @@ def rds_info_verbose(
                     conn_tos,
                     sl,
                     srcqpnum,
+                    srcqpstate,
                     dstqpnum,
+                    dstqpstate,
                     cache_allocs,
                     recv_alloc_ctr,
                     recv_free_ctr,
@@ -1038,67 +1064,57 @@ def rds_info_verbose(
     else:
         return None
 
-def rds_ib_qp_states(prog: drgn.Program, outfile: Optional[str] = None, report: bool = False) -> None:
+def rds_cq_eq_infos(
+    prog: drgn.Program,
+    laddr: Optional[str] = None,
+    faddr: Optional[str] = None,
+    outfile: Optional[str] = None,
+    report: bool = False,
+) -> None:
     """
-    Display the QP states of each rds_ib_connection
+    Display CQ and EQ info per RDS IB connection in a table format
     """
-    msg = ensure_debuginfo(prog, ["rds", "mlx5_ib"])
+    msg = ensure_debuginfo(prog, ["rds", "mlx5_core", "mlx5_ib"])
     if msg:
         print(msg)
         return
 
-    QP_STATES = {
-        0: "RESET",
-        1: "INIT",
-        2: "RTR",
-        3: "RTS",
-        4: "SQD",
-        5: "SQE",
-        6: "ERROR",
-    }
-
     table = Table(
-        ["LocalAddr", "RemoteAddr", "SrcQP", "QP State"],
+        [
+            "LocalAddr", "RemoteAddr", "SCQNo", "SCQ_ptr", "RCQNo", "RCQ_ptr", "EQNo", "EQ_ptr"             
+        ],
         outfile=outfile,
         report=report,
     )
 
-    for rds_ib_dev in for_each_rds_ib_device(prog):
-        for ib_conn in list_for_each_entry("struct rds_ib_connection", rds_ib_dev.conn_list.address_of_(), "ib_node"):
+    for dev in for_each_rds_ib_device(prog):
+        for ib_conn in list_for_each_entry("struct rds_ib_connection", dev.conn_list.address_of_(), "ib_node"):
             conn = ib_conn.conn
-            if not conn:
-                continue
 
-            # Use base helper for better IP formatting
             try:
                 src_ip = rds_inet_ntoa(conn.c_laddr)
-            except Exception:
-                src_ip = "?"
-
-            try:
                 dst_ip = rds_inet_ntoa(conn.c_faddr)
+
+                scq = ib_conn.i_scq
+                rcq = ib_conn.i_rcq
+                scq_no = int(ib_conn.i_scq_vector)
+                rcq_no = int(ib_conn.i_rcq_vector)
+
+                scq_parent = container_of(scq, "struct mlx5_ib_cq", "ibcq")
+                rcq_parent = container_of(rcq, "struct mlx5_ib_cq", "ibcq")
+
+                eq_no = int(scq_parent.eq.eqn)
+                eq_ptr = hex(scq_parent.eq.value_())
+                scq_ptr = hex(scq.value_())
+                rcq_ptr = hex(rcq.value_())
             except Exception:
-                dst_ip = "?"
+                continue  
 
-            qp_num = "-"
-            qp_state_str = "N/A"
+            table.row(
+                src_ip, dst_ip, scq_no, scq_ptr, rcq_no, rcq_ptr, eq_no, eq_ptr
+            )
 
-            try:
-                qp_num = int(ib_conn.i_qp_num)
-                ibqp = ib_conn.i_cm_id.qp
-
-                if ibqp:
-                    mlx5_qp = container_of(ibqp, "struct mlx5_ib_qp", "ibqp")
-                    qp_state = int(mlx5_qp.state)
-                    qp_state_str = QP_STATES.get(qp_state, f"Unknown({qp_state})")
-                else:
-                    qp_state_str = "N/A"
-            except Exception:
-                continue
-
-            table.row(src_ip, dst_ip, qp_num, qp_state_str)
-
-    print("\nQP States Info:")
+    print("\nRDS conn CQ/EQ info:")
     table.write()
 
 def rds_sock_info(
@@ -1594,7 +1610,7 @@ def report(prog: drgn.Program, outfile: Optional[str] = None) -> None:
     rds_sock_info(prog, outfile=outfile, report=True)
     rds_conn_info(prog, outfile=outfile, report=True)
     rds_info_verbose(prog, outfile=outfile, report=True)
-    rds_ib_qp_states(prog, outfile=outfile, report=True)
+    rds_cq_eq_infos(prog, outfile, report=True)
     rds_stats(prog, outfile=outfile, report=True)
     rds_print_msg_queue(prog, queue="All", outfile=outfile, report=True)
 
