@@ -18,6 +18,7 @@ from drgn import Object
 from drgn import Program
 from drgn.helpers.common.format import decode_flags
 from drgn.helpers.common.format import escape_ascii_string
+from drgn.helpers.linux import d_path
 from drgn.helpers.linux.fs import for_each_file
 from drgn.helpers.linux.list import hlist_for_each_entry
 from drgn.helpers.linux.list import list_count_nodes
@@ -29,7 +30,6 @@ from drgn.helpers.linux.wait import waitqueue_for_each_entry
 
 from drgn_tools.bt import bt
 from drgn_tools.corelens import CorelensModule
-from drgn_tools.dentry import dentry_path_any_mount
 from drgn_tools.dentry import sb_first_mount_point
 from drgn_tools.task import is_group_leader
 from drgn_tools.task import task_lastrun2now
@@ -199,18 +199,18 @@ def fsnotify_summarize_object(kind: str, obj: Object) -> str:
             "struct dentry", obj.i_dentry.address_of_(), field
         )
         if dentry:
-            return escape_ascii_string(dentry_path_any_mount(dentry))
+            return escape_ascii_string(d_path(dentry))
         else:
             return "(ANON INODE)"
     elif kind == "vfsmount":
         fstype = obj.mnt.mnt_sb.s_type.name.string_().decode()
-        path = escape_ascii_string(dentry_path_any_mount(obj.mnt_mountpoint))
+        path = escape_ascii_string(d_path(obj.mnt_mountpoint))
         return f"FS:{fstype} MOUNT:{path}"
         pass
     elif kind == "sb":
         fstype = obj.s_type.name.string_().decode()
         first = sb_first_mount_point(obj)
-        path = escape_ascii_string(dentry_path_any_mount(first))
+        path = escape_ascii_string(d_path(first))
         return f"SUPER:{fstype} ({path})"
     else:
         return "(not implemented)"

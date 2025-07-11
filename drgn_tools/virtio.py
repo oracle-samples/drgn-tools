@@ -16,8 +16,6 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.device import bus_to_subsys
 from drgn_tools.logging import get_logger
-from drgn_tools.module import address_to_module
-from drgn_tools.module import KernelModule
 from drgn_tools.util import has_member
 
 try:
@@ -131,36 +129,18 @@ def load_virtio_mods(prog: Program) -> t.List[str]:
     :raises Exception: if the debuginfo isn't already loaded and we couldn't
       find the file for it
     """
-    mods = KernelModule.all(prog)
-    debuginfo_files = []
-    module_names = []
-    for mod in mods:
-        if mod.name not in virtio_mod_drv:
+    to_load = []
+    mods = []
+    for modname in virtio_mod_drv.keys():
+        try:
+            mod = prog.module(modname)
+        except LookupError:
             continue
-        if not mod.have_debuginfo():
-            log.debug("Kernel has module %s loaded, needs debuginfo", mod.name)
-            maybe_dinfo = mod.find_debuginfo()
-            if not maybe_dinfo:
-                if mod.name in ("virtio", "virtio_ring"):
-                    raise Exception(f"Debuginfo for {mod.name} is required")
-                log.warn(
-                    "Kernel has module %s loaded but can't find "
-                    "debuginfo, continuing without it. Results will "
-                    "be missing information about virtio driver.",
-                    mod.name,
-                )
-                continue
-            log.debug("=> Found debuginfo file: %s", str(maybe_dinfo))
-            debuginfo_files.append(maybe_dinfo)
-        else:
-            log.debug(
-                "Kernel has module %s loaded, debuginfo already present",
-                mod.name,
-            )
-        module_names.append(mod.name)
-    if debuginfo_files:
-        prog.load_debug_info(debuginfo_files)
-    return module_names
+        mods.append(mod.name)
+        if mod.wants_debug_file():
+            to_load.append(mod)
+    prog.load_module_debug_info(*to_load)
+    return mods
 
 
 def get_virtio_devices(virtio_drv: Object) -> t.List[Object]:
@@ -375,10 +355,10 @@ def get_module_name(dev_obj: Object) -> t.Optional[str]:
     :param dev_obj: Object of type ``struct device *``
     :returns: module name, or None
     """
-    mod = address_to_module(dev_obj.prog_, dev_obj.driver)
-    if mod:
-        return KernelModule(mod).name
-    return None
+    try:
+        return dev_obj.prog_.module(dev_obj.driver).name
+    except LookupError:
+        return None
 
 
 def dev_to_virtio(dev_obj: Object) -> Object:

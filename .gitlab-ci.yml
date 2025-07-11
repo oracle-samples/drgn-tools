@@ -8,7 +8,14 @@ vmtest:
     - venv/bin/pip install -r testing/requirements-heavyvm.txt
     - git archive HEAD -o archive.tar.gz
     - mkdir -p tmp/overlays tmp/info
-    - venv/bin/python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz
+    # Whenever changes to the VM images are made, the "generation number" should
+    # be incremented. We keep around the current and the prior generation, so
+    # that older branches will continue to test against the older generation of
+    # VMs, rather than failing. Note that even the stable branch should update
+    # to the latest generation of VMs promptly, and developers should rebase
+    # their branches as soon as possible. This system just allows for a little
+    # bit of slack in the process.
+    - venv/bin/python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images-gen01 --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz
   artifacts:
     when: always
     paths:

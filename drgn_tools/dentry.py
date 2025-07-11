@@ -12,6 +12,7 @@ from typing import Optional
 import drgn
 from drgn import Object
 from drgn import Program
+from drgn.helpers.linux import d_path
 from drgn.helpers.linux.fs import path_lookup
 from drgn.helpers.linux.list import hlist_for_each_entry
 from drgn.helpers.linux.list import list_for_each_entry
@@ -71,40 +72,6 @@ def sb_first_mount_point(sb: Object) -> Optional[Object]:
             return None
         return mount.mnt_mountpoint.read_()
     return None
-
-
-def dentry_path_any_mount(dentry: Object) -> bytes:
-    """
-    Like dentry_path(), but don't require a path/mount. Just pick one
-    arbitrarily
-
-    :param dentry: ``struct dentry *``
-    """
-    # TODO: drgn 0.0.29: this can be replaced with d_path()
-    # See osandov/drgn#426.
-    dentry = dentry.read_()
-    d_op = dentry.d_op.read_()
-    if d_op and d_op.d_dname:
-        return b"[" + dentry.d_inode.i_sb.s_type.name.string_() + b"]"
-
-    components = []
-    while True:
-        # reading dentry_val allows us to get all the fields of dentry at once
-        dentry_val = dentry[0].read_()
-        if dentry_val.d_parent == dentry:
-            dentry = sb_first_mount_point(dentry_val.d_sb)
-            if not dentry:
-                break
-            else:
-                continue
-        d_parent = dentry_val.d_parent
-        components.append(dentry_val.d_name.name.string_())
-        components.append(b"/")
-        dentry = d_parent
-    if components:
-        return b"".join(reversed(components))
-    else:
-        return b"/"
 
 
 def for_each_dentry_in_hashtable(prog: Program) -> Iterator[Object]:
@@ -272,7 +239,7 @@ def print_dentry_table(
                 d.d_inode.value_(),
                 int(d_count(d)),
                 file_type,
-                dentry_path_any_mount(d).decode(),
+                d_path(d).decode(),
             )
         else:
             table.row(
@@ -280,7 +247,7 @@ def print_dentry_table(
                 d.d_sb.value_(),
                 d.d_inode.value_(),
                 file_type,
-                dentry_path_any_mount(d).decode(),
+                d_path(d).decode(),
             )
 
 
@@ -507,5 +474,5 @@ class DentryCache(CorelensModule):
         else:
             # Emulate oled dentrycache
             for i, dentry in enumerate(dentries):
-                path = dentry_path_any_mount(dentry).decode()
+                path = d_path(dentry).decode()
                 print(f"{i:05d} {path}")

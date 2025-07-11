@@ -1,5 +1,6 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import logging
 import re
 import sys
 import time
@@ -271,7 +272,7 @@ class SimpleProgress:
         self.notty_update_every = notty_update_every
         self.start_time = time.time()
         self.next_report = self.start_time
-        self.isatty = sys.stdout.isatty()
+        self.isatty = sys.stderr.isatty()
 
     def __enter__(self):
         self.start_time = time.time()
@@ -303,16 +304,21 @@ class SimpleProgress:
                 f"\033[1k\r{self.desc}: {pct}% @ {rstr} ({cbstr} / {tbstr})",
                 end="",
                 flush=True,
+                file=sys.stderr,
             )
             self.next_report = current_time + self.update_every
         else:
-            print(f"{self.desc}: {pct}% @ {rstr} ({cbstr} / {tbstr})")
+            print(
+                f"{self.desc}: {pct}% @ {rstr} ({cbstr} / {tbstr})",
+                file=sys.stderr,
+            )
             self.next_report = current_time + self.notty_update_every
 
     def complete(self):
-        self.print_report()
-        if self.isatty and not self.quiet:
-            print()
+        if not self.quiet:
+            self.print_report()
+            if self.isatty:
+                print()
 
 
 def head_file(url: str) -> bool:
@@ -329,11 +335,16 @@ def download_file(
     f: t.BinaryIO,
     quiet: bool = True,
     desc: str = "Downloading",
+    logger: t.Optional[logging.Logger] = None,
+    caller: t.Optional[str] = None,
 ) -> None:
     response = urlopen(url)
 
     if response.status >= 400:
         raise Exception(f"HTTP {response.status} while fetching {url}")
+
+    if logger:
+        logger.info("%sDownloading %s", caller, url)
 
     buf = bytearray(4096 * 4)
     total_bytes = int(response.headers.get("Content-Length", "0"))

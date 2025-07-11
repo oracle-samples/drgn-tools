@@ -4,11 +4,11 @@ from resource import getpagesize
 
 import drgn
 import pytest
+from drgn.helpers.linux import module_address_regions
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.mm import virt_to_page
 
 from drgn_tools import mm
-from drgn_tools.module import module_address_regions
 
 
 def test_totalram_pages(prog: drgn.Program) -> None:

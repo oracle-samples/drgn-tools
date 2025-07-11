@@ -14,6 +14,7 @@ from drgn import cast
 from drgn import container_of
 from drgn import Object
 from drgn import Program
+from drgn.helpers.linux import d_path
 from drgn.helpers.linux.list import hlist_empty
 from drgn.helpers.linux.list import hlist_for_each_entry
 from drgn.helpers.linux.list import list_for_each_entry
@@ -21,7 +22,6 @@ from drgn.helpers.linux.radixtree import radix_tree_for_each
 from drgn.helpers.linux.xarray import xa_for_each
 
 from drgn_tools.corelens import CorelensModule
-from drgn_tools.dentry import dentry_path_any_mount
 from drgn_tools.table import print_table
 from drgn_tools.util import human_bytes
 
@@ -243,7 +243,7 @@ def __path_by_inode(inode: Object) -> str:
     try:
         hlist_node = hlist_head.first
         dentry = container_of(hlist_node, "struct dentry", "d_u")
-        return dentry_path_any_mount(dentry).decode()
+        return d_path(dentry).decode()
     except drgn.FaultError:
         return "[ERROR]"
 

@@ -9,6 +9,7 @@ import collections
 import contextlib
 import importlib
 import inspect
+import logging
 import os
 import pkgutil
 import re
@@ -17,25 +18,27 @@ import sys
 import time
 import traceback
 from fnmatch import fnmatch
+from logging.handlers import MemoryHandler
 from pathlib import Path
 from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
-from typing import TextIO
 from typing import Tuple
 
+import drgn
 from drgn import Program
 from drgn import ProgramFlags
 from drgn.cli import version_header as drgn_version_header
 
-from drgn_tools.debuginfo import CtfCompatibility
-from drgn_tools.debuginfo import find_debuginfo
-from drgn_tools.debuginfo import KernelVersion
+from drgn_tools.debuginfo import drgn_prog_set as register_debug_info_finders
+from drgn_tools.debuginfo import get_debuginfo_config
+from drgn_tools.logging import FilterMissingDebugSymbolsMessages
 from drgn_tools.module import get_module_load_summary
-from drgn_tools.module import KernelModule
-from drgn_tools.module import load_module_debuginfo
 from drgn_tools.util import redirect_stdout
+
+
+log = logging.getLogger("corelens")
 
 
 class _CorelensArgparseEscapeException(Exception):
@@ -334,60 +337,29 @@ def _load_candidate_modules(
     return candidate_modules_to_run
 
 
-def _get_host_ol() -> Optional[int]:
-    path = "/etc/oracle-release"
-    if not os.path.exists(path):
-        return None
-    m = re.search(r"(\d+)\.\d+", open(path).read())
-    if m:
-        return int(m.group(1))
-    return None
+def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
+    if args.ctf and args.dwarf:
+        sys.exit("error: --dwarf and --ctf conflict")
 
+    # Corelens doesn't fully respect the configurations in drgn_tools.ini.
+    # Downloads are disabled, but extraction from a local vmlinux-repo is
+    # allowed. CTF is enabled by default.
+    # CLI flags allow using CTF only, DWARF only, as well as enabling downloads.
+    opts = get_debuginfo_config()
+    opts.enable_ctf = True
+    opts.disable_dwarf = False
 
-def _check_ctf_compat(release: str, vmcore: str) -> bool:
-    """
-    Return True if CTF is compatible with this kernel release
+    if args.ctf:
+        opts.disable_dwarf = True
+    elif args.dwarf:
+        opts.enable_ctf = False
+    opts.enable_extract = True
+    opts.enable_download = args.enable_download
+    opts.dwarf_dir = args.dwarf_dir
+    opts.ctf_file = args.ctf_file
 
-    If False, print a user-friendly diagnostic.
-    """
-    host_ol = _get_host_ol()
-    kver = KernelVersion.parse(release)
-    compat = CtfCompatibility.get(kver, host_ol)
-    if compat == CtfCompatibility.YES:
-        return True
-    elif compat == CtfCompatibility.LIMITED_PROC and vmcore == "/proc/kcore":
-        return True
-
-    print("error: CTF found, but incompatible with drgn-tools")
-    print(f"  uname = {release}")
-    print(f"  host_ol = {host_ol}")
-    print(f"  compat = {compat}")
-
-    # Some helpful extra info
-    if kver.uek_version and kver.uek_version < 4:
-        print("Kernels prior to UEK4 are completely unsupported.")
-        print("Please update.")
-    elif compat == CtfCompatibility.LIMITED_PROC and kver.uek_version == 4:
-        print("UEK 4 kernels can only be used with CTF in live mode")
-    elif compat == CtfCompatibility.LIMITED_PROC:
-        print("This UEK version only supports using CTF in live mode.")
-        print("More recent UEK releases support core dump debugging.")
-    elif (
-        compat == CtfCompatibility.NO and host_ol == 7 and kver.ol_version > 7
-    ):
-        print("Debugging OL8 and later vmcores on OL7 is not supported.")
-        print("Please debug on a more recent version of Oracle Linux.")
-    return False
-
-
-def _load_prog_and_debuginfo(args: argparse.Namespace) -> Tuple[Program, bool]:
-    """
-    Load up the program and debuginfo. Don't attempt extraction.
-
-    :returns: A 2-tuple. The first element is the loaded program, the second
-    element is true when CTF is in use.
-    """
     prog = Program()
+    prog.cache["drgn_tools.debuginfo.options"] = opts
     try:
         prog.set_core_dump(args.vmcore)
     except PermissionError:
@@ -398,64 +370,30 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Tuple[Program, bool]:
                 prog.set_core_dump(open_via_sudo(args.vmcore, os.O_RDONLY))
             except ImportError:
                 sys.exit("error: no permission to open vmcore")
-    if args.ctf and args.debuginfo:
-        sys.exit("error: --debuginfo and --ctf conflict")
 
-    # Search for DWARF debuginfo first, unless CTF is explicitly requested.
-    vmlinux = None
-    fmts_tried = []
-    if not args.ctf:
-        fmts_tried.append("DWARF")
-        vmlinux = find_debuginfo(prog, "vmlinux", dinfo_path=args.debuginfo)
-
-    if vmlinux:
-        # Found DWARF debuginfo, continue to use that.
-        prog.load_debug_info([vmlinux])
-        load_module_debuginfo(prog, extract=False, quiet=True)
-        return prog, False
-
-    # Try to use CTF debuginfo
+    if "drgn_tools.debuginfo" not in prog.cache:
+        register_debug_info_finders(prog)
     try:
-        from drgn.helpers.linux.ctf import load_ctf
+        prog.load_default_debug_info()
+    except drgn.MissingDebugInfoError:
+        if prog.main_module().wants_debug_file():
+            sys.exit("error: could not find vmlinux debuginfo")
+        # otherwise, let's see whether we have enough module debuginfo
 
-        fmts_tried.append("CTF")
-        release = prog["UTS_RELEASE"].string_().decode()
-        path = args.ctf or f"/lib/modules/{release}/kernel/vmlinux.ctfa"
-        if os.path.isfile(path) and _check_ctf_compat(release, args.vmcore):
-            load_ctf(prog, path)
-            prog.cache["using_ctf"] = True
-            return prog, True
-    except ModuleNotFoundError:
-        pass
-
-    # On failure, report what we tried so the user knows
-    tried = ", ".join(fmts_tried)
-    sys.exit(f"error: could not find debuginfo (tried {tried})")
+    return prog
 
 
 def _check_module_debuginfo(
     candidate_modules: List[Tuple[CorelensModule, argparse.Namespace]],
     prog: Program,
-    ctf: bool = False,
     warn_not_present: bool = True,
 ) -> Tuple[
     List[Tuple[CorelensModule, argparse.Namespace]], List[str], List[str]
 ]:
-    # When running with CTF debuginfo, there's no need to check which modules
-    # have debuginfo: CTF contains info for every module. Thus, skip the module
-    # load summary, which may not be cheap.
-    if not ctf:
-        summary = get_module_load_summary(prog)
-
-    # Now we check whether module requirements are satisfied. Some kmods may not
-    # be present in the kernel at all, whereas others are present, but with no
-    # debuginfo. If the required kmod is not present, then skip the module. If
-    # the kmod is present but with no debuginfo, log an error but continue to
-    # run the remainder.
-    all_kmod_names = set(km.name for km in KernelModule.all(prog))
-    if not ctf:
-        loaded_kmods = set(km.name for km in summary.loaded_mods)
-        missing_kmods = set(km.name for km in summary.missing_mods)
+    summary = get_module_load_summary(prog)
+    all_kmod_names = set(km.name for km in summary.all_mods())
+    loaded_kmods = set(km.name for km in summary.loaded_mods)
+    missing_kmods = set(km.name for km in summary.missing_mods)
 
     modules_to_run = []
     errors = []
@@ -483,20 +421,14 @@ def _check_module_debuginfo(
             continue
 
         # Corelens modules requiring DWARF can't be run when using CTF
-        if mod.need_dwarf and ctf:
+        if mod.need_dwarf and prog.cache.get("using_ctf"):
             warnings.append(
                 f"{mod.name} skipped because it requires DWARF debuginfo, but "
                 "CTF is loaded instead"
             )
             continue
 
-        # At this point, all that's remaining to do is check whether the
-        # necessary DWARF debuginfo files are loaded for this Corelens module.
-        # If we're using CTF, we can skip this and move on.
-        if ctf:
-            modules_to_run.append((mod, args))
-            continue
-
+        # All modules that require debuginfo should have it loaded
         if mod.skip_unless_have_kmods is not None and (
             not all(m in loaded_kmods for m in mod.skip_unless_have_kmods)
         ):
@@ -555,19 +487,11 @@ def _run_module(
     return time.time() - start_time
 
 
-def _report_errors(
-    errors: List[str],
-    warnings: List[str],
-    err_file: Optional[TextIO],
-) -> None:
+def _report_errors(errors: List[str], warnings: List[str]) -> None:
     for error in errors:
-        print("error: " + error, file=sys.stderr)
-        if err_file:
-            print("error: " + error, file=err_file)
+        log.error("error: " + error)
     for warning in warnings:
-        print("warning: " + warning, file=sys.stderr)
-        if err_file:
-            print("warning: " + warning, file=err_file)
+        log.warning("warning: " + warning)
 
 
 def _split_args(arg_list: List[str], delim: str = "-M") -> List[List[str]]:
@@ -654,14 +578,33 @@ def _do_main() -> None:
         help="print the version of corelens",
     )
     parser.add_argument(
-        "--debuginfo",
+        "--dwarf",
+        "-D",
+        action="store_true",
+        help="only use DWARF debuginfo (disable CTF)",
+    )
+    parser.add_argument(
+        "--dwarf-dir",
         "-d",
         help="directory to add to the debuginfo search path (should contain"
         " vmlinux and .ko.debug DWARF debuginfo files)",
     )
     parser.add_argument(
         "--ctf",
-        help="CTF archive to load (overrides debuginfo and module search)",
+        "-C",
+        action="store_true",
+        help="only use CTF debuginfo (disable DWARF)",
+    )
+    parser.add_argument(
+        "--ctf-file",
+        "-c",
+        help="specify a CTF file to use (implies --ctf)",
+    )
+    parser.add_argument(
+        "--enable-download",
+        "-g",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
     grp = parser.add_mutually_exclusive_group()
     grp.add_argument(
@@ -682,8 +625,23 @@ def _do_main() -> None:
         metavar="OUT",
         help="store output in a directory (each module has its own output file)",
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="output diagnostic information as debuginfo is loaded",
+    )
     split_args = _split_args(sys.argv[1:])
     args = parser.parse_args(split_args[0])
+
+    # Set the implied arguments
+    if args.ctf_file:
+        args.ctf = True
+    if args.dwarf_dir:
+        args.dwarf = True
+    if args.ctf and args.dwarf:
+        sys.exit("error: --dwarf and --ctf conflict, use only one")
+
     if args.list:
         _print_module_listing()
         sys.exit(0)
@@ -708,22 +666,6 @@ def _do_main() -> None:
         print("warning: Running corelens against a live system.")
         print("         Data may be inconsistent, or corelens may crash.")
 
-    start_time = time.time()
-    prog, ctf = _load_prog_and_debuginfo(args)
-    modules_to_run, errors, warnings = _check_module_debuginfo(
-        candidate_modules_to_run,
-        prog,
-        ctf=ctf,
-        # "warning: A skipped because A was not loaded in the kernel"
-        # messages are useful when the user explicitly requested module A to
-        # run, but it's not applicable. However, when we run the report mode (-a
-        # or -A), the user never requisted these specific modules: they just
-        # expect that relevant modules will run. Suppress the warning for those
-        # modes.
-        warn_not_present=not (args.run_all or args.run_all_verbose),
-    )
-    load_time = time.time() - start_time
-
     # We have a few kinds of CLI output:
     # - Information regarding corelens & runtime (debuginfo version, how long
     #   each module runs, etc).
@@ -745,52 +687,66 @@ def _do_main() -> None:
     #     - Corelens metadata & runtime info is suppressed
     #     - Corelens module output is printed to stdout
     out_dir: Optional[Path] = None
-    err_file: Optional[TextIO] = None
     print_header = False
-    deferred_output: List[str] = []
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG if args.verbose else logging.INFO)
+    drgnlog = logging.getLogger("drgn")
+    drgnlog.addFilter(FilterMissingDebugSymbolsMessages())
+    drgnlog.setLevel(logging.DEBUG if args.verbose else logging.WARNING)
     if args.output_directory:
         out_dir = Path(args.output_directory)
         try:
             out_dir.mkdir(exist_ok=True)
         except OSError as e:
             sys.exit(f"error creating output directory: {e}")
-        err_file = (out_dir / "corelens").open("w")
 
-        def info_msg(*args, **kwargs):
-            print(*args, **kwargs)
-            print(*args, **kwargs, file=err_file)
-
-    elif len(modules_to_run) > 1:
+        root_logger.addHandler(logging.StreamHandler())
+        root_logger.addHandler(
+            logging.FileHandler(out_dir / "corelens", mode="w")
+        )
+    elif len(candidate_modules_to_run) > 2:
         print_header = True
-        deferred_output.append("\n====== corelens ======\n")
+        root_logger.addHandler(
+            MemoryHandler(
+                capacity=float("inf"),  # type: ignore
+                target=logging.StreamHandler(),
+            )
+        )
+        log.info("%s", "\n====== corelens ======")
+    start_time = time.time()
+    prog = _load_prog_and_debuginfo(args)
+    modules_to_run, errors, warnings = _check_module_debuginfo(
+        candidate_modules_to_run,
+        prog,
+        # "warning: A skipped because A was not loaded in the kernel"
+        # messages are useful when the user explicitly requested module A to
+        # run, but it's not applicable. However, when we run the report mode (-a
+        # or -A), the user never requisted these specific modules: they just
+        # expect that relevant modules will run. Suppress the warning for those
+        # modes.
+        warn_not_present=not (args.run_all or args.run_all_verbose),
+    )
+    load_time = time.time() - start_time
 
-        def info_msg(*args, **kwargs):
-            end = kwargs.get("end", "\n")
-            deferred_output.append(" ".join(map(str, args)) + end)
-
-    else:
-
-        def info_msg(*args, **kwargs):
-            pass
-
-    info_msg(_version_string())
-    kind = "CTF" if ctf else "DWARF"
-    info_msg(f"Loaded {kind} debuginfo in in {load_time:.03f}s")
+    log.info("%s", _version_string())
+    kind = "CTF" if prog.cache.get("using_ctf") else "DWARF"
+    log.info("Loaded %s debuginfo in in %.03fs", kind, load_time)
+    log.debug(
+        "Enabled debuginfo finders: %r", prog.enabled_debug_info_finders()
+    )
 
     for mod, mod_args in modules_to_run:
-        info_msg(f"Running module {mod.name}... ", end="", flush=True)
+        log.info("Running module %s...", mod.name)
         with contextlib.ExitStack() as es:
             if out_dir:
                 out_file = out_dir / mod.name
                 es.enter_context(redirect_stdout(str(out_file), append=True))
             runtime = _run_module(mod, prog, mod_args, errors, print_header)
-        info_msg(f"completed in {runtime:.3f}s")
+        log.info("  completed in %.3fs", runtime)
 
     corelens_total_time = time.time() - corelens_begin_time
-    info_msg(f"corelens total runtime: {corelens_total_time:.3f}s")
-    if deferred_output:
-        print("".join(deferred_output))
-    _report_errors(errors, warnings, err_file)
+    log.info("corelens total runtime: %.3fs", corelens_total_time)
+    _report_errors(errors, warnings)
     if errors:
         sys.exit(1)
 
@@ -828,7 +784,7 @@ def run(prog: Program, cl_cmd: str) -> None:
     except _CorelensArgparseEscapeException:
         return
     to_run, errors, warnings = _check_module_debuginfo([(module, ns)], prog)
-    _report_errors(errors, warnings, None)
+    _report_errors(errors, warnings)
     if to_run:
         module.run(prog, ns)
 

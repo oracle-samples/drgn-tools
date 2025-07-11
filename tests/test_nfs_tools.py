@@ -3,12 +3,12 @@
 import pytest
 
 import drgn_tools.nfs_tools
-from drgn_tools.module import KernelModule
 
 
 def test_nfs(prog):
-    nfs = KernelModule.find(prog, "nfs")
-    if not nfs:
+    try:
+        prog.module("nfs")
+    except LookupError:
         pytest.skip("NFS module not loaded")
 
     # This is just a smoke test

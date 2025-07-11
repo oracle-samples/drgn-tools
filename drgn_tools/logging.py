@@ -37,3 +37,25 @@ class PrependedLoggerAdapter(logging.LoggerAdapter):
 
 def get_logger(name: str) -> PrependedLoggerAdapter:
     return PrependedLoggerAdapter(logging.getLogger(name), {})
+
+
+class FilterMissingDebugSymbolsMessages(logging.Filter):
+    def filter(self, rec: logging.LogRecord):
+        # Drgn C log messages are logged with "%s" and the entirety of the
+        # message as a C string by C code. We'd like to check the contents of
+        # the message string, but we don't want to cause _every_ log message to
+        # get formatted, even if we aren't enabled for them. Use short-circuit
+        # evaluation to ensure that the log message looks like a drgn C log
+        # message prior to calling getMessage(), which should then be quite
+        # cheap.
+        #
+        # Return True if the message is to be emitted. Thus, return False when
+        # we want to filter the message, i.e. if the message matches the
+        # "missing debugging symbols for" text.
+        if rec.msg != "%s":
+            return True
+        msg = rec.getMessage()
+        return not (
+            msg.startswith("missing debugging symbols for")
+            or msg.startswith("... missing ")
+        )
