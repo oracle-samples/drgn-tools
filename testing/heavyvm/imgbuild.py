@@ -261,6 +261,7 @@ def run_post_install(ctx: Context) -> None:
     ser.prompt = ser.ROOT_PROMPT
     ser.cmd(b"password")
     ctx.log.info("Logged in as root, installing drgn")
+    dnf = b"dnf" if ctx.image_info.ol > 7 else b"yum"
     # install dependent packages
     if ctx.image_info.ol > 7:
         ser.cmd(
@@ -283,7 +284,7 @@ def run_post_install(ctx: Context) -> None:
         install_packages.append(ctx.ks_srv.url_for(Path(filename).absolute()))
 
     ser.cmd(
-        b"yum install -y " + b" ".join(s.encode() for s in install_packages)
+        dnf + b" install -y " + b" ".join(s.encode() for s in install_packages)
     )
 
     # Install the pytest dependency
@@ -307,7 +308,8 @@ def run_post_install(ctx: Context) -> None:
         % (ctx.image_info.ol)
     )
     ser.cmd(
-        b"yum install -y %s-%s.rpm %s-common-%s.rpm"
+        dnf
+        + b" install -y %s-%s.rpm %s-common-%s.rpm"
         % (url_base, uname, url_base, uname)
     )
     ctx.log.info("Completed debuginfo installation, now shutting down")
