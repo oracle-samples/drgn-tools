@@ -1081,7 +1081,7 @@ def rds_cq_eq_infos(
 
     table = Table(
         [
-            "LocalAddr", "RemoteAddr", "SCQNo", "SCQ_ptr", "RCQNo", "RCQ_ptr", "EQNo", "EQ_ptr"             
+            "LocalAddr", "RemoteAddr", "SCQNo", "SCQ_ptr", "RCQNo", "RCQ_ptr", "SCQ_EQNo", "SCQ_EQ_ptr", "RCQ_EQNo", "RCQ_EQ_ptr"             
         ],
         outfile=outfile,
         report=report,
@@ -1103,15 +1103,17 @@ def rds_cq_eq_infos(
                 scq_parent = container_of(scq, "struct mlx5_ib_cq", "ibcq")
                 rcq_parent = container_of(rcq, "struct mlx5_ib_cq", "ibcq")
 
-                eq_no = int(scq_parent.eq.eqn)
-                eq_ptr = hex(scq_parent.eq.value_())
+                scq_eq_no = int(scq_parent.eq.eqn)
+                rcq_eq_no = int(rcq_parent.eq.eqn)
+                scq_eq_ptr = hex(scq_parent.eq.value_())
+                rcq_eq_ptr = hex(rcq_parent.eq.value_())
                 scq_ptr = hex(scq.value_())
                 rcq_ptr = hex(rcq.value_())
             except Exception:
                 continue  
 
             table.row(
-                src_ip, dst_ip, scq_no, scq_ptr, rcq_no, rcq_ptr, eq_no, eq_ptr
+                src_ip, dst_ip, scq_no, scq_ptr, rcq_no, rcq_ptr, scq_eq_no, scq_eq_ptr, rcq_eq_no, rcq_eq_ptr 
             )
 
     print("\nRDS conn CQ/EQ info:")
