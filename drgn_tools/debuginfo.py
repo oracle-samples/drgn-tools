@@ -218,6 +218,45 @@ class KernelVersion(NamedTuple):
         }
 
 
+def has_vmlinux_build_id_mismatch(ver: KernelVersion) -> bool:
+    """
+    Return true if the build ID embedded in the kernel image differs from the
+    one in the vmlinux ELF debuginfo file for the given UEK version.
+
+    Since drgn 0.0.31, drgn refuses to load a vmlinux file whose build ID is
+    mismatched from the one it finds in the Program itself. Some UEK versions
+    have exhibited this issue. While the issue is since resolved, already
+    released kernels cannot be fixed. We can use the fixed version to determine
+    whether a given kernel version has the issue, and then disable drgn's build
+    ID verification only in those cases.
+
+    A few additional things to be aware of here:
+
+    - Build ID verification can only be done if drgn can *get* the build ID.
+      If drgn cannot access the build ID for some reason, then it has to fall
+      back to comparing the Linux version. This is almost always good enough in
+      Oracle Linux.
+    - Drgn can access build IDs for live kernels via /sys/kernel/notes. For
+      core dumps, it must read it from the VMCOREINFO. Build IDs were only
+      included in VMCOREINFO in v5.9, 0935288c6e008 ("kdump: append kernel
+      build-id string to VMCOREINFO").
+    - This leads to the interesting situation for these older kernels where
+      drgn is perfectly capable of opening vmcores, yet it fails for the live
+      kernel due to the mismatched build ID.
+    - All of this information is entirely related to vmlinux build IDs. At least
+      in Oracle Linux, module build IDs have always been reliable. The vmlinux
+      build IDs have had issues due to packaging implementation details.
+    """
+    if ver.uek_version == 4:
+        return True
+    elif ver.uek_version == 5:
+        return ver.release_tuple < (2047, 537, 3)
+    elif ver.uek_version == 6:
+        return ver.release_tuple < (2136, 332, 2)
+    else:
+        return False
+
+
 def is_vmlinux(module: Module) -> bool:
     return module.prog.flags & ProgramFlags.IS_LINUX_KERNEL and isinstance(
         module, MainModule
@@ -355,6 +394,23 @@ class OracleDebuginfo:
         self.cached_rpm = None
 
     def ol_vmlinux_repo_finder(self, modules: List[Module]) -> None:
+        # We would like to run this unconditionally regardless of whether any of
+        # our finders are enabled. However, in practice, we cannot do that. When
+        # the program is initialized, no modules are yet created. So, put this
+        # logic into the "ol-vmlinux-repo" finder which tends to run before
+        # everything else.
+        if (
+            modules
+            and modules[0].name == "kernel"
+            and has_vmlinux_build_id_mismatch(self.version)
+        ):
+            log.debug(
+                "Kernel version %s has a known vmlinux build ID mismatch bug, "
+                "working around it",
+                self.version.original,
+            )
+            modules[0].build_id = None
+
         fmtparams = self.version.format_params()
         for repo_format in self.opts.repo_paths:
             repo_dir = Path(repo_format.format(**fmtparams))
@@ -623,7 +679,7 @@ def drgn_prog_set(prog: Program) -> None:
     try:
         dbinfo = OracleDebuginfo(opts, prog)
     except Exception as e:
-        log.error("error setting up Oracle debuginfo finder: %s", str(e))
+        log.error("error setting up Oracle debuginfo finder: %s", repr(e))
         return
 
     # The end result here is that, when registered, the fetchers should be
