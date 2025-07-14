@@ -1064,7 +1064,7 @@ def rds_info_verbose(
     else:
         return None
 
-def rds_cq_eq_infos(
+def rds_conn_cq_eq_info(
     prog: drgn.Program,
     laddr: Optional[str] = None,
     faddr: Optional[str] = None,
@@ -1612,7 +1612,7 @@ def report(prog: drgn.Program, outfile: Optional[str] = None) -> None:
     rds_sock_info(prog, outfile=outfile, report=True)
     rds_conn_info(prog, outfile=outfile, report=True)
     rds_info_verbose(prog, outfile=outfile, report=True)
-    rds_cq_eq_infos(prog, outfile, report=True)
+    rds_conn_cq_eq_info(prog, outfile, report=True)
     rds_stats(prog, outfile=outfile, report=True)
     rds_print_msg_queue(prog, queue="All", outfile=outfile, report=True)
 
