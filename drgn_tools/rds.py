@@ -596,15 +596,10 @@ def rdma_resource_usage(prog: Program, outfile: Optional[str] = None, report: bo
     for dev in list_for_each_entry("struct device", dev_kset.list.address_of_(), "kobj.entry"):
         try:
             name = dev.kobj.name.string_().decode()
-            if "mlx" not in name:
-                continue
-
             ib_dev = container_of(dev, "struct ib_device", "dev")
             dev_name = ib_dev.name.string_().decode()
-
-            if not dev_name.startswith("mlx5_"):
+            if not dev_name.startswith("mlx"):
                 continue
-
             counts = {}
             for i, res_name in RDMA_RES_TYPES.items():
                 try:
