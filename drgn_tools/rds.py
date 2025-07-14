@@ -83,7 +83,7 @@ RDMA_CM_STATES = {
     10: "RDMA_CM_DESTROYING",
 }
 
-RDMA_RESTRACK_TYPES = {
+RDMA_RES_TYPES = {
     0: "pd",
     1: "cq",
     2: "qp",
@@ -93,17 +93,6 @@ RDMA_RESTRACK_TYPES = {
     7: "srq",
 }
 # Helpers #
-
-def get_rdma_resource_counts(ib_dev) -> dict:
-    counts = {name: 0 for name in RDMA_RESTRACK_TYPES.values()}
-    for i in RDMA_RESTRACK_TYPES:
-        try:
-            xa = ib_dev.res[i].xa
-            count = sum(1 for _ in xa_for_each(xa.address_of_()))
-            counts[RDMA_RESTRACK_TYPES[i]] = count
-        except Exception:
-            counts[RDMA_RESTRACK_TYPES[i]] = -1
-    return counts
 
 def be64_to_host(prog: drgn.Program, value: int) -> int:
     """
@@ -557,13 +546,6 @@ def rds_dev_info(
             "dev_name",
             "node_name",
             "IP (state)",
-            "PD",
-            "CQ",
-            "QP",
-            "CM_ID",
-            "MR",
-            "CTX",
-            "SRQ",
         ]
     ]
     for rds_ib_dev in for_each_rds_ib_device(prog):
@@ -585,10 +567,8 @@ def rds_dev_info(
 
         index += 1
         rds_ib_dev_list.append(rds_ib_dev)
-        rdma_counts = get_rdma_resource_counts(rds_ib_dev.dev)
         info.append(
-            [index, rds_ib_device, ib_device, dev_name, node_name, ip_str, rdma_counts["pd"], rdma_counts["cq"], rdma_counts["qp"],
-            rdma_counts["cm_id"], rdma_counts["mr"], rdma_counts["ctx"], rdma_counts["srq"]]
+            [index, rds_ib_device, ib_device, dev_name, node_name, ip_str]
         )
 
     print_table(info, outfile, report)
@@ -598,6 +578,60 @@ def rds_dev_info(
     else:
         return None
 
+def rdma_resource_usage(prog: Program, outfile: Optional[str] = None, report: bool = False) -> None:
+    """
+    Print RDMA restrack resource usage counts for ALL mlx5_* devices, similar to 'rdma res show'
+
+    :param prog: drgn.Program
+    :param outfile: A file to write the output to.
+    :param report: Whether to open file in append mode for report.
+    """
+    from drgn.helpers.linux import xa_for_each, list_for_each_entry
+    from drgn import container_of
+
+    dev_kset = prog["devices_kset"]
+    data = [["Index", "Device", "PD", "CQ", "QP", "CM_ID", "MR", "CTX", "SRQ"]]
+    index = 0
+
+    for dev in list_for_each_entry("struct device", dev_kset.list.address_of_(), "kobj.entry"):
+        try:
+            name = dev.kobj.name.string_().decode()
+            if "mlx" not in name:
+                continue
+
+            ib_dev = container_of(dev, "struct ib_device", "dev")
+            dev_name = ib_dev.name.string_().decode()
+
+            if not dev_name.startswith("mlx5_"):
+                continue
+
+            counts = {}
+            for i, res_name in RDMA_RES_TYPES.items():
+                try:
+                    xa = ib_dev.res[i].xa
+                    counts[res_name] = sum(1 for _ in xa_for_each(xa.address_of_()))
+                except Exception:
+                    counts[res_name] = -1
+
+            def fmt(val):
+                return "NA" if val == -1 else str(val)
+
+            data.append([
+                index,
+                dev_name,
+                fmt(counts["pd"]),
+                fmt(counts["cq"]),
+                fmt(counts["qp"]),
+                fmt(counts["cm_id"]),
+                fmt(counts["mr"]),
+                fmt(counts["ctx"]),
+                fmt(counts["srq"]),
+            ])
+            index += 1
+        except Exception:
+            continue
+
+    print_table(data, outfile, report)
 
 def rds_stats(
     prog: drgn.Program,
@@ -1430,68 +1464,6 @@ def rds_print_msg_queue(
             prog, laddr, raddr, tos, lport, rport, ret, outfile, report
         )
 
-
-def rds_rdma_resource_usage(prog: Program, outfile: Optional[str] = None, report: bool = False) -> None:
-    """
-    Print RDMA restrack resource usage counts per device based on rds_ib_devices
-
-    :param prog: drgn.Program
-    :param outfile: A file to write the output to.
-    :param report: Whether to open file in append mode for report.
-    """
-    from drgn.helpers.linux import xa_for_each, list_for_each_entry
-
-    rds_ib_devices = prog["rds_ib_devices"].address_of_()
-
-    RDMA_TYPES = {
-        0: "pd",
-        2: "qp",
-        1: "cq",
-        3: "cm_id",
-        4: "mr",
-        5: "ctx",
-        7: "srq",
-    }
-
-    index = 0
-    data = [["Index", "Device", "PD", "CQ", "QP", "CM_ID", "MR", "CTX", "SRQ"]]
-
-    for rds_dev in list_for_each_entry("struct rds_ib_device", rds_ib_devices, "list"):
-        ib_dev = rds_dev.dev
-        try:
-            dev_name = ib_dev.name.string_().decode()
-        except Exception:
-            dev_name = "<unknown>"
-
-        counts = {name: 0 for name in RDMA_TYPES.values()}
-
-        for i in RDMA_TYPES:
-            try:
-                xa = ib_dev.res[i].xa
-                count = sum(1 for _ in xa_for_each(xa.address_of_()))
-                counts[RDMA_TYPES[i]] = count
-            except Exception:
-                counts[RDMA_TYPES[i]] = -1
-
-        def fmt(val):
-            return "NA" if val == -1 else str(val)
-
-        data.append([
-            index,
-            dev_name,
-            fmt(counts["pd"]),
-            fmt(counts["cq"]),
-            fmt(counts["qp"]),
-            fmt(counts["cm_id"]),
-            fmt(counts["mr"]),
-            fmt(counts["ctx"]),
-            fmt(counts["srq"]),
-        ])
-        index += 1
-
-    print_table(data, outfile, report)
-
-
 def print_mr_list_head_info(
     prog: drgn.Program, list_head: Object, pool_name: str, list_name: str
 ) -> None:
@@ -1616,8 +1588,9 @@ def report(prog: drgn.Program, outfile: Optional[str] = None) -> None:
     if msg:
         print(msg)
         return None
-    rds_rdma_resource_usage(prog, outfile=outfile, report=False)  # NEW
+        
     rds_dev_info(prog, outfile=outfile, report=False)
+    rdma_resource_usage(prog, outfile=outfile, report=False)
     rds_sock_info(prog, outfile=outfile, report=True)
     rds_conn_info(prog, outfile=outfile, report=True)
     rds_info_verbose(prog, outfile=outfile, report=True)
