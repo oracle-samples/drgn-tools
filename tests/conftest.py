@@ -12,6 +12,7 @@ import pytest
 from drgn import MainModule
 from drgn import ModuleFileStatus
 
+from drgn_tools.debuginfo import has_vmlinux_build_id_mismatch
 from drgn_tools.debuginfo import KernelVersion
 from drgn_tools.module import module_is_in_tree
 
@@ -55,6 +56,14 @@ def prog() -> drgn.Program:
     elif DEBUGINFO:
         p.load_debug_info(DEBUGINFO)
     else:
+        # Some UEK versions had mismatched vmlinux build IDs due to packaging
+        # issues. Most have been fixed, but for the remainder, set the main
+        # module's build ID to None manually, forcing drgn to skip verifying
+        # build IDs as it finds debuginfo.
+        ver = KernelVersion.parse(p["UTS_RELEASE"].string_().decode())
+        if has_vmlinux_build_id_mismatch(ver):
+            p.create_loaded_modules()
+            p.main_module().build_id = None
         p.load_default_debug_info()
     return p
 
