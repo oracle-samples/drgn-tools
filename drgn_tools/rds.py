@@ -845,7 +845,6 @@ def rds_info_verbose(
             "SrcQPNo",
             "SrcQPState",
             "DstQPNo",
-            "DstQPState",
             "Cache_allocs",
             "Recv_alloc_ctr",
             "Recv_free_ctr",
@@ -894,14 +893,6 @@ def rds_info_verbose(
                     srcqpstate = "N/A"
             except:
                 srcqpstate = "N/A"
-            try:
-                if ibqp:
-                    mlx5_dstqp = container_of(ibqp, "struct mlx5_ib_qp", "ibqp")
-                    dstqpstate = QP_STATES.get(int(mlx5_dstqp.state), "UNKNOWN")
-                else:
-                    dstqpstate = "N/A"
-            except:
-                    dstqpstate = "N/A"
             sl = int(con.i_sl)
             cache_allocs = int(con.i_cache_allocs.counter)
             recv_free_ctr = int(con.i_recv_ring.w_free_ctr.counter)
@@ -1021,7 +1012,6 @@ def rds_info_verbose(
                     srcqpnum,
                     srcqpstate,
                     dstqpnum,
-                    dstqpstate,
                     cache_allocs,
                     recv_alloc_ctr,
                     recv_free_ctr,
