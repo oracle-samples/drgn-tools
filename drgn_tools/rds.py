@@ -83,15 +83,6 @@ RDMA_CM_STATES = {
     10: "RDMA_CM_DESTROYING",
 }
 
-RDMA_RES_TYPES = {
-    0: "pd",
-    1: "cq",
-    2: "qp",
-    3: "cm_id",
-    4: "mr",
-    5: "ctx",
-    7: "srq",
-}
 # Helpers #
 
 def be64_to_host(prog: drgn.Program, value: int) -> int:
@@ -586,13 +577,10 @@ def rdma_resource_usage(prog: Program, outfile: Optional[str] = None, report: bo
     :param outfile: A file to write the output to.
     :param report: Whether to open file in append mode for report.
     """
-    from drgn.helpers.linux import xa_for_each, list_for_each_entry
-    from drgn import container_of
-
     dev_kset = prog["devices_kset"]
     data = [["Index", "Device", "PD", "CQ", "QP", "CM_ID", "MR", "CTX", "SRQ"]]
     index = 0
-
+    res_types_enum = prog.type("enum rdma_restrack_type")
     for dev in list_for_each_entry("struct device", dev_kset.list.address_of_(), "kobj.entry"):
         try:
             name = dev.kobj.name.string_().decode()
@@ -601,7 +589,8 @@ def rdma_resource_usage(prog: Program, outfile: Optional[str] = None, report: bo
             if not dev_name.startswith("mlx"):
                 continue
             counts = {}
-            for i, res_name in RDMA_RES_TYPES.items():
+            for name, i in res_types_enum.enumerators:
+                res_name = name[len("RDMA_RESTRACK_"):].lower()
                 try:
                     xa = ib_dev.res[i].xa
                     counts[res_name] = sum(1 for _ in xa_for_each(xa.address_of_()))
@@ -1583,7 +1572,7 @@ def report(prog: drgn.Program, outfile: Optional[str] = None) -> None:
     if msg:
         print(msg)
         return None
-        
+
     rds_dev_info(prog, outfile=outfile, report=False)
     rdma_resource_usage(prog, outfile=outfile, report=False)
     rds_sock_info(prog, outfile=outfile, report=True)
