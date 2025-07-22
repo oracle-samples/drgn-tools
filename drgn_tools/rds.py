@@ -1234,12 +1234,12 @@ def rds_sock_info(
             pid: Any = int(sock.rs_pid.value_())
             task = find_task(prog, pid)
             comm: Any = "".join(re.findall('"([^"]*)"', str(task.comm)))
-        except AttributeError:
+        except (AttributeError, FaultError):
             pid = "N/A"
             comm = "N/A"
         try:
             cong: Any = int(sock.rs_congested)
-        except AttributeError:
+        except (AttributeError, FaultError):
             cong = "N/A"
         send_buf = rds_sk_sndbuf(sock)
         recv_buf = rds_sk_rcvbuf(sock)
