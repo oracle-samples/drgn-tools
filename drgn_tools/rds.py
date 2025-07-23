@@ -26,12 +26,13 @@ from drgn import PlatformFlags
 from drgn import Program
 from drgn.helpers.linux import for_each_online_cpu
 from drgn.helpers.linux import per_cpu
+from drgn.helpers.linux import xa_for_each
 from drgn.helpers.linux.list import hlist_for_each_entry
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.pid import find_task
-from drgn.helpers.linux import xa_for_each
+
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.table import print_table
@@ -84,6 +85,7 @@ RDMA_CM_STATES = {
 }
 
 # Helpers #
+
 
 def be64_to_host(prog: drgn.Program, value: int) -> int:
     """
@@ -569,7 +571,10 @@ def rds_dev_info(
     else:
         return None
 
-def rdma_resource_usage(prog: Program, outfile: Optional[str] = None, report: bool = False) -> None:
+
+def rdma_resource_usage(
+    prog: Program, outfile: Optional[str] = None, report: bool = False
+) -> None:
     """
     Print RDMA restrack resource usage counts for ALL mlx5_* devices, similar to 'rdma res show'
 
@@ -581,7 +586,9 @@ def rdma_resource_usage(prog: Program, outfile: Optional[str] = None, report: bo
     data = [["Index", "Device", "PD", "CQ", "QP", "CM_ID", "MR", "CTX", "SRQ"]]
     index = 0
     res_types_enum = prog.type("enum rdma_restrack_type")
-    for dev in list_for_each_entry("struct device", dev_kset.list.address_of_(), "kobj.entry"):
+    for dev in list_for_each_entry(
+        "struct device", dev_kset.list.address_of_(), "kobj.entry"
+    ):
         try:
             name = dev.kobj.name.string_().decode()
             ib_dev = container_of(dev, "struct ib_device", "dev")
@@ -590,32 +597,37 @@ def rdma_resource_usage(prog: Program, outfile: Optional[str] = None, report: bo
                 continue
             counts = {}
             for name, i in res_types_enum.enumerators:
-                res_name = name[len("RDMA_RESTRACK_"):].lower()
+                res_name = name[len("RDMA_RESTRACK_") :].lower()
                 try:
                     xa = ib_dev.res[i].xa
-                    counts[res_name] = sum(1 for _ in xa_for_each(xa.address_of_()))
+                    counts[res_name] = sum(
+                        1 for _ in xa_for_each(xa.address_of_())
+                    )
                 except Exception:
                     counts[res_name] = -1
 
             def fmt(val):
                 return "NA" if val == -1 else str(val)
 
-            data.append([
-                index,
-                dev_name,
-                fmt(counts["pd"]),
-                fmt(counts["cq"]),
-                fmt(counts["qp"]),
-                fmt(counts["cm_id"]),
-                fmt(counts["mr"]),
-                fmt(counts["ctx"]),
-                fmt(counts["srq"]),
-            ])
+            data.append(
+                [
+                    str(index),
+                    dev_name,
+                    fmt(counts["pd"]),
+                    fmt(counts["cq"]),
+                    fmt(counts["qp"]),
+                    fmt(counts["cm_id"]),
+                    fmt(counts["mr"]),
+                    fmt(counts["ctx"]),
+                    fmt(counts["srq"]),
+                ]
+            )
             index += 1
         except Exception:
             continue
 
     print_table(data, outfile, report)
+
 
 def rds_stats(
     prog: drgn.Program,
@@ -1447,6 +1459,7 @@ def rds_print_msg_queue(
         rds_print_recv_msg_queue(
             prog, laddr, raddr, tos, lport, rport, ret, outfile, report
         )
+
 
 def print_mr_list_head_info(
     prog: drgn.Program, list_head: Object, pool_name: str, list_name: str
