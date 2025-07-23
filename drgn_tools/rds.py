@@ -31,7 +31,7 @@ from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.pid import find_task
-
+from drgn.helpers.linux import xa_for_each
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.table import print_table
@@ -84,7 +84,6 @@ RDMA_CM_STATES = {
 }
 
 # Helpers #
-
 
 def be64_to_host(prog: drgn.Program, value: int) -> int:
     """
@@ -570,6 +569,53 @@ def rds_dev_info(
     else:
         return None
 
+def rdma_resource_usage(prog: Program, outfile: Optional[str] = None, report: bool = False) -> None:
+    """
+    Print RDMA restrack resource usage counts for ALL mlx5_* devices, similar to 'rdma res show'
+
+    :param prog: drgn.Program
+    :param outfile: A file to write the output to.
+    :param report: Whether to open file in append mode for report.
+    """
+    dev_kset = prog["devices_kset"]
+    data = [["Index", "Device", "PD", "CQ", "QP", "CM_ID", "MR", "CTX", "SRQ"]]
+    index = 0
+    res_types_enum = prog.type("enum rdma_restrack_type")
+    for dev in list_for_each_entry("struct device", dev_kset.list.address_of_(), "kobj.entry"):
+        try:
+            name = dev.kobj.name.string_().decode()
+            ib_dev = container_of(dev, "struct ib_device", "dev")
+            dev_name = ib_dev.name.string_().decode()
+            if not dev_name.startswith("mlx"):
+                continue
+            counts = {}
+            for name, i in res_types_enum.enumerators:
+                res_name = name[len("RDMA_RESTRACK_"):].lower()
+                try:
+                    xa = ib_dev.res[i].xa
+                    counts[res_name] = sum(1 for _ in xa_for_each(xa.address_of_()))
+                except Exception:
+                    counts[res_name] = -1
+
+            def fmt(val):
+                return "NA" if val == -1 else str(val)
+
+            data.append([
+                index,
+                dev_name,
+                fmt(counts["pd"]),
+                fmt(counts["cq"]),
+                fmt(counts["qp"]),
+                fmt(counts["cm_id"]),
+                fmt(counts["mr"]),
+                fmt(counts["ctx"]),
+                fmt(counts["srq"]),
+            ])
+            index += 1
+        except Exception:
+            continue
+
+    print_table(data, outfile, report)
 
 def rds_stats(
     prog: drgn.Program,
@@ -1402,7 +1448,6 @@ def rds_print_msg_queue(
             prog, laddr, raddr, tos, lport, rport, ret, outfile, report
         )
 
-
 def print_mr_list_head_info(
     prog: drgn.Program, list_head: Object, pool_name: str, list_name: str
 ) -> None:
@@ -1529,6 +1574,7 @@ def report(prog: drgn.Program, outfile: Optional[str] = None) -> None:
         return None
 
     rds_dev_info(prog, outfile=outfile, report=False)
+    rdma_resource_usage(prog, outfile=outfile, report=False)
     rds_sock_info(prog, outfile=outfile, report=True)
     rds_conn_info(prog, outfile=outfile, report=True)
     rds_info_verbose(prog, outfile=outfile, report=True)
