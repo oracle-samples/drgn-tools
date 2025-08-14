@@ -36,7 +36,6 @@ from pathlib import Path
 from typing import Any
 from typing import BinaryIO
 from typing import Dict
-from typing import Iterator
 from typing import List
 from typing import Tuple
 
@@ -59,6 +58,7 @@ from drgn.helpers.linux import vma_find
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.task import for_each_task_in_group
+from drgn_tools.util import CommaList
 
 
 log = logging.getLogger("drgn.pstack")
@@ -186,31 +186,49 @@ def make_fake_pt_regs(up: Program, data: bytes) -> Object:
     return Object.from_bytes_(up, fake_pt_regs_type, data)
 
 
-def get_tasks(prog: Program, args: argparse.Namespace) -> Iterator[Object]:
-    """Return an iterable of tasks according to the dump arguments"""
-    if args.pid:
-        for pid in args.pid:
-            yield find_task(prog, pid)
-    elif args.online:
-        for cpu in for_each_online_cpu(prog):
-            yield cpu_curr(prog, cpu)
-    else:
-        if args.comm:
-            args.comm = args.comm.encode("utf-8")
+def get_tasks(prog: Program, args: argparse.Namespace) -> List[Object]:
+    """
+    Return the list of tasks according to the dump arguments
+
+    Only task group leaders (i.e. task structs associated with "processes") are
+    returned, though this does include kthreads. No task will appear twice in
+    the list.
+    """
+    tasks = []
+    task_struct_set = set()
+
+    def add(task: Object) -> None:
+        leader = task.group_leader
+        if leader.value_() not in task_struct_set:
+            task_struct_set.add(leader.value_())
+            tasks.append(leader)
+
+    # Only iterate over every task on the system if we have to.
+    if args.comm or args.state or args.all:
+        comms = [c.encode("utf-8") for c in args.comm]
         for task in for_each_task(prog):
             if task.tgid != task.pid:
                 continue  # only handle group leaders
-            if args.state and task_state_to_char(task) != args.state:
-                continue
-            if args.comm and not fnmatch.fnmatch(
-                task.comm.string_(), args.comm
-            ):
-                continue
-            yield task
+
+            if args.all:
+                add(task)
+            elif args.state and task_state_to_char(task) in args.state:
+                add(task)
+            else:
+                comm = task.comm.string_()
+                if any(fnmatch.fnmatch(comm, c) for c in comms):
+                    add(task)
+    # For on-CPU processes, we can efficiently look these up by CPU
+    if args.online:
+        for cpu in for_each_online_cpu(prog):
+            add(cpu_curr(prog, cpu))
+    # For PIDs, we can efficiently look these up
+    for pid in args.pid:
+        add(find_task(prog, pid))
+    return tasks
 
 
-def add_task_args(parser: argparse.ArgumentParser) -> None:
-    group = parser.add_mutually_exclusive_group(required=True)
+def add_task_args(group: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--online",
         "-o",
@@ -226,18 +244,23 @@ def add_task_args(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--state",
         "-s",
+        action=CommaList,
+        default=[],
         help="dump stacks for all tasks in given state (ps(1) 1-letter code)",
     )
     group.add_argument(
         "--comm",
         "-c",
+        action=CommaList,
+        default=[],
         help="dump stacks for all tasks whose command matches this pattern (glob)",
     )
     group.add_argument(
         "--pid",
         "-p",
-        action="append",
-        type=int,
+        action=CommaList,
+        default=[],
+        element_type=int,
         help="dump stack for specific PIDs (may be specified multiple times)",
     )
 
