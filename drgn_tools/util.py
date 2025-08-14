@@ -1,5 +1,6 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import argparse
 import logging
 import re
 import sys
@@ -545,3 +546,24 @@ def per_cpu_owner(name: str, val: Object) -> int:
             return cpu
 
     return -1
+
+
+class CommaList(argparse.Action):
+    """Action that allows specifying an option multiple times, with comma-separated values"""
+
+    def __init__(self, *args, element_type=str, **kwargs) -> None:
+        self.element_type = element_type
+        return super().__init__(*args, **kwargs)
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        value: t.Union[str, t.Sequence[t.Any], None],
+        option_string: t.Optional[str] = None,
+    ) -> None:
+        assert isinstance(value, str)
+        result = getattr(namespace, self.dest, []) or []
+        for element in value.split(","):
+            result.append(self.element_type(element))
+        setattr(namespace, self.dest, result)
