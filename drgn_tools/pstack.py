@@ -58,6 +58,7 @@ from drgn.helpers.linux import vma_find
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.task import for_each_task_in_group
+from drgn_tools.task import task_cpu
 from drgn_tools.util import CommaList
 
 
@@ -315,7 +316,15 @@ def dump_task(
             log.warning("skipped running TID %d ('%s')", tid, tcomm)
             continue
         kstack_str = str(kstack)
-        thread_meta = {"tid": tid, "comm": tcomm, "kstack": kstack_str}
+        cpu = task_cpu(thread)
+        thread_meta = {
+            "tid": tid,
+            "comm": tcomm,
+            "kstack": kstack_str,
+            "cpu": cpu,
+            "on_cpu": cpu_curr(prog, cpu) == thread,
+            "state": task_state_to_char(thread),
+        }
 
         # Kernel threads can still be included even though the value of this
         # tool is getting userspace stacks. Just skip the user registers and
@@ -571,7 +580,10 @@ def dump_print_process(
     for i, t in enumerate(meta["threads"]):
         tid = t["tid"]
         tcomm = t["comm"]
-        print(f"  Thread {i} TID={tid} ('{tcomm}')")
+        st = t["state"]
+        cpu = t["cpu"]
+        cpunote = "RUNNING ON " if t["on_cpu"] else ""
+        print(f"  Thread {i} TID={tid} {st} {cpunote}CPU={cpu} ('{tcomm}')")
         print("    " + t["kstack"].replace("\n", "\n    "))
         regs = make_fake_pt_regs(prog, base64.b64decode(t["regs"]))
         print_user_stack_trace(regs)
@@ -678,7 +690,10 @@ def pstack_print_process(task: Object) -> None:
     ):
         tid = thread.pid.value_()
         tcomm = thread.comm.string_().decode("utf-8", errors="replace")
-        print(f"  Thread {i} TID={tid} ('{tcomm}')")
+        st = task_state_to_char(thread)
+        cpu = task_cpu(thread)
+        cpunote = "RUNNING ON " if cpu_curr(prog, cpu) == thread else ""
+        print(f"  Thread {i} TID={tid} ({st}) {cpunote}CPU={cpu} ('{tcomm}')")
         kstack = prog.stack_trace(thread)
         if len(kstack) > 0 and (kstack[0].pc & (1 << 63)):
             # Kernel stack is indeed a kernel stack, print it
