@@ -242,121 +242,215 @@ def add_task_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def write_pages(outfile: BinaryIO, task: Object, start: int, end: int) -> None:
-    """Write pages from start to end, skipping ones which are swapped out."""
-    prog = task.prog_
-    pgsize = prog["PAGE_SIZE"].value_()
-    for pgaddr in range(start, end, pgsize):
-        try:
-            data = access_remote_vm(task.mm, pgaddr, pgsize)
-        except FaultError:
-            continue
-        outfile.write(struct.pack("=Q", pgaddr))
-        outfile.write(data)
-
-
 def task_metadata(prog: Program, task: Object) -> Dict[str, Any]:
     """Return JSON metadata about a task, for later use."""
     VM_EXEC = 0x4
     load_addrs = {}
     file_vm_end: Dict[str, int] = {}
-    for vma in for_each_vma(task.mm):
-        if not vma.vm_file:
-            continue
-        path = os.fsdecode(d_path(vma.vm_file.f_path))
-        file_vm_end[path] = max(
-            vma.vm_end.value_(),
-            file_vm_end.get(path, 0),
-        )
-        if vma.vm_flags & VM_EXEC and vma.vm_file:
-            file_start = (
-                vma.vm_start - vma.vm_pgoff * task.mm.prog_["PAGE_SIZE"]
-            ).value_()
-            inode = vma.vm_file.f_inode.i_ino.value_()
-            load_addrs[path] = [file_start, vma.vm_end.value_(), inode]
+    if task.mm:
+        for vma in for_each_vma(task.mm):
+            if not vma.vm_file:
+                continue
+            path = os.fsdecode(d_path(vma.vm_file.f_path))
+            file_vm_end[path] = max(
+                vma.vm_end.value_(),
+                file_vm_end.get(path, 0),
+            )
+            if vma.vm_flags & VM_EXEC and vma.vm_file:
+                file_start = (
+                    vma.vm_start - vma.vm_pgoff * task.mm.prog_["PAGE_SIZE"]
+                ).value_()
+                inode = vma.vm_file.f_inode.i_ino.value_()
+                load_addrs[path] = [file_start, vma.vm_end.value_(), inode]
 
-    # use the largest vm_end we find for the end of the address range
-    for path in load_addrs:
-        load_addrs[path][1] = file_vm_end[path]
+        # use the largest vm_end we find for the end of the address range
+        for path in load_addrs:
+            load_addrs[path][1] = file_vm_end[path]
     return {
         "pid": task.pid.value_(),
-        "page_size": prog["PAGE_SIZE"].value_(),
         "comm": task.comm.string_().decode("utf-8", errors="replace"),
         "mm": load_addrs,
+        "kernel": not bool(task.mm),
         "threads": [],
     }
 
 
+def dump_task(
+    task: Object, outfile: BinaryIO, max_stack_bytes: int = 1048576
+) -> Tuple[int, int, int]:
+    prog = task.prog_
+    metadata = task_metadata(prog, task)
+    page_mask = ~(prog["PAGE_SIZE"] - 1)
+    page_ranges = []
+    threads = 0
+    for thread in for_each_task_in_group(task, include_self=True):
+        tid = thread.pid.value_()
+        tcomm = thread.comm.string_().decode("utf-8", errors="replace")
+        try:
+            kstack = prog.stack_trace(thread)
+        except ValueError:
+            log.warning("skipped running TID %d ('%s')", tid, tcomm)
+            continue
+        kstack_str = str(kstack)
+        thread_meta = {"tid": tid, "comm": tcomm, "kstack": kstack_str}
+
+        # Kernel threads can still be included even though the value of this
+        # tool is getting userspace stacks. Just skip the user registers and
+        # stack.
+        if not task.mm:
+            metadata["threads"].append(thread_meta)
+            continue
+
+        # Add user registers to metadata.
+        if len(kstack) > 0 and (kstack[0].pc & (1 << 63)):
+            # CPU was running in kernel mode, get the saved registers
+            regs = task_saved_pt_regs(thread)
+        else:
+            # CPU was in user mode. Drgn won't make be able to unwind
+            # it, but we can take the top frame and get the original
+            # registers for unwinding.
+            regs = task_running_pt_regs(kstack)
+            kstack_str = "<running in user mode>"
+        thread_meta["regs"] = base64.b64encode(regs.to_bytes_()).decode()
+        metadata["threads"].append(thread_meta)
+
+        # Now get the stack memory range to dump.  Three big assumptions here:
+        # (1) the stack grows down, (2) there is no stack switching going on,
+        # and (3) the stack is in its own VMA.  These are usually true, but not
+        # always.
+        vma = vma_find(task.mm, regs.sp)
+        if not vma:
+            log.warning(
+                "could not find VMA for SP (%x) in TID %d ('%s')",
+                regs.sp.value_(),
+                tid,
+                tcomm,
+            )
+            continue
+        start = (regs.sp & page_mask).value_()
+        end = vma.vm_end.value_()
+        page_ranges.append((start, end))
+        threads += 1
+
+    write_json_object(metadata, outfile)
+
+    page_ranges.sort()
+    prev_end = 0
+    pgsize = prog["PAGE_SIZE"].value_()
+    max_stack_bytes = max_stack_bytes & page_mask
+    pages_written = pages_faulted = 0
+    for start, end in page_ranges:
+        # There's no guarantee that we have a reasonable stack size. Apply a
+        # limit here to avoid dumping excess data.
+        end = min(end, start + max_stack_bytes)
+
+        # It's possible (though unlikely) that the ranges overlap. Avoid
+        # re-writing the same pages multiple times.
+        start = max(prev_end, start)
+        prev_end = end
+        for pgaddr in range(start, end, pgsize):
+            try:
+                data = access_remote_vm(task.mm, pgaddr, pgsize)
+            except FaultError:
+                pages_faulted += 1
+                continue
+            outfile.write(struct.pack("=Q", pgaddr))
+            outfile.write(data)
+            pages_written += 1
+    log.info(
+        "PID %d: wrote %d pages (%.1f MiB), faulted on %d pages",
+        task.pid.value_(),
+        pages_written,
+        pages_written * pgsize / (1024 * 1024),
+        pages_faulted,
+    )
+
+    outfile.write(b"\xff" * 8)
+    return threads, pages_written, pages_faulted
+
+
+def write_json_object(obj: Dict[str, Any], outfile: BinaryIO) -> None:
+    encoded_data = json.dumps(obj).encode("utf-8")
+    outfile.write(struct.pack("=Q", len(encoded_data)))
+    outfile.write(encoded_data)
+
+
 def dump(prog: Program) -> None:
+    """
+    Write stack information to a compressed binary file.
+
+    The binary format is based on simple blocks of data which are prefixed by an
+    8-byte little-endian field which contains either a length, or an address.
+    The following blocks are defined and must occur in order.
+
+      - magic header: "pstack" followed by a NUL byte, and a one byte version
+      - global metadata: 8-byte length followed by JSON object. The object
+        contains "page_size" field, and maybe others. The next block MUST be a
+        task metadata.
+      - task metadata: 8-byte length followed by JSON object. The object
+        represents all tasks sharing the same mm, or for kthreads, a single task
+        struct. The object contains an array of threads. The task metadata is
+        immediately followed by zero or more stack memory blocks, and then an
+        "end of memory" marker.
+      - stack memory block: 8-byte field containing a page-aligned address, and
+        then one page of data.
+      - end of memory block: an 8-byte field containing the signal value
+        0xFFFFFFFFFFFFFFFF. The end-of-memory block may be followed by an
+        additional task metadata, or the end of file.
+    """
     parser = argparse.ArgumentParser(description="dump stacks")
     parser.add_argument(
-        "directory",
-        help="store stack dumps in the given directory by PID",
+        "output",
+        help="store stack dumps in the given file",
+    )
+    parser.add_argument(
+        "--max-stack-bytes",
+        type=int,
+        default=(1024 * 1024),
+        help="max stack bytes to dump for any thread (default 1MiB)",
     )
     add_task_args(parser)
     args = parser.parse_args(sys.argv[2:])
 
-    dir_ = Path(args.directory)
-    dir_.mkdir(exist_ok=True)
-    page_mask = ~(prog["PAGE_SIZE"] - 1)
-    for task in get_tasks(prog, args):
-        # Skip kthreads and zombies without memory
-        if not task.mm:
-            continue
-        metadata = task_metadata(prog, task)
-        with gzip.open(dir_ / f"{task.pid.value_()}.gz", "wb") as f:
-            for thread in for_each_task_in_group(task, include_self=True):
-                tid = thread.pid.value_()
-                tcomm = thread.comm.string_().decode("utf-8", errors="replace")
-                try:
-                    kstack = prog.stack_trace(thread)
-                except ValueError:
-                    log.warning("skipped running TID %d ('%s')", tid, tcomm)
-                    continue
-                if len(kstack) > 0 and (kstack[0].pc & (1 << 63)):
-                    # CPU was running in kernel mode, get the saved registers
-                    regs = task_saved_pt_regs(thread)
-                    kstack_str = str(kstack)
-                else:
-                    # CPU was in user mode. Drgn won't make be able to unwind
-                    # it, but we can take the top frame and get the original
-                    # registers for unwinding.
-                    regs = task_running_pt_regs(kstack)
-                    kstack_str = "<running in user mode>"
-                metadata["threads"].append(
-                    {
-                        "tid": tid,
-                        "comm": tcomm,
-                        "kstack": kstack_str,
-                        "regs": base64.b64encode(regs.to_bytes_()).decode(),
-                    },
-                )
-                # Three big assumptions here: (1) the stack grows down, (2)
-                # there is no stack switching going on, and (3) the stack is in
-                # its own VMA.  These are usually true, but not always.
-                vma = vma_find(task.mm, regs.sp)
-                if not vma:
-                    log.warning(
-                        "could not find VMA for SP (%x) in TID %d ('%s')",
-                        regs.sp.value_(),
-                        tid,
-                        tcomm,
-                    )
-                    continue
-                start = (regs.sp & page_mask).value_()
-                end = vma.vm_end.value_()
-                # mypy false positive:
-                # Argument 1 to "write_pages" has incompatible type "GzipFile"; expected "BinaryIO"  [arg-type]
-                write_pages(f, thread, start, end)  # type: ignore
-        with gzip.open(dir_ / f"{task.pid.value_()}-meta.json.gz", "wb") as f:
-            f.write(json.dumps(metadata).encode("utf-8"))
+    magic = b"pstack\x00\x01"
+    file = Path(args.output)
+    tasks = threads_written = 0
+    pages_written = pages_faulted = 0
+    with gzip.open(file, "wb") as f:
+        f.write(magic)
+
+        metadata = {
+            "page_size": prog["PAGE_SIZE"].value_(),
+        }
+        write_json_object(metadata, f)  # type: ignore
+
+        for task in get_tasks(prog, args):
+            threads, written, faulted = dump_task(
+                task, f, max_stack_bytes=args.max_stack_bytes  # type: ignore
+            )
+            threads_written += threads
+            pages_written += written
+            pages_faulted += faulted
+            tasks += 1
+
+    print(
+        "Dumped {} tasks ({} threads) with {} pages of stack ({:.1f} MiB) -- that's {:.1f} KiB per thread. Skipped {} faulted pages.".format(
+            tasks,
+            threads_written,
+            pages_written,
+            (pages_written * prog["PAGE_SIZE"].value_()) / (1024 * 1024),
+            (pages_written * prog["PAGE_SIZE"].value_())
+            / (1024)
+            / threads_written,
+            pages_faulted,
+        )
+    )
 
 
 def build_prog_from_dump(
-    data: List[Tuple[int, bytes]], metadata: Dict[str, Any]
+    data: List[Tuple[int, bytes]], metadata: Dict[str, Any], page_size: int
 ) -> Program:
     prog = Program(drgn.host_platform)
-    page_size = metadata["page_size"]
     data.sort()
 
     def read_fn(_, count, offset, __):
@@ -428,25 +522,29 @@ def print_user_stack_trace(regs: Object) -> None:
         print("    " + line.rstrip() + mod_text)
 
 
-def dump_print_process(f: Path) -> None:
+def dump_print_process(
+    fp: BinaryIO, meta: Dict[str, Any], page_size: int
+) -> None:
     """Print traces for a dumped process"""
-    PAGE_SIZE = 4096
-    with gzip.open(f, "rb") as fp:
-        meta = json.loads(fp.read().decode("utf-8"))
-
     pid = meta["pid"]
     data = []
-    with gzip.open(f.parent / f"{pid}.gz", "rb") as fp:
-        while True:
-            header = fp.read(8)
-            if not header:
-                break
-            addr = struct.unpack("=Q", header)[0]
-            data.append((addr, fp.read(PAGE_SIZE)))
+    end = b"\xff" * 8
+    while True:
+        header = fp.read(8)
+        if header == end:
+            break
+        addr = struct.unpack("=Q", header)[0]
+        data.append((addr, fp.read(page_size)))
 
-    prog = build_prog_from_dump(data, meta)
     comm = meta["comm"]
     print(f"[PID: {pid} COMM: {comm}]")
+
+    # Special-case for kernel threads, so we don't build a fake program
+    if meta["kernel"]:
+        for thread in meta["threads"]:
+            print("  " + thread["kstack"].replace("\n", "\n  "))
+        return
+    prog = build_prog_from_dump(data, meta, page_size)
     for i, t in enumerate(meta["threads"]):
         tid = t["tid"]
         tcomm = t["comm"]
@@ -456,17 +554,38 @@ def dump_print_process(f: Path) -> None:
         print_user_stack_trace(regs)
 
 
+def read_json_object(fp: BinaryIO) -> Dict[str, Any]:
+    header = fp.read(8)
+    if len(header) != 8:
+        raise EOFError("end of file")
+    length = struct.unpack("=Q", header)[0]
+    return json.loads(fp.read(length))
+
+
 def dump_print(d: str):
     parser = argparse.ArgumentParser(
         description="print traces for dumped stacks"
     )
-    parser.add_argument("directory", type=Path, help="output directory")
+    parser.add_argument("file", type=Path, help="compressed")
     args = parser.parse_args(sys.argv[2:])
-    for f in args.directory.iterdir():
-        if not f.name.endswith("-meta.json.gz"):
-            continue
-        dump_print_process(f)
-        print()
+    with gzip.open(args.file, "rb") as f:
+        try:
+            magic = f.read(8)
+        except OSError:
+            sys.exit(f"error: {args.file} doesn't exist or is not a gzip file")
+        if magic != b"pstack\x00\x01":
+            sys.exit("error: unrecognized file format")
+
+        metadata = read_json_object(f)
+        pgsize = metadata["page_size"]
+
+        while True:
+            try:
+                task_meta = read_json_object(f)
+            except EOFError:
+                break
+            dump_print_process(f, task_meta, pgsize)
+            print()
 
 
 def build_prog_from_mm(mm: Object) -> Program:
