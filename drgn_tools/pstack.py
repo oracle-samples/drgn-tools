@@ -407,7 +407,21 @@ def write_json_object(obj: Dict[str, Any], outfile: BinaryIO) -> None:
     outfile.write(encoded_data)
 
 
-def dump(prog: Program) -> None:
+def dump_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "output",
+        help="store stack dumps in the given file",
+    )
+    parser.add_argument(
+        "--max-stack-bytes",
+        type=int,
+        default=(1024 * 1024),
+        help="max stack bytes to dump for any thread (default 1MiB)",
+    )
+    add_task_args(parser)
+
+
+def dump(prog: Program, args: argparse.Namespace) -> None:
     """
     Write stack information to a compressed binary file.
 
@@ -430,20 +444,6 @@ def dump(prog: Program) -> None:
         0xFFFFFFFFFFFFFFFF. The end-of-memory block may be followed by an
         additional task metadata, or the end of file.
     """
-    parser = argparse.ArgumentParser(description="dump stacks")
-    parser.add_argument(
-        "output",
-        help="store stack dumps in the given file",
-    )
-    parser.add_argument(
-        "--max-stack-bytes",
-        type=int,
-        default=(1024 * 1024),
-        help="max stack bytes to dump for any thread (default 1MiB)",
-    )
-    add_task_args(parser)
-    args = parser.parse_args(sys.argv[2:])
-
     magic = b"pstack\x00\x01"
     file = Path(args.output)
     tasks = threads_written = 0
@@ -722,6 +722,7 @@ class Pstack(CorelensModule):
     """Select and print user + kernel stacks, if data is available"""
 
     name = "pstack"
+    run_when = "never"
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         add_task_args(parser)
@@ -732,6 +733,19 @@ class Pstack(CorelensModule):
             print()
 
 
+class PstackDump(CorelensModule):
+    """Dump data for formatting userspace stacks"""
+
+    name = "pstack-dump"
+    run_when = "never"
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        dump_args(parser)
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        dump(prog, args)
+
+
 if __name__ == "__main__":
     logging.basicConfig()
     prog: Program
@@ -740,7 +754,9 @@ if __name__ == "__main__":
             f"usage: drgn [args...] {sys.argv} [dump | print | pstack] ..."
         )
     elif sys.argv[1] == "dump":
-        dump(prog)  # noqa
+        parser = argparse.ArgumentParser(description="dump stacks")
+        dump_args(parser)
+        dump(prog, parser.parse_args(sys.argv[2:]))  # noqa
     elif sys.argv[1] == "print":
         dump_print(sys.argv[2])
     elif sys.argv[1] == "pstack":
