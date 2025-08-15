@@ -34,7 +34,6 @@ import sys
 from bisect import bisect_left
 from pathlib import Path
 from typing import Any
-from typing import BinaryIO
 from typing import Dict
 from typing import List
 from typing import Tuple
@@ -300,7 +299,7 @@ def task_metadata(prog: Program, task: Object) -> Dict[str, Any]:
 
 
 def dump_task(
-    task: Object, outfile: BinaryIO, max_stack_bytes: int = 1048576
+    task: Object, outfile: gzip.GzipFile, max_stack_bytes: int = 1048576
 ) -> Tuple[int, int, int]:
     prog = task.prog_
     metadata = task_metadata(prog, task)
@@ -401,7 +400,7 @@ def dump_task(
     return threads, pages_written, pages_faulted
 
 
-def write_json_object(obj: Dict[str, Any], outfile: BinaryIO) -> None:
+def write_json_object(obj: Dict[str, Any], outfile: gzip.GzipFile) -> None:
     encoded_data = json.dumps(obj).encode("utf-8")
     outfile.write(struct.pack("=Q", len(encoded_data)))
     outfile.write(encoded_data)
@@ -454,11 +453,11 @@ def dump(prog: Program, args: argparse.Namespace) -> None:
         metadata = {
             "page_size": prog["PAGE_SIZE"].value_(),
         }
-        write_json_object(metadata, f)  # type: ignore
+        write_json_object(metadata, f)
 
         for task in get_tasks(prog, args):
             threads, written, faulted = dump_task(
-                task, f, max_stack_bytes=args.max_stack_bytes  # type: ignore
+                task, f, max_stack_bytes=args.max_stack_bytes
             )
             threads_written += threads
             pages_written += written
@@ -555,7 +554,7 @@ def print_user_stack_trace(regs: Object) -> None:
 
 
 def dump_print_process(
-    fp: BinaryIO, meta: Dict[str, Any], page_size: int
+    fp: gzip.GzipFile, meta: Dict[str, Any], page_size: int
 ) -> None:
     """Print traces for a dumped process"""
     pid = meta["pid"]
@@ -583,13 +582,13 @@ def dump_print_process(
         st = t["state"]
         cpu = t["cpu"]
         cpunote = "RUNNING ON " if t["on_cpu"] else ""
-        print(f"  Thread {i} TID={tid} {st} {cpunote}CPU={cpu} ('{tcomm}')")
+        print(f"  Thread {i} TID={tid} [{st}] {cpunote}CPU={cpu} ('{tcomm}')")
         print("    " + t["kstack"].replace("\n", "\n    "))
         regs = make_fake_pt_regs(prog, base64.b64decode(t["regs"]))
         print_user_stack_trace(regs)
 
 
-def read_json_object(fp: BinaryIO) -> Dict[str, Any]:
+def read_json_object(fp: gzip.GzipFile) -> Dict[str, Any]:
     header = fp.read(8)
     if len(header) != 8:
         raise EOFError("end of file")
@@ -598,12 +597,7 @@ def read_json_object(fp: BinaryIO) -> Dict[str, Any]:
 
 
 def dump_print(d: str):
-    parser = argparse.ArgumentParser(
-        description="print traces for dumped stacks"
-    )
-    parser.add_argument("file", type=Path, help="compressed")
-    args = parser.parse_args(sys.argv[2:])
-    with gzip.open(args.file, "rb") as f:
+    with gzip.open(d, "rb") as f:
         try:
             magic = f.read(8)
         except OSError:
@@ -693,7 +687,7 @@ def pstack_print_process(task: Object) -> None:
         st = task_state_to_char(thread)
         cpu = task_cpu(thread)
         cpunote = "RUNNING ON " if cpu_curr(prog, cpu) == thread else ""
-        print(f"  Thread {i} TID={tid} ({st}) {cpunote}CPU={cpu} ('{tcomm}')")
+        print(f"  Thread {i} TID={tid} [{st}] {cpunote}CPU={cpu} ('{tcomm}')")
         kstack = prog.stack_trace(thread)
         if len(kstack) > 0 and (kstack[0].pc & (1 << 63)):
             # Kernel stack is indeed a kernel stack, print it
@@ -758,6 +752,11 @@ if __name__ == "__main__":
         dump_args(parser)
         dump(prog, parser.parse_args(sys.argv[2:]))  # noqa
     elif sys.argv[1] == "print":
-        dump_print(sys.argv[2])
+        parser = argparse.ArgumentParser(
+            description="print traces for dumped stacks"
+        )
+        parser.add_argument("file", type=Path, help="compressed")
+        args = parser.parse_args(sys.argv[2:])
+        dump_print(args.file)
     elif sys.argv[1] == "pstack":
         pstack(prog)  # noqa
