@@ -15,6 +15,12 @@ from drgn_tools import pstack
 from drgn_tools.task import task_cpu
 
 
+pytestmark = [
+    # Only test UEK5+
+    pytest.mark.kver_min("4.14"),
+]
+
+
 @pytest.fixture
 def sleeping_proc():
     proc = Popen(
