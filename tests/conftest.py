@@ -6,6 +6,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import List
 from typing import Optional
+from typing import Tuple
 
 import drgn
 import pytest
@@ -24,48 +25,14 @@ CTF = False
 CTF_FILE: Optional[str] = None
 
 CORE_DIR = Path.cwd() / "vmcores"
+KVER: Optional[KernelVersion] = None
+PROG: Optional[drgn.Program] = None
 
 
 @pytest.fixture(scope="session")
 def prog() -> drgn.Program:
-    p = drgn.Program()
-    if VMCORE:
-        p.set_core_dump(VMCORE)
-    elif os.geteuid() == 0:
-        p.set_kernel()
-    else:
-        from drgn.internal.sudohelper import open_via_sudo
-
-        p.set_core_dump(open_via_sudo("/proc/kcore", os.O_RDONLY))
-    if CTF:
-        try:
-            from drgn.helpers.linux.ctf import load_ctf
-
-            # CTF_FILE may be None here, in which case the default CTF file
-            # location is used (similar to below, where default DWARF debuginfo
-            # is loaded if we don't have a path).
-            load_ctf(p, path=CTF_FILE)
-            p.cache["using_ctf"] = True
-            # Mark in-tree modules as having debuginfo, so that the module API
-            # doesn't attempt to load debuginfo implicitly.
-            for module in p.modules():
-                if isinstance(module, MainModule) or module_is_in_tree(module):
-                    module.debug_file_status = ModuleFileStatus.DONT_NEED
-        except ModuleNotFoundError:
-            raise Exception("CTF is not supported, cannot run CTF test")
-    elif DEBUGINFO:
-        p.load_debug_info(DEBUGINFO)
-    else:
-        # Some UEK versions had mismatched vmlinux build IDs due to packaging
-        # issues. Most have been fixed, but for the remainder, set the main
-        # module's build ID to None manually, forcing drgn to skip verifying
-        # build IDs as it finds debuginfo.
-        ver = KernelVersion.parse(p["UTS_RELEASE"].string_().decode())
-        if has_vmlinux_build_id_mismatch(ver):
-            p.create_loaded_modules()
-            p.main_module().build_id = None
-        p.load_default_debug_info()
-    return p
+    assert PROG is not None
+    return PROG
 
 
 @pytest.fixture(scope="session")
@@ -96,7 +63,8 @@ def log_global_env_facts(prog, record_testsuite_property):
 
 @pytest.fixture(scope="session")
 def kver(prog):
-    return KernelVersion.parse(prog["UTS_RELEASE"].string_().decode())
+    assert KVER is not None
+    return KVER
 
 
 def pytest_addoption(parser):
@@ -154,6 +122,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "skip_vmcore(name): skip when debugging this core dump"
     )
+    config.addinivalue_line(
+        "markers", "kver_min(ver): specify minimum kernel version (x.y.z)"
+    )
 
     core_dir = config.getoption("vmcore_dir")
     if core_dir:
@@ -204,11 +175,54 @@ def pytest_configure(config):
     if CTF:
         print("TESTING WITH CTF")
 
+    global PROG
+    PROG = drgn.Program()
+    if VMCORE:
+        PROG.set_core_dump(VMCORE)
+    elif os.geteuid() == 0:
+        PROG.set_kernel()
+    else:
+        from drgn.internal.sudohelper import open_via_sudo
+
+        PROG.set_core_dump(open_via_sudo("/proc/kcore", os.O_RDONLY))
+
+    global KVER
+    KVER = KernelVersion.parse(PROG["UTS_RELEASE"].string_().decode())
+    if CTF:
+        try:
+            from drgn.helpers.linux.ctf import load_ctf
+
+            # CTF_FILE may be None here, in which case the default CTF file
+            # location is used (similar to below, where default DWARF debuginfo
+            # is loaded if we don't have a path).
+            load_ctf(PROG, path=CTF_FILE)
+            PROG.cache["using_ctf"] = True
+            # Mark in-tree modules as having debuginfo, so that the module API
+            # doesn't attempt to load debuginfo implicitly.
+            for module in PROG.modules():
+                if isinstance(module, MainModule) or module_is_in_tree(module):
+                    module.debug_file_status = ModuleFileStatus.DONT_NEED
+        except ModuleNotFoundError:
+            raise Exception("CTF is not supported, cannot run CTF test")
+    elif DEBUGINFO:
+        PROG.load_debug_info(DEBUGINFO)
+    else:
+        # Some UEK versions had mismatched vmlinux build IDs due to packaging
+        # issues. Most have been fixed, but for the remainder, set the main
+        # module's build ID to None manually, forcing drgn to skip verifying
+        # build IDs as it finds debuginfo.
+        if has_vmlinux_build_id_mismatch(KVER):
+            PROG.create_loaded_modules()
+            PROG.main_module().build_id = None
+        PROG.load_default_debug_info()
+
 
 def pytest_runtest_setup(item: pytest.Item):
     skip_live = False
     vmcore_pats = []
     vmcore_skip_pats = []
+    kver_min: Tuple[int, ...] = (0,)
+    assert KVER is not None
 
     for mark in item.iter_markers():
         if mark.name == "skip_live":
@@ -217,9 +231,16 @@ def pytest_runtest_setup(item: pytest.Item):
             vmcore_pats.append(mark.args[0])
         if mark.name == "skip_vmcore":
             vmcore_skip_pats.append(mark.args[0])
+        if mark.name == "kver_min":
+            kver_min = max(kver_min, tuple(map(int, mark.args[0].split("."))))
 
     if vmcore_pats and vmcore_skip_pats:
         raise ValueError("Can't mark a test both: vmcore() and skip_vmcore()")
+
+    if KVER.version_tuple < kver_min:
+        pytest.skip(
+            f"Skipped test (requires minimum kernel version: {kver_min})"
+        )
 
     if VMCORE:
         if vmcore_pats:
