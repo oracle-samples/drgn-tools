@@ -24,6 +24,7 @@ binaries, as well as ".gnu_debugdata" sections for address to symbol resolution.
 """
 import argparse
 import base64
+import ctypes.util
 import fnmatch
 import gzip
 import json
@@ -31,9 +32,12 @@ import logging
 import os
 import struct
 import sys
+import warnings
 from bisect import bisect_left
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Tuple
@@ -534,6 +538,62 @@ def build_prog_from_dump(
     return prog
 
 
+@lru_cache(maxsize=1)
+def _load_demangler() -> Callable[[str], str]:
+    # The GNU C++ standard library contains a function called __cxa_demangle
+    # which we can use to translate C++ function names.
+    #
+    # https://gcc.gnu.org/onlinedocs/libstdc++/manual/ext_demangling.html
+    # https://gcc.gnu.org/onlinedocs/libstdc++/latest-doxygen/a00026.html#aaf2180d3f67420d4e937e85b281b94a0
+    #
+    # Signature:
+    # char * __cxxabiv1::__cxa_demangle ( const char *__mangled_name,
+    #                                     char *__output_buffer,
+    #                                     size_t *__length,
+    #                                     int *__status
+    # )
+    # The output buffer, when not provided, is allocated and must be freed via
+    # free().
+    stdcxx_name = ctypes.util.find_library("stdc++")
+    stdc_name = ctypes.util.find_library("c")
+    if not stdcxx_name or not stdc_name:
+        warnings.warn("Cannot import C++ demangling")
+        return lambda s: s
+    stdcxx = ctypes.CDLL(stdcxx_name)
+    stdc = ctypes.CDLL(stdc_name)
+    demangle_func_p = stdcxx.__cxa_demangle
+    demangle_func_p.restype = ctypes.POINTER(ctypes.c_char)
+
+    # The status variable has the following return codes:
+    status_codes = {
+        0: "The demangling operation succeeded.",
+        -1: "A memory allocation failure occurred.",
+        -2: "mangled_name is not a valid name under the C++ ABI mangling rules.",
+        -3: "One of the arguments is invalid.",
+    }
+
+    def demanglefn(mangled: str) -> str:
+        in_buffer = ctypes.c_char_p(mangled.encode("utf-8"))
+        status = ctypes.c_int()
+        result = demangle_func_p(in_buffer, None, None, ctypes.pointer(status))
+        if status.value != 0:
+            msg = status_codes.get(status.value, "unknown error")
+            warnings.warn(f"Unable to demangle '{mangled}': {msg}")
+            return mangled
+        strval = ctypes.cast(result, ctypes.c_char_p).value.decode("utf-8")  # type: ignore
+        stdc.free(result)
+        return strval
+
+    return demanglefn
+
+
+def demangle(mangled: str) -> str:
+    if mangled.startswith("_Z"):
+        return _load_demangler()(mangled)
+    else:
+        return mangled
+
+
 def print_user_stack_trace(regs: Object) -> None:
     """
     Prints the userspace stack trace for regs, with the module name included
@@ -542,15 +602,32 @@ def print_user_stack_trace(regs: Object) -> None:
     prog = regs.prog_
     trace = prog.stack_trace(regs)
     print("    ------ userspace ---------")
-    for frame, line in zip(trace, str(trace).split("\n")):
+    for i, frame in enumerate(trace):
+        name = demangle(frame.name)
+
+        offset = ""
+        try:
+            sym = frame.symbol()
+            offset = f"+0x{frame.pc - sym.address:x}/0x{sym.size:x}"
+        except LookupError:
+            pass
+
         mod_text = ""
         try:
             mod = prog.module(frame.pc)
             off = frame.pc - mod.address_range[0]
-            mod_text = f" (in {mod.name} +0x{off:x})"
+            mod_text = f" (from {mod.name} +0x{off:x})"
         except LookupError:
             pass
-        print("    " + line.rstrip() + mod_text)
+
+        source_text = ""
+        try:
+            source_info = ":".join(map(str, frame.source()))
+            source_text = f" ({source_info})"
+        except LookupError:
+            pass
+
+        print(f"    #{i:<2d} {name}{offset}{source_text}{mod_text}")
 
 
 def dump_print_process(
