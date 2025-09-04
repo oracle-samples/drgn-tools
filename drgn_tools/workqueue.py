@@ -456,26 +456,29 @@ def show_pwq(pwq: Object) -> None:
 
     mayday = False if list_empty(pwq.pwqs_node.address_of_()) else True
 
-    print(f"pwq: ({pwq.type_.type_name()})0x{pwq.value_():x}")
-    print("pool id:", pwq.pool.id.value_())
-    # v6.9: a045a272d887 ("workqueue: Move pwq->max_active to wq->max_active")
-    # Note that this commit appears to have been backported into stable trees,
-    # and then also reverted...
-    if hasattr(pwq, "max_active"):
-        max_active = pwq.max_active
-    else:
-        max_active = pwq.wq.max_active
-    print(
-        "active/max_active ",
-        pwq.nr_active.value_(),
-        "/",
-        max_active.value_(),
-    )
-    print(f"refcnt: {pwq.refcnt.value_()} Mayday: {mayday}")
+    try:
+        print(f"pwq: ({pwq.type_.type_name()})0x{pwq.value_():x}")
+        print("pool id:", pwq.pool.id.value_())
+        # v6.9: a045a272d887 ("workqueue: Move pwq->max_active to wq->max_active")
+        # Note that this commit appears to have been backported into stable trees,
+        # and then also reverted...
+        if hasattr(pwq, "max_active"):
+            max_active = pwq.max_active
+        else:
+            max_active = pwq.wq.max_active
+        print(
+            "active/max_active ",
+            pwq.nr_active.value_(),
+            "/",
+            max_active.value_(),
+        )
+        print(f"refcnt: {pwq.refcnt.value_()} Mayday: {mayday}")
 
-    show_pwq_in_flight(pwq)
-    show_pwq_pending(pwq)
-    show_pwq_inactive(pwq)
+        show_pwq_in_flight(pwq)
+        show_pwq_pending(pwq)
+        show_pwq_inactive(pwq)
+    except FaultError:
+        print(f"Could not dump pwq: 0x{pwq.value_():x}")
 
 
 def workqueue_idle(workqueue: Object) -> bool:
@@ -508,20 +511,27 @@ def show_one_workqueue(workqueue: Object) -> None:
     name = escape_ascii_string(workqueue.name.string_(), escape_backslash=True)
     print(f"{name} ({workqueue.type_.type_name()})0x{workqueue.value_():x}")
 
-    idle = workqueue_idle(workqueue)
+    try:
+        idle = workqueue_idle(workqueue)
 
-    if idle:
-        print("  workqueue is idle")
-    else:
-        for pwq in for_each_pwq(workqueue):
-            inactive_works_attr = (
-                "inactive_works"
-                if hasattr(pwq, "inactive_works")
-                else "delayed_works"
-            )
-            inactive_works = getattr(pwq, inactive_works_attr).address_of_()
-            if pwq.nr_active or not list_empty(inactive_works):
-                show_pwq(pwq)
+        if idle:
+            print("  workqueue is idle")
+        else:
+            for pwq in for_each_pwq(workqueue):
+                inactive_works_attr = (
+                    "inactive_works"
+                    if hasattr(pwq, "inactive_works")
+                    else "delayed_works"
+                )
+                inactive_works = getattr(
+                    pwq, inactive_works_attr
+                ).address_of_()
+                if pwq.nr_active or not list_empty(inactive_works):
+                    show_pwq(pwq)
+    except FaultError:
+        print(
+            f"Could not dump workqueue: {name} ({workqueue.type_.type_name()})0x{workqueue.value_():x}"
+        )
 
 
 def worker_pool_idle(worker_pool: Object) -> bool:
@@ -561,17 +571,27 @@ def show_one_worker_pool(worker_pool: Object) -> None:
         print("  idle worker pids: ", idle_workers)
 
 
-def show_all_workqueues(prog: Program, showidle: bool = False) -> None:
+def show_all_workqueues(
+    prog: Program, showidle: bool = False, wqname: Union[str, bytes] = ""
+) -> None:
     """Dump state of all workqueues and worker_pools"""
 
-    for workqueue in for_each_workqueue(prog):
-        if workqueue_idle(workqueue):
-            if showidle:
-                show_one_workqueue(workqueue)
+    if wqname:
+        workqueue = find_workqueue(prog, wqname)
+        if not workqueue:
+            print("Specified workqueue not found")
         else:
             show_one_workqueue(workqueue)
 
-    print("\n")
+    else:
+        for workqueue in for_each_workqueue(prog):
+            if workqueue_idle(workqueue):
+                if showidle:
+                    show_one_workqueue(workqueue)
+            else:
+                show_one_workqueue(workqueue)
+
+        print("\n")
 
     for pool in for_each_pool(prog):
         if worker_pool_idle(pool):
