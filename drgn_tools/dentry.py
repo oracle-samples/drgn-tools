@@ -12,6 +12,7 @@ from typing import Optional
 import drgn
 from drgn import Object
 from drgn import Program
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux import d_path
 from drgn.helpers.linux.fs import path_lookup
 from drgn.helpers.linux.list import hlist_for_each_entry
@@ -239,7 +240,7 @@ def print_dentry_table(
                 d.d_inode.value_(),
                 int(d_count(d)),
                 file_type,
-                d_path(d).decode(),
+                escape_ascii_string(d_path(d)),
             )
         else:
             table.row(
@@ -247,7 +248,7 @@ def print_dentry_table(
                 d.d_sb.value_(),
                 d.d_inode.value_(),
                 file_type,
-                d_path(d).decode(),
+                escape_ascii_string(d_path(d)),
             )
 
 
@@ -374,7 +375,7 @@ def ls(
     print(f"{directory}:")
     pos = neg = 0
     for i, dentry in enumerate(dentries):
-        name = dentry.d_name.name.string_().decode()
+        name = escape_ascii_string(dentry.d_name.name.string_())
         if dentry_is_negative(dentry):
             neg += 1
             dentry_type = "NEG"
@@ -474,5 +475,5 @@ class DentryCache(CorelensModule):
         else:
             # Emulate oled dentrycache
             for i, dentry in enumerate(dentries):
-                path = d_path(dentry).decode()
+                path = escape_ascii_string(d_path(dentry))
                 print(f"{i:05d} {path}")
