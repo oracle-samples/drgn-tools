@@ -6,6 +6,7 @@ Additional helpers for printk utilities
 import argparse
 import os
 import subprocess
+import sys
 from typing import Optional
 
 from drgn import Program
@@ -42,4 +43,8 @@ class DmesgModule(CorelensModule):
     name = "dmesg"
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
-        print(get_dmesg(prog).decode("utf-8"))
+        # Avoid the overhead of decoding and then re-encoding the bytes: just
+        # write the bytes directly to stdout. Also, avoid any encoding errors.
+        # There's no guaranteed encoding for the kernel log anyway.
+        sys.stdout.buffer.write(get_dmesg(prog))
+        print()
