@@ -89,7 +89,9 @@ def get_per_node_meminfo(prog: Program, node: Object) -> Dict[str, int]:
 
     totalram_pages = node_zone_stats["NR_MANAGED_PAGES"]
     freeram_pages = node_zone_stats["NR_FREE_PAGES"]
-    bounce_pages = node_zone_stats["NR_BOUNCE"]
+    # Since 194df9f66db8d ("mm: remove NR_BOUNCE zone stat") in v6.16, NR_BOUNCE
+    # is removed from stats and set to zero.
+    bounce_pages = node_zone_stats.get("NR_BOUNCE", 0)
     mlocked_pages = node_zone_stats["NR_MLOCK"]
 
     slab_reclaimable = node_zone_stats["NR_SLAB_RECLAIMABLE"]
