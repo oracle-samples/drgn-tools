@@ -110,6 +110,7 @@ def main() -> None:
 
     prog = Program()
     prog.cache["drgn_tools.debuginfo.options"] = opts
+    prog.cache["drgn_tools.debuginfo.vmcore_path"] = args.vmcore
     try:
         prog.set_core_dump(args.vmcore)
     except PermissionError:

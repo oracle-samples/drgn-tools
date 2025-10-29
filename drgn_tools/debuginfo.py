@@ -315,6 +315,9 @@ class DebugInfoOptionsExt:
     ctf_file: Optional[str]
     dwarf_dir: Optional[str]
 
+    # A list of field extractions that will be included into the path expansions
+    extractions: List[Tuple[str, str, str, "re.Pattern"]]
+
     def __init__(
         self,
         repo_paths: List[str],
@@ -327,6 +330,7 @@ class DebugInfoOptionsExt:
         disable_dwarf: bool = False,
         ctf_file: Optional[str] = None,
         dwarf_dir: Optional[str] = None,
+        extractions: Optional[List[Tuple[str, str, str, "re.Pattern"]]] = None,
     ) -> None:
         self.repo_paths = repo_paths
         self.local_path = local_path
@@ -340,6 +344,7 @@ class DebugInfoOptionsExt:
 
         self.ctf_file = ctf_file
         self.dwarf_dir = dwarf_dir
+        self.extractions = extractions or []
 
 
 def _get_host_ol() -> Optional[int]:
@@ -406,6 +411,7 @@ class OracleDebuginfo:
     version: KernelVersion
     extracted: Set[str]
     cached_rpm: Optional[Path]
+    _fmtparams: Optional[Dict[str, str]]
 
     def __init__(self, opts: DebugInfoOptionsExt, prog: Program):
         self.opts = opts
@@ -415,6 +421,49 @@ class OracleDebuginfo:
         self.extracted = set()
         self.cached_rpm = None
         self.warned_mismatch = False
+        self._fmtparams = None
+
+    @property
+    def fmtparams(self) -> Dict[str, str]:
+        if self._fmtparams is None:
+            self._fmtparams = self.version.format_params()
+            # TODO: Drgn 0.0.33 introduces core_dump_path, which may contain the
+            # file path of the core dump if it was available to drgn. For prior
+            # drgn versions, we can retrieve it from a custom cache, which we
+            # set in corelens and the drgn-tools cli. The drgn CLI does not set
+            # this cache entry, however, so this won't work in all cases.
+            vmcore_path = getattr(
+                self.prog,
+                "core_dump_path",
+                self.prog.cache.get("drgn_tools.debuginfo.vmcore_path"),
+            )
+            if vmcore_path:
+                self._fmtparams["vmcore_path"] = os.path.abspath(vmcore_path)
+
+            # The "extractions" feature allows specifying some format parameter
+            # to get created based on a value extracted from another. This is
+            # useful for, e.g., determining the location of vmlinux_repo based
+            # on the path of the vmcore or some part of its version.
+            for extracted, from_field, default, expr in self.opts.extractions:
+                self._fmtparams[extracted] = default
+                if from_field in self._fmtparams:
+                    value = self._fmtparams[from_field]
+                    m = expr.match(value)
+                    if m:
+                        self._fmtparams[extracted] = m.group(1)
+                    else:
+                        log.warning(
+                            "error: for field %s %r, expr didn't match: %r",
+                            from_field,
+                            value,
+                            expr.pattern,
+                        )
+                else:
+                    log.warning(
+                        "error: expansion exists for field %s but the field isn't present",
+                        from_field,
+                    )
+        return self._fmtparams
 
     def ol_vmlinux_repo_finder(self, modules: List[Module]) -> None:
         # We would like to run this unconditionally regardless of whether any of
@@ -434,9 +483,8 @@ class OracleDebuginfo:
             )
             modules[0].build_id = None
 
-        fmtparams = self.version.format_params()
         for repo_format in self.opts.repo_paths:
-            repo_dir = Path(repo_format.format(**fmtparams))
+            repo_dir = Path(repo_format.format(**self.fmtparams))
             if repo_dir.is_dir():
                 log.debug("ol-vmlinux-repo: loading from %s", repo_dir)
                 find_debug_info_vmlinux_repo(repo_dir, modules, self.extracted)
@@ -482,12 +530,11 @@ class OracleDebuginfo:
         if not self.opts.repo_paths:
             log.debug("ol-local-rpm: no vmlinux repo to extract to, exiting")
             return
-        fmtparams = self.version.format_params()
-        dest_dir = Path(self.opts.repo_paths[-1].format(**fmtparams))
+        dest_dir = Path(self.opts.repo_paths[-1].format(**self.fmtparams))
         if self.cached_rpm and self.cached_rpm.exists():
             source_rpm = self.cached_rpm
         else:
-            source_rpm = Path(self.opts.local_path.format(**fmtparams))
+            source_rpm = Path(self.opts.local_path.format(**self.fmtparams))
 
         if not source_rpm.exists():
             log.debug("ol-local-rpm: local RPM is missing: %s", source_rpm)
@@ -536,9 +583,8 @@ class OracleDebuginfo:
             log.debug("ol-download: no vmlinux repo to extract to, exiting")
             return
 
-        fmtparams = self.version.format_params()
-        out_dir = Path(self.opts.repo_paths[-1].format(**fmtparams))
-        dest_rpm = Path(self.opts.local_path.format(**fmtparams))
+        out_dir = Path(self.opts.repo_paths[-1].format(**self.fmtparams))
+        dest_rpm = Path(self.opts.local_path.format(**self.fmtparams))
 
         # Normally, ol-local-rpm is enabled whenever ol-download is. But it's
         # possible for that not to be the case. In that case, ensure that a
@@ -567,7 +613,7 @@ class OracleDebuginfo:
         if self.check_installed_debuginfo(mods_needing_debuginfo):
             return
 
-        urls = [url_fmt.format(**fmtparams) for url_fmt in self.opts.urls]
+        urls = [url_fmt.format(**self.fmtparams) for url_fmt in self.opts.urls]
         tmp = tempfile.NamedTemporaryFile(
             suffix=".rpm", mode="wb", delete=False
         )
@@ -631,10 +677,9 @@ class OracleDebuginfo:
         # Internal systems may have a `vmlinux.ctfa` file in the normal vmlinux
         # repo path.
         if self.opts.repo_paths:
-            fmtparams = self.version.format_params()
             ctf_paths.append(
                 os.path.join(
-                    self.opts.repo_paths[-1].format(**fmtparams),
+                    self.opts.repo_paths[-1].format(**self.fmtparams),
                     "vmlinux.ctfa",
                 )
             )
@@ -705,6 +750,17 @@ def get_debuginfo_config() -> DebugInfoOptionsExt:
     else:
         url_list = ["https://oss.oracle.com/ol{olver}/debuginfo/{rpm}"]
 
+    # Extractions might be used to help determine format parameters for the
+    # paths & URLs above
+    extractions = []
+    if config.has_section("extractions"):
+        for extracted_field, value in config["extractions"].items():
+            from_field, default, expression = value.split(":")
+            default = os.path.expanduser(default)
+            extractions.append(
+                (extracted_field, from_field, default, re.compile(expression))
+            )
+
     def getbool(name, default):
         truthy = ("t", "true", "1", "y", "yes")
         strval = config.get("debuginfo", name, fallback=default).lower()
@@ -726,6 +782,7 @@ def get_debuginfo_config() -> DebugInfoOptionsExt:
         enable_extract=enable_extract,
         enable_ctf=enable_ctf,
         disable_dwarf=disable_dwarf,
+        extractions=extractions,
     )
 
 
