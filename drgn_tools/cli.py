@@ -144,8 +144,10 @@ def main() -> None:
 
     if prog.cache.get("using_ctf"):
         db_kind = "CTF"
+        db_file = prog.cache.get("ctf_file", "(unknown)")
     else:
-        db_kind = f"DWARF: {prog.main_module().debug_file_path}"
+        db_kind = "DWARF"
+        db_file = prog.main_module().debug_file_path
 
     def banner_func(banner: str) -> str:
         header = version_header()
@@ -154,7 +156,7 @@ def main() -> None:
         imports = "\n"
         for mod_name, names in CLI_HELPERS.items():
             imports += f">>> from {mod_name} import {', '.join(names)}\n"
-        db_info = f"Using {db_kind}"
+        db_info = f"Using {db_kind}: {db_file}"
         db_info += "\n" + str(get_module_load_summary(prog))
         return (
             header

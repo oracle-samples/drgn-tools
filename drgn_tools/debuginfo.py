@@ -612,6 +612,7 @@ class OracleDebuginfo:
                     ):
                         load_ctf(self.prog, path)
                         self.prog.cache["using_ctf"] = True
+                        self.prog.cache["ctf_file"] = path
                         ctf_loaded = True
                         module.debug_file_status = ModuleFileStatus.DONT_NEED
                         log.info("ctf: loaded %s", path)

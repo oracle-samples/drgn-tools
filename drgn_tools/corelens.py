@@ -729,8 +729,13 @@ def _do_main() -> None:
     load_time = time.time() - start_time
 
     log.info("%s", _version_string())
-    kind = "CTF" if prog.cache.get("using_ctf") else "DWARF"
-    log.info("Loaded %s debuginfo in in %.03fs", kind, load_time)
+    if prog.cache.get("using_ctf"):
+        kind = "CTF"
+        db_file = prog.cache.get("ctf_file", "(unknown)")
+    else:
+        kind = "DWARF"
+        db_file = prog.main_module().debug_file_path
+    log.info("Loaded %s debuginfo (%s) in in %.03fs", kind, db_file, load_time)
     log.debug(
         "Enabled debuginfo finders: %r", prog.enabled_debug_info_finders()
     )
