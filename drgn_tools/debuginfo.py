@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Dict
@@ -859,13 +860,14 @@ def extract_rpm(
     permissions: Optional[int] = None,
     caller: Optional[str] = None,
 ) -> Dict[str, Path]:
-    log.info(
-        "%sextracting %d debuginfo modules (%s) from %s...",
-        caller or "",
-        len(modules),
-        ", ".join(f"{s}" for s in modules[:3])
-        + ("..." if len(modules) > 3 else ""),
-        source_rpm,
+    print(
+        "{}extracting {} debuginfo modules ({}) from {}...".format(
+            caller or "",
+            len(modules),
+            ", ".join(modules[:3]) + ("..." if len(modules) > 3 else ""),
+            source_rpm,
+        ),
+        file=sys.stderr,
     )
     if not dest_dir.exists():
         # Rather than use .mkdir(exist_ok=True), we do the test explicitly here,
