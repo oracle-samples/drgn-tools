@@ -263,15 +263,37 @@ def is_vmlinux(module: Module) -> bool:
     )
 
 
-def find_debug_info_vmlinux_repo(repo_dir: Path, modules: List[Module]):
+def find_debug_info_vmlinux_repo(
+    repo_dir: Path, modules: List[Module], extracted: Set[str]
+):
+    """
+    Helper function for loading debuginfo out of a standard vmlinux_repo dir
+
+    Of particular importance is the "extracted" parameter. This keeps track of
+    all modules for which there is an existing file in the vmlinux_repo, which
+    we have tried to load. If drgn failed to load it, there's likely a build ID
+    mismatch, which means that it would be useless to re-download or re-extract
+    the file from the RPM.
+
+    :repo_dir: the full path to the directory for this kernel version
+    :modules: the list of drgn modules we need debuginfo for
+    :extracted: set of module names which is updated with each file we encounter
+    """
     for module in modules:
         if not module.wants_debug_file():
             continue
         if is_vmlinux(module):
             module.try_file(repo_dir / "vmlinux")
         elif module_is_in_tree(module):
-            filename = f"{module.name.replace('-', '_')}.ko.debug"
-            module.try_file(repo_dir / filename)
+            file = repo_dir / f"{module.name.replace('-', '_')}.ko.debug"
+            if file.exists():
+                module.try_file(file)
+                extracted.add(module.name)
+                if module.wants_debug_file():
+                    log.warning(
+                        "module %s has a debuginfo file but drgn rejected it -- likely a build ID mismatch",
+                        module.name,
+                    )
 
 
 class DebugInfoOptionsExt:
@@ -416,7 +438,7 @@ class OracleDebuginfo:
             repo_dir = Path(repo_format.format(**fmtparams))
             if repo_dir.is_dir():
                 log.debug("ol-vmlinux-repo: loading from %s", repo_dir)
-                find_debug_info_vmlinux_repo(repo_dir, modules)
+                find_debug_info_vmlinux_repo(repo_dir, modules, self.extracted)
 
     def ol_local_rpm_finder(self, modules: List[Module]) -> None:
         # The local RPM finder must extract to a directory: the vmlinux repo. We
@@ -461,8 +483,9 @@ class OracleDebuginfo:
             permissions=0o777,
             caller="ol-local-rpm: ",
         )
-        find_debug_info_vmlinux_repo(dest_dir, mods_needing_debuginfo)
-        self.extracted.update(modnames)
+        find_debug_info_vmlinux_repo(
+            dest_dir, mods_needing_debuginfo, self.extracted
+        )
 
     def _delete_cached_rpm(self):
         if self.cached_rpm and self.cached_rpm.exists():
@@ -553,8 +576,9 @@ class OracleDebuginfo:
         modnames = [m.name for m in mods_needing_debuginfo]
         out_dir.mkdir(parents=True, exist_ok=True)
         extract_rpm(path, out_dir, modnames, caller="ol-download: ")
-        find_debug_info_vmlinux_repo(out_dir, mods_needing_debuginfo)
-        self.extracted.update(modnames)
+        find_debug_info_vmlinux_repo(
+            out_dir, mods_needing_debuginfo, self.extracted
+        )
 
     def ctf_finder(self, modules: List["Module"]):
         ctf_loaded = self.prog.cache.get("using_ctf", False)
