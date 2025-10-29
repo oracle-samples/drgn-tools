@@ -414,6 +414,7 @@ class OracleDebuginfo:
         self.version = KernelVersion.parse(uname)
         self.extracted = set()
         self.cached_rpm = None
+        self.warned_mismatch = False
 
     def ol_vmlinux_repo_finder(self, modules: List[Module]) -> None:
         # We would like to run this unconditionally regardless of whether any of
@@ -439,6 +440,38 @@ class OracleDebuginfo:
             if repo_dir.is_dir():
                 log.debug("ol-vmlinux-repo: loading from %s", repo_dir)
                 find_debug_info_vmlinux_repo(repo_dir, modules, self.extracted)
+
+    def check_installed_debuginfo(self, modules: List[Module]) -> bool:
+        """
+        Check whether we should skip loading modules from other finders because
+        we have an installed debuginfo RPM.
+
+        If we get to the point where there are apparent in-tree modules which do
+        not have debuginfo, then normally our finders would download or extract
+        debuginfo for them. But if the debuginfo RPM is installed, then drgn has
+        certainly already tried to load all the in-tree modules from the
+        installed debuginfo. Thus, there's likely a build ID mismatch issue, and
+        there's no point in our downloading and/or extracting the debuginfo again.
+
+        Print a warning in this case, and return True to signal to the download
+        & extraction finders that they should not bother to continue.
+        """
+        if not modules:
+            return False
+        vmlinux_path = (
+            f"/usr/lib/debug/lib/modules/{self.version.original}/vmlinux"
+        )
+        if not os.path.exists(vmlinux_path):
+            return False
+        if not self.warned_mismatch:
+            modnames = ", ".join(m.name for m in modules)
+            log.warning(
+                "debuginfo RPM is installed, yet the following in-tree modules"
+                " failed to load (ksplice cold-patch?): %s",
+                modnames,
+            )
+            self.warned_mismatch = True
+        return True
 
     def ol_local_rpm_finder(self, modules: List[Module]) -> None:
         # The local RPM finder must extract to a directory: the vmlinux repo. We
@@ -473,6 +506,8 @@ class OracleDebuginfo:
             log.debug(
                 "ol-local-rpm: no vmlinux/in-tree modules need debug info, exiting"
             )
+            return
+        if self.check_installed_debuginfo(mods_needing_debuginfo):
             return
 
         modnames = [m.name for m in mods_needing_debuginfo]
@@ -528,6 +563,8 @@ class OracleDebuginfo:
             log.debug(
                 "ol-download: no vmlinux/in-tree modules need debug info, exiting"
             )
+            return
+        if self.check_installed_debuginfo(mods_needing_debuginfo):
             return
 
         urls = [url_fmt.format(**fmtparams) for url_fmt in self.opts.urls]
