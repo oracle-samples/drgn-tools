@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-python@v4
         name: Set up Python
         with:
-          python-version: '3.x'
+          python-version: '3.12'
       - name: Install pre-commit
         run: pip install pre-commit
       - name: Run pre-commit hooks
