@@ -36,6 +36,7 @@ from drgn_tools.debuginfo import get_debuginfo_config
 from drgn_tools.logging import FilterMissingDebugSymbolsMessages
 from drgn_tools.module import get_module_load_summary
 from drgn_tools.util import redirect_stdout
+from drgn_tools.util import redirectable
 
 
 log = logging.getLogger("corelens")
@@ -771,7 +772,8 @@ def main() -> None:
         pass
 
 
-def run(prog: Program, cl_cmd: str) -> None:
+@redirectable
+def run(prog: Program, cl_cmd: str, outfile: Optional[str] = None) -> None:
     """
     Run a single corelens command
 
@@ -781,6 +783,7 @@ def run(prog: Program, cl_cmd: str) -> None:
     against ``prog``.
 
     :param cl_cmd: command string to execute
+    :param outfile: filename to redirect output to (see @redirectable)
     """
     cmd = shlex.split(cl_cmd)
     module_name, args = cmd[0], cmd[1:]
@@ -806,8 +809,8 @@ def make_runner(prog: Program) -> Callable[[str], None]:
     argument. This is intended for interactive environments.
     """
 
-    def cl(cl_cmd: str) -> None:
-        return run(prog, cl_cmd)
+    def cl(cl_cmd: str, outfile: Optional[str] = None) -> None:
+        return run(prog, cl_cmd, outfile=outfile)
 
     return cl
 
