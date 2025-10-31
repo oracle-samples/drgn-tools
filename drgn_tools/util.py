@@ -1,6 +1,7 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import argparse
+import contextlib
 import logging
 import re
 import sys
@@ -8,6 +9,7 @@ import time
 import typing as t
 from contextlib import contextmanager
 from enum import IntEnum
+from functools import wraps
 from urllib.error import HTTPError
 from urllib.request import Request
 from urllib.request import urlopen
@@ -567,3 +569,40 @@ class CommaList(argparse.Action):
         for element in value.split(","):
             result.append(self.element_type(element))
         setattr(namespace, self.dest, result)
+
+
+F = t.TypeVar("F", bound=t.Callable[..., t.Any])
+
+
+def redirectable(f: F) -> F:
+    """
+    A decorator which allows any function to be redirected to stdout
+
+    Any function wrapped with this decorator can be called with an optional
+    string parameter "outfile", which specifies a filename that can be used to
+    redirect stdout. By default, the filename is opened in write mode
+    (truncating any former contents). But an explicit mode ""
+    """
+
+    @wraps(f)
+    def inner(*args, **kwargs):
+        outfile = kwargs.pop("outfile", None)
+        mode = "w"
+        # :w or :a can be explicitly specified at the end of the filename
+        if outfile and outfile[-2:] == ":a":
+            outfile = outfile[:-2]
+            mode = "a"
+        elif outfile and outfile[-2:] == ":w":
+            mode = "w"
+            outfile = outfile[:-2]
+        with contextlib.ExitStack() as es:
+            # Optionally redirect stdout
+            if outfile:
+                es.enter_context(
+                    contextlib.redirect_stdout(
+                        es.enter_context(open(outfile, mode))
+                    )
+                )
+            return f(*args, **kwargs)
+
+    return t.cast(F, inner)

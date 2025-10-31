@@ -1,6 +1,5 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-import sys
 from typing import Any
 from typing import Dict
 from typing import Iterable
@@ -8,11 +7,7 @@ from typing import List
 from typing import Optional
 
 
-def print_table(
-    fields: List[List[Any]],
-    outfile: Optional[str] = None,
-    report: bool = False,
-) -> None:
+def print_table(fields: List[List[Any]]) -> None:
     """
     Print a given nested list as table, given that the first list is the column headers.
 
@@ -26,24 +21,13 @@ def print_table(
     for col in range(len(fields[0])):
         col_widths.append(max(len(str(row[col])) for row in fields))
 
-    out = sys.stdout
-    if outfile and report:
-        out = open(outfile, "a")
-        print("\n", file=out)
-    elif outfile:
-        out = open(outfile, "w")
-
     for entry in fields:
         print(
             "".join(
                 str(val).ljust(col_width + 2)
                 for (val, col_width) in zip(entry, col_widths)
             ).rstrip(),
-            file=out,
         )
-
-    if outfile:
-        out.close()
 
 
 class Table:
@@ -75,16 +59,9 @@ class Table:
     :class:`FixedTable`.
 
     :param header: a list of column specifiers, see above for details
-    :param outfile: optional output file name (default is stdout)
-    :param report: when true, outfile is opened in append mode
     """
 
-    def __init__(
-        self,
-        header: List[str],
-        outfile: Optional[str] = None,
-        report: bool = False,
-    ):
+    def __init__(self, header: List[str]):
         # Name of each header
         self.header = []
         # Function (str, int) -> str to justify each column entry
@@ -106,13 +83,6 @@ class Table:
             self.formats.append(fmt)
         self.widths = [len(h) for h in header]
         self.rows: List[List[str]] = []
-        self.out = sys.stdout
-        self.close_output = bool(outfile)
-        if outfile and report:
-            self.out = open(outfile, "a")
-            self.out.write("\n\n")
-        elif outfile:
-            self.out = open(outfile, "w")
 
     def _build_row(
         self, fields: Iterable[Any], update_widths: bool = True
@@ -144,9 +114,9 @@ class Table:
 
     def write(self) -> None:
         """Print the table to the output file"""
-        print(self._row_str(self.header), file=self.out)
+        print(self._row_str(self.header))
         for row in self.rows:
-            print(self._row_str(row), file=self.out)
+            print(self._row_str(row))
 
 
 class FixedTable(Table):
@@ -190,7 +160,7 @@ class FixedTable(Table):
         if widths:
             self.widths = widths
             self.print_immediately = True
-            print(self._row_str(self.header), file=self.out)
+            print(self._row_str(self.header))
 
     def add_row(self, fields: Iterable[Any]) -> None:
         """Add a row to the table (it is immediately printed)"""
@@ -200,48 +170,29 @@ class FixedTable(Table):
         if not self.print_immediately:
             self.print_immediately = True
             row = self._build_row(fields, update_widths=True)
-            print(self._row_str(self.header), file=self.out)
+            print(self._row_str(self.header))
         else:
             row = self._build_row(fields, update_widths=False)
-        print(self._row_str(row), file=self.out)
+        print(self._row_str(row))
 
     def write(self) -> None:
         """Signals that no more rows will be added."""
         if not self.print_immediately:
             # The header was never printed. Do it now, since we are expected to
             # print a blank table.
-            print(self._row_str(self.header), file=self.out)
+            print(self._row_str(self.header))
 
 
-def print_dictionary(
-    dictionary: Dict[str, Any],
-    outfile: Optional[str] = None,
-    report: bool = False,
-) -> None:
+def print_dictionary(dictionary: Dict[str, Any]) -> None:
     """
     Align and print the data
 
     :param dictionary: dictionary to print
-    :param outfile: A file to write the output to.
-    :param report: Open the file in append mode.
     :returns: None
     """
     lcol_length = 10
     for title in dictionary:
         lcol_length = max(len(title), lcol_length)
 
-    out = sys.stdout
-    if outfile and report:
-        out = open(outfile, "a")
-        print("\n", file=out)
-    elif outfile:
-        out = open(outfile, "w")
-
     for title in dictionary:
-        print(
-            f"{title.ljust(lcol_length)}: {dictionary[title]}",
-            file=out,
-        )
-
-    if outfile:
-        out.close()
+        print(f"{title.ljust(lcol_length)}: {dictionary[title]}")
