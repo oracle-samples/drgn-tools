@@ -9,7 +9,7 @@ from setuptools import setup
 
 long_description = "drgn helper script repository"
 
-RELEASE_VERSION = "2.1.0"
+RELEASE_VERSION = "2.2.0"
 PACKAGES = ["drgn_tools"]
 
 
@@ -88,7 +88,7 @@ setup(
     description="drgn helper script repository",
     long_description=long_description,
     install_requires=[
-        "drgn>=0.0.32,<0.0.33",
+        "drgn>=0.0.32,<0.0.34",
     ],
     url="https://github.com/oracle-samples/drgn-tools",
     author="Oracle Linux Sustaining Engineering Team",
@@ -105,5 +105,6 @@ setup(
             "DRGN=drgn_tools.cli:main",
             "corelens=drgn_tools.corelens:main",
         ],
+        "drgn.plugins": ["oracle=drgn_tools.debuginfo"],
     },
 )

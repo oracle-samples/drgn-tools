@@ -20,7 +20,7 @@
 
 
 Name:           python-drgn-tools
-Version:        2.1.0
+Version:        2.2.0
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -59,7 +59,7 @@ a running kernel image (via /proc/kcore).}
 # The drgn dependency can be fulfilled by drgn with, or without, CTF support.
 # However, drgn-tools is tied to specific drgn releases.
 %global drgn_min 0.0.32
-%global drgn_max 0.0.33
+%global drgn_max 0.0.34
 
 %package -n     drgn-tools
 Summary:        %{summary}
@@ -135,6 +135,27 @@ rm %{buildroot}/usr/bin/DRGN
 %endif
 
 %changelog
+* Tue Nov 04 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.2.0-1
+- Rework drgn-tools debuginfo loading to be based on drgn's Module API (Stephen Brennan)
+- Create "oracle" drgn plugin which encapsulates drgn-tools debuginfo logic (Stephen Brennan)
+- New corelens module: "pstack" for printing userspace stack traces (Stephen Brennan)
+- Corelens module: equivalent to oled memstate [Orabug: 37357348] (Yassine Larhrissi)
+- Corelens fails accessing rds_ib_devices [Orabug: 37502613] (Stephen Brennan)
+- Print ioeventfd, iobus, vmstat and vcpustat information in kvm corelens module. [Orabug: 37713468] (Siddhi Katage)
+- crash in corelens rds module [Orabug: 38225228] (Stephen Brennan)
+- test_dump_page_cache_pages_pinning_cgroups produces too much output [Orabug: 37974100] (Stephen Brennan)
+- Test failure for module_build_id() in Linux 6.14 [Orabug: 37973187] (Stephen Brennan)
+- False negatives in module debuginfo detection [Orabug: 37894875] (Stephen Brennan)
+- Make md helper not crash with uninitialized percpu refcount [Orabug: 37968889] (Junxiao Bi)
+- UEK8, drgn-tools-2.1.0-1.el9.noarch : Error with corelens binary when run with /proc/kcore or vmcore [Orabug: 37894852] (Stephen Brennan)
+- drgn-tools-2.1.0-1.el9: python traceback when ctrl-c done with corelens command [Orabug: 37894865] (Stephen Brennan)
+- Mountinfo fails on a (nearly) empty struct mount [Orabug: 37911508] (Stephen Brennan)
+- lockup: detect the blocker for process hang in RCU grace period [Orabug: 37899681] (Richard Li)
+- Add vectorinfo module to drgn_tools [Orabug: 38383772] (Srivathsa Dara)
+- corelens: dump panic bt [Orabug: 38074929] (Richard Li)
+- Enhance rds helper to extract rdma resources and RDS QP state [Orabug: 38221449] (Anand Khoje)
+- Add sosreport module for collecting corelens reports (Anil Palakunnathu Kunnengeri)
+
 * Thu Apr 17 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.1.0-1
 - Add helper and module for unsubmitted pending work (Imran Khan)
 - Add -V option to display version, and include the version in corelens reports (Stephen Brennan) [Orabug: 37503503]
