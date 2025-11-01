@@ -3,6 +3,7 @@
 import argparse
 import gzip
 import sys
+import time
 from subprocess import PIPE
 from subprocess import Popen
 
@@ -34,6 +35,8 @@ def sleeping_proc():
     while b"ready" not in data:
         data.extend(proc.stdout.read(1))
     try:
+        # Give it some time to settle.
+        time.sleep(0.1)
         yield proc
     finally:
         proc.terminate()
