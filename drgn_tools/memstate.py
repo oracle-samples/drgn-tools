@@ -18,6 +18,7 @@ from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import for_each_task
 from drgn.helpers.linux.slab import for_each_slab_cache
 from drgn.helpers.linux.slab import get_slab_cache_aliases
+from drgn.helpers.linux.timekeeping import ktime_get_real_seconds
 
 from drgn_tools.buddyinfo import get_per_zone_buddyinfo
 from drgn_tools.corelens import CorelensModule
@@ -128,11 +129,7 @@ def print_pretty_numastat_kb(str_msg: str, numa_arr_kb: List) -> None:
 
 
 def get_time(prog: Program) -> str:
-    try:
-        timekeeper = prog["shadow_timekeeper"]
-    except KeyError:
-        timekeeper = prog["tk_core"].shadow_timekeeper
-    return time.ctime(timekeeper.xtime_sec)
+    return time.ctime(ktime_get_real_seconds(prog).value_())
 
 
 def memstate_header(prog: Program, print_header: bool = True) -> None:

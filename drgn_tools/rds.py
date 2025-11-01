@@ -33,6 +33,7 @@ from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.pid import find_task
+from drgn.helpers.linux.timekeeping import ktime_get_real_seconds
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.module import ensure_debuginfo
@@ -160,7 +161,7 @@ def get_connection_uptime(conn: Object) -> timedelta:
     :returns: Conn up time as a string
     """
     prog = conn.prog_
-    curr_time = prog["tk_core"].timekeeper.xtime_sec
+    curr_time = ktime_get_real_seconds(prog)
     conn_restart_time = conn.c_path.cp_reconnect_start
     time_since = curr_time - conn_restart_time
     return timedelta(seconds=int(time_since))

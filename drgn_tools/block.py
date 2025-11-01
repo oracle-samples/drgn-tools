@@ -20,6 +20,7 @@ from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.device import MAJOR
 from drgn.helpers.linux.device import MINOR
 from drgn.helpers.linux.list import list_for_each_entry
+from drgn.helpers.linux.timekeeping import ktime_get_coarse_ns
 from drgn.helpers.linux.xarray import xa_for_each
 
 from drgn_tools.bitops import for_each_bit_set
@@ -337,7 +338,7 @@ def rq_pending_time_ns(rq: Object) -> int:
     if has_member(rq, "start_time"):
         return (prog["jiffies"] - rq.start_time).value_() * 1000000
     elif has_member(rq, "start_time_ns"):
-        base = prog["tk_core"].timekeeper.tkr_mono.base
+        base = ktime_get_coarse_ns(prog)
         delta = base - rq.start_time_ns
         return delta.value_() if base > rq.start_time_ns else 0
     else:

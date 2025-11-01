@@ -15,6 +15,8 @@ from drgn import ProgramFlags
 from drgn.helpers.linux import for_each_task
 from drgn.helpers.linux.sched import loadavg
 from drgn.helpers.linux.sched import task_state_to_char
+from drgn.helpers.linux.timekeeping import ktime_get_boottime_seconds
+from drgn.helpers.linux.timekeeping import ktime_get_real_seconds
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.cpuinfo import aarch64_get_cpu_info
@@ -81,14 +83,10 @@ def get_sysinfo(prog: Program) -> Dict[str, Any]:
         uts = prog["init_uts_ns"]
     else:
         raise Exception("error: could not find utsname information")
-    try:
-        timekeeper = prog["shadow_timekeeper"]
-    except KeyError:
-        # 20c7b582e88b8 ("timekeeping: Move shadow_timekeeper into tk_core")
-        # Starting in v6.13
-        timekeeper = prog["tk_core"].shadow_timekeeper
-    date = time.ctime(timekeeper.xtime_sec)
-    uptime = str(datetime.timedelta(seconds=int(timekeeper.ktime_sec)))
+    date = time.ctime(ktime_get_real_seconds(prog).value_())
+    uptime = str(
+        datetime.timedelta(seconds=ktime_get_boottime_seconds(prog).value_())
+    )
     jiffies = int(prog["jiffies"])
     nodename = uts.name.nodename.string_().decode("utf-8")
     release = uts.name.release.string_().decode("utf-8")
