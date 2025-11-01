@@ -512,7 +512,10 @@ def get_all_meminfo(prog: Program) -> Dict[str, int]:
     # Since 194df9f66db8d ("mm: remove NR_BOUNCE zone stat") in v6.16, NR_BOUNCE
     # is removed from stats and set to zero.
     stats["Bounce"] = global_stats.get("NR_BOUNCE", 0)
-    stats["WritebackTmp"] = global_stats["NR_WRITEBACK_TEMP"]
+    # Since commit 8356a5a3b078c ("mm, vmstat: remove the NR_WRITEBACK_TEMP
+    # node_stat_item counter") in 6.17, this element is removed and hardcoded
+    # zero.
+    stats["WritebackTmp"] = global_stats.get("NR_WRITEBACK_TEMP", 0)
 
     stats["CommitLimit"] = get_vm_commit_limit(prog)
     # ``vm_committed_as`` is a percpu counter object. It has percpu
