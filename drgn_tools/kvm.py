@@ -473,6 +473,8 @@ class KvmUtil(CorelensModule):
     """
 
     name = "kvm"
+    skip_unless_have_kmods = ["kvm"]
+    debuginfo_kmods = ["kvm-intel", "kvm-amd"]
 
     default_args = [
         [
