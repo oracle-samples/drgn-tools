@@ -172,8 +172,6 @@ def pytest_configure(config):
         f"vmcore {vmcore}" if vmcore else f"live {os.uname().release}",
         debuginfo_kind,
     )
-    if CTF:
-        print("TESTING WITH CTF")
 
     global PROG
     PROG = drgn.Program()
@@ -188,6 +186,17 @@ def pytest_configure(config):
 
     global KVER
     KVER = KernelVersion.parse(PROG["UTS_RELEASE"].string_().decode())
+
+    print(
+        "BEGIN {} {} TEST: {} (Python {}.{}, drgn {})".format(
+            "CTF" if CTF else "DWARF",
+            "VMCORE" if VMCORE else "LIVE",
+            f"{vmcore} {KVER.original}" if VMCORE else KVER.original,
+            sys.version_info[0],
+            sys.version_info[1],
+            getattr(drgn, "__version__", "unknown"),
+        )
+    )
     if CTF:
         try:
             from drgn.helpers.linux.ctf import load_ctf
