@@ -338,6 +338,9 @@ TEST_KERNELS = [
             "developer/UEK{uek_ver}/{arch}/"
         ),
         pkgbase="kernel-ueknext",
+        # For stable/v2.1.x, 6.15 is the last supported kernel. Support for more
+        # recent kernels should come from the next release of drgn-tools.
+        frozen_release="6.15.0-1.el9ueknext.x86_64",
     ),
     # UEK8 further distributes modules, so we need to add -modules-core.
     TestKernel(
