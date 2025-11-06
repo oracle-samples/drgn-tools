@@ -20,7 +20,7 @@
 
 
 Name:           python-drgn-tools
-Version:        2.1.1
+Version:        2.1.2
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -59,7 +59,7 @@ a running kernel image (via /proc/kcore).}
 # The drgn dependency can be fulfilled by drgn with, or without, CTF support.
 # However, drgn-tools is tied to specific drgn releases.
 %global drgn_min 0.0.25
-%global drgn_max 0.0.33
+%global drgn_max 0.0.34
 
 %package -n     drgn-tools
 Summary:        %{summary}
@@ -132,6 +132,12 @@ rm %{buildroot}/usr/bin/DRGN
 %endif
 
 %changelog
+* Thu Nov 06 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.1.2-1
+- rds: fish crash on NULL task [Orabug: 38225232]
+- drgn-tools litevm tests fail due to missing debuginfo [Orabug: 38625032]
+- kernfs_memcg: respect max_pages even when overshot
+- Add support for drgn 0.0.33
+
 * Tue Jun 24 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.1.1-1
 - Mountinfo fails on a (nearly) empty struct mount [Orabug: 37911511]
 - Test failure for module_build_id() in Linux 6.14 [Orabug: 37973190]
