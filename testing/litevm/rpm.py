@@ -123,6 +123,7 @@ class TestKernel:
         cache_dir: Optional[Path] = None,
         pkgbase: str = "kernel-uek",
         yum_fmt: Optional[str] = None,
+        frozen_release: Optional[str] = None,
     ) -> None:
         self.ol_ver = ol_ver
         self.uek_ver = uek_ver
@@ -131,7 +132,7 @@ class TestKernel:
         self.yum_fmt = yum_fmt
         self.pkgbase = pkgbase
 
-        self._release: str = ""
+        self._release: str = frozen_release or ""
         self._rpm_urls: List[str] = []
         self._dbinfo_url: str = ""
 
@@ -188,17 +189,26 @@ class TestKernel:
                 )
             db_path = db_path_dec
 
-        # Finally, search for the latest version in the DB. We always search for
-        # kernel-uek since even if the package is split, that's the
-        # meta-package.
         conn = sqlite3.connect(str(db_path))
-        rows = conn.execute(
-            """
-            SELECT version, release, location_href FROM packages
-            WHERE name=? AND arch=?;
-            """,
-            (self.pkgbase, self.arch),
-        ).fetchall()
+        if self._release:
+            # If a release was specified, we'll search for just that version in
+            # the sqlite db.
+            rows = conn.execute(
+                """
+                SELECT version, release, location_href FROM packages
+                WHERE name=? AND (version || '-' || release || '.' || arch)=?;
+                """,
+                (self.pkgbase, self._release),
+            ).fetchall()
+        else:
+            # Otherwise, fetch all versions so we can find the latest.
+            rows = conn.execute(
+                """
+                SELECT version, release, location_href FROM packages
+                WHERE name=? AND arch=?;
+                """,
+                (self.pkgbase, self.arch),
+            ).fetchall()
         conn.close()
 
         # Sqlite can't sort versions correctly, so we load them all and sort
@@ -211,7 +221,10 @@ class TestKernel:
         )
         rows.sort(key=key, reverse=True)
         versions_tried = []
-        for ver, rel, href in rows[:2]:
+        # We will try a maximum of the 5 most recent kernel to see whether
+        # debuginfo is available. This adds a bit of wiggle room in case of
+        # situations where debuginfo is not up-to-date online.
+        for ver, rel, href in rows[:5]:
             # Check whether all RPMs are either cached or available via HTTP
             rpm_urls: List[str] = []
             rpm_url = yumbase + href
@@ -260,7 +273,7 @@ class TestKernel:
             )
 
     def _get_rpms(self) -> None:
-        if not self._release:
+        if not self._rpm_urls:
             self._getlatest()
 
         self._rpm_paths = []
