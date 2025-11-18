@@ -807,8 +807,9 @@ def vdev_vring_show(vd_vring: t.List[Object], key: str) -> None:
         for vring in vd_vring:
             log.debug("=> struct vring_virtqueue %x" % (vring.address_))
             vring_info = get_vring_info(vring)
+            nr_pending_req = vring_info.avail_idx - vring_info.used_idx
             print(
-                "%10s.%-12s %16x %16s %16s %16s %5d %5d:%5d:%5d:%5d %3c"
+                "%10s.%-12s %16x %16s %16s %16s %5d %5d:%5d:%5d:%5d %3c %5d"
                 % (
                     key,
                     vring_info.vq_name,
@@ -822,6 +823,7 @@ def vdev_vring_show(vd_vring: t.List[Object], key: str) -> None:
                     vring_info.avail_idx,
                     vring_info.used_idx,
                     vring_info.event,
+                    nr_pending_req,
                 )
             )
 
@@ -844,7 +846,7 @@ def vrings_show(
 
     if header:
         print(
-            "{:>10}.{:12} {:16} {:16} {:16} {:16} {:5} {:23} {:6}".format(
+            "{:>10}.{:12} {:16} {:16} {:16} {:16} {:5} {:23} {:6} {:5}".format(
                 "DEV",
                 "VQ NAME",
                 "VRING_VIRTQUEUE",
@@ -854,6 +856,7 @@ def vrings_show(
                 "N_ENT",
                 "L_USD:A_SHD:A_IDX:U_IDX",
                 "EVENT",
+                "NR_PENDING_REQ",
             )
         )
 
