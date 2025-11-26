@@ -47,6 +47,7 @@ from drgn import Architecture
 from drgn import FaultError
 from drgn import Object
 from drgn import Program
+from drgn import ProgramFlags
 from drgn import sizeof
 from drgn import StackTrace
 from drgn.helpers.linux import access_remote_vm
@@ -56,6 +57,7 @@ from drgn.helpers.linux import find_task
 from drgn.helpers.linux import for_each_online_cpu
 from drgn.helpers.linux import for_each_task
 from drgn.helpers.linux import for_each_vma
+from drgn.helpers.linux import task_on_cpu
 from drgn.helpers.linux import task_state_to_char
 from drgn.helpers.linux import vma_find
 
@@ -765,9 +767,17 @@ def pstack_print_process(task: Object) -> None:
         tcomm = thread.comm.string_().decode("utf-8", errors="replace")
         st = task_state_to_char(thread)
         cpu = task_cpu(thread)
-        cpunote = "RUNNING ON " if cpu_curr(prog, cpu) == thread else ""
+        on_cpu = task_on_cpu(thread)
+        cpunote = "RUNNING ON " if on_cpu else ""
         print(f"  Thread {i} TID={tid} [{st}] {cpunote}CPU={cpu} ('{tcomm}')")
-        kstack = prog.stack_trace(thread)
+        try:
+            kstack = prog.stack_trace(thread)
+        except ValueError as e:
+            if "cannot unwind stack of running task" in str(e):
+                print(f"    {str(e)}")
+                continue
+            else:
+                raise
         if len(kstack) > 0 and (kstack[0].pc & (1 << 63)):
             # Kernel stack is indeed a kernel stack, print it
             print(
@@ -786,6 +796,8 @@ def pstack(prog: Program) -> None:
     parser = argparse.ArgumentParser(description="print stack traces")
     add_task_args(parser)
     args = parser.parse_args(sys.argv[2:])
+    if args.online and prog.flags & ProgramFlags.IS_LIVE:
+        sys.exit("error: --online: cannot unwind running tasks on live system")
     for task in get_tasks(prog, args):
         pstack_print_process(task)
         print()
@@ -801,6 +813,11 @@ class Pstack(CorelensModule):
         add_task_args(parser)
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
+        if args.online and prog.flags & ProgramFlags.IS_LIVE:
+            print(
+                "--online: cannot unwind running tasks on live system, skipping"
+            )
+            return
         for task in get_tasks(prog, args):
             pstack_print_process(task)
             print()
