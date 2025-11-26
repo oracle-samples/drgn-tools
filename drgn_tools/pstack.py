@@ -269,30 +269,52 @@ def add_task_args(group: argparse.ArgumentParser) -> None:
     )
 
 
+def task_dsos(mm: Object) -> List[Tuple[str, int, int, int]]:
+    """
+    Return the mapped DSOs for a task's ``mm_struct``. The return value is a
+    tuple: (path, start, end, ino)
+    """
+    # For the first pass, find any mapping which starts at offset 0 within the
+    # file, and record the full range of the file (even if it's not actually
+    # mapped for its full size). Also, record which file mappings have an
+    # executable VMA, since we'll only care about those.
+    file_range: Dict[str, Tuple[int, int, int]] = {}
+    file_exec = set()
+    VM_EXEC = 0x4
+    for vma in for_each_vma(mm):
+        if not vma.vm_file:
+            continue
+        path = os.fsdecode(d_path(vma.vm_file.f_path))
+        if vma.vm_pgoff == 0:
+            file_range[path] = (
+                vma.vm_start.value_(),
+                (vma.vm_start + vma.vm_file.f_inode.i_size).value_(),
+                vma.vm_file.f_inode.i_ino.value_(),
+            )
+        if vma.vm_flags & VM_EXEC:
+            file_exec.add(path)
+
+    # For the second pass, ensure there is no overlap between the ranges we
+    # created previously. Since the whole file is not necessarily mapped, we
+    # want to avoid creating overlapping ranges that drgn is not expecting (see
+    # https://github.com/osandov/drgn/issues/574). Once we've ensured there are
+    # no overlaps, and the file had an executable mapping, we can emit it.
+    ranges = sorted(file_range.items(), key=lambda t: t[1][0])
+    result = []
+    for i, (path, (start, end, ino)) in enumerate(ranges):
+        if i + 1 < len(ranges):
+            end = min(end, ranges[i + 1][1][1])
+        if path in file_exec:
+            result.append((path, start, end, ino))
+    return result
+
+
 def task_metadata(prog: Program, task: Object) -> Dict[str, Any]:
     """Return JSON metadata about a task, for later use."""
-    VM_EXEC = 0x4
     load_addrs = {}
-    file_vm_end: Dict[str, int] = {}
     if task.mm:
-        for vma in for_each_vma(task.mm):
-            if not vma.vm_file:
-                continue
-            path = os.fsdecode(d_path(vma.vm_file.f_path))
-            file_vm_end[path] = max(
-                vma.vm_end.value_(),
-                file_vm_end.get(path, 0),
-            )
-            if vma.vm_flags & VM_EXEC and vma.vm_file:
-                file_start = (
-                    vma.vm_start - vma.vm_pgoff * task.mm.prog_["PAGE_SIZE"]
-                ).value_()
-                inode = vma.vm_file.f_inode.i_ino.value_()
-                load_addrs[path] = [file_start, vma.vm_end.value_(), inode]
-
-        # use the largest vm_end we find for the end of the address range
-        for path in load_addrs:
-            load_addrs[path][1] = file_vm_end[path]
+        for path, start, end, inode in task_dsos(task.mm):
+            load_addrs[path] = [start, end, inode]
     return {
         "pid": task.pid.value_(),
         "comm": task.comm.string_().decode("utf-8", errors="replace"),
@@ -709,39 +731,19 @@ def build_prog_from_mm(mm: Object) -> Program:
 
     up.add_memory_segment(0, 0xFFFFFFFFFFFFFFFF, read_fn, False)
 
-    # Do one pass where we record the maximum extent of the mapping for each
-    # file, and we also detect each executable mapping, for which we prepare
-    # modules.
-    file_vm_end: Dict[str, int] = {}
-    VM_EXEC = 0x4
-    for vma in for_each_vma(mm):
-        if vma.vm_file:
-            path = os.fsdecode(d_path(vma.vm_file.f_path))
-            file_vm_end[path] = max(
-                vma.vm_end.value_(), file_vm_end.get(path, 0)
-            )
-        if vma.vm_flags & VM_EXEC and vma.vm_file:
-            try:
-                statbuf = os.stat(path)
-                if statbuf.st_ino != vma.vm_file.f_inode.i_ino.value_():
-                    log.warning(
-                        "file %s doesn't match the inode on-disk, it may"
-                        " have been updated",
-                        path,
-                    )
-            except OSError:
-                pass
-            file_start = (
-                vma.vm_start - vma.vm_pgoff * mm.prog_["PAGE_SIZE"]
-            ).value_()
-            mod = up.extra_module(path, create=True)
-            mod.address_range = (file_start, vma.vm_end.value_())
-
-    # Now set the address ranges based on the observed file end, then load the
-    # ELF files.
-    for mod in up.modules():
-        path = mod.name
-        mod.address_range = (mod.address_range[0], file_vm_end[path])
+    for path, start, end, ino in task_dsos(mm):
+        try:
+            statbuf = os.stat(path)
+            if statbuf.st_ino != ino:
+                log.warning(
+                    "file %s doesn't match the inode on-disk, it may"
+                    " have been updated",
+                    path,
+                )
+        except OSError:
+            pass
+        mod = up.extra_module(path, create=True)
+        mod.address_range = (start, end)
         mod.try_file(path)
 
     return up
