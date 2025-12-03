@@ -57,7 +57,6 @@ from drgn.helpers.linux import find_task
 from drgn.helpers.linux import for_each_online_cpu
 from drgn.helpers.linux import for_each_task
 from drgn.helpers.linux import for_each_vma
-from drgn.helpers.linux import task_on_cpu
 from drgn.helpers.linux import task_state_to_char
 from drgn.helpers.linux import vma_find
 
@@ -767,7 +766,7 @@ def pstack_print_process(task: Object) -> None:
         tcomm = thread.comm.string_().decode("utf-8", errors="replace")
         st = task_state_to_char(thread)
         cpu = task_cpu(thread)
-        on_cpu = task_on_cpu(thread)
+        on_cpu = cpu_curr(prog, cpu) == thread
         cpunote = "RUNNING ON " if on_cpu else ""
         print(f"  Thread {i} TID={tid} [{st}] {cpunote}CPU={cpu} ('{tcomm}')")
         try:
