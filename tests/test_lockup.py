@@ -4,4 +4,4 @@ from drgn_tools import lockup
 
 
 def test_lockup(prog):
-    lockup.scan_lockup(prog)
+    lockup.scan_lockup(prog, stack=True)

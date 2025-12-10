@@ -13,6 +13,7 @@ from drgn.helpers.linux.percpu import per_cpu
 from drgn_tools.bt import bt
 from drgn_tools.bt import bt_has_any
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.smp import _irq_enabled
 from drgn_tools.table import print_table
 from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import timestamp_str
@@ -116,40 +117,101 @@ def dump_tasks_waiting_fsnotify(prog, min_run_time_seconds: int) -> None:
 
 
 def scan_lockup(
-    prog: Program, min_run_time_seconds: int = 1, skip_swapper: bool = True
+    prog: Program, stack: bool, min_run_time_seconds: int = 1, top_k: int = -1, skip_swapper: bool = True
 ) -> None:
     """
-    Scan potential lockups on cpus and tasks waiting for RCU.
+    Scan potential lockups on CPUs and tasks waiting for RCU.
+    Collect all long-running tasks, rank them by run time, and print top_k.
 
     :param prog: drgn program
+    :param stack: bool
     :param min_run_time_seconds: int
+    :param top_k: int
     :param skip_swapper: bool
     """
-    nr_processes = 0
-    for cpus in for_each_online_cpu(prog):
-        runqueue = per_cpu(prog["runqueues"], cpus)
+    entries = []
+
+    for cpu in for_each_online_cpu(prog):
+        runqueue = per_cpu(prog["runqueues"], cpu)
         curr_task_addr = runqueue.curr.value_()
         curr_task = runqueue.curr[0]
         comm = escape_ascii_string(curr_task.comm.string_())
         pid = curr_task.pid.value_()
-        run_time = task_lastrun2now(curr_task)
         prio = curr_task.prio.value_()
+        run_time = task_lastrun2now(curr_task)  # ns
         if run_time < min_run_time_seconds * 1e9:
             continue
-        if skip_swapper and comm == f"swapper/{cpus}":
+
+        if skip_swapper and comm == f"swapper/{cpu}":
             continue
-        print(f"CPU {cpus} RUNQUEUE: {runqueue.address_of_().value_():x}")
+
+        entries.append({
+            "cpu": cpu,
+            "runqueue": runqueue,
+            "task_addr": curr_task_addr,
+            "task": curr_task,
+            "comm": comm,
+            "pid": pid,
+            "prio": prio,
+            "runtime": run_time,
+        })
+
+    entries.sort(key=lambda x: x["runtime"], reverse=True)
+
+    # detect lockup type (soft or hard)
+    longest_running_task = entries[0]
+    irq_enabled = _irq_enabled(prog, longest_running_task['cpu'])
+
+    # convert ns -> s
+    runtime_s = longest_running_task["runtime"] / 1e9
+
+    SOFT_LOCKUP_THRESHOLD = 20
+    HARD_LOCKUP_THRESHOLD = 10
+
+    if irq_enabled and runtime_s > SOFT_LOCKUP_THRESHOLD:
+        print(
+            f"Soft lockup detected - CPU#{longest_running_task['cpu']} "
+            f"stuck for {runtime_s:.0f}s! "
+            f"[{longest_running_task['comm']}:{longest_running_task['pid']}]"
+        )
+
+    elif (not irq_enabled) and runtime_s > HARD_LOCKUP_THRESHOLD:
+        print(
+            f"Hard lockup detected - CPU#{longest_running_task['cpu']} "
+            f"stuck for {runtime_s:.0f}s! "
+            f"[{longest_running_task['comm']}:{longest_running_task['pid']}]"
+        )
+
+    total_entries = len(entries)
+
+    if top_k > 0:
+        entries = entries[:top_k]
+
+    # print results
+    for e in entries:
+        cpu = e["cpu"]
+        runqueue = e["runqueue"]
+        curr_task_addr = e["task_addr"]
+        curr_task = e["task"]
+        comm = e["comm"]
+        pid = e["pid"]
+        prio = e["prio"]
+        run_time = e["runtime"]
+
+        print(f"CPU {cpu} RUNQUEUE: {runqueue.address_of_().value_():x}")
         print(
             f"  PID: {pid:<6d}  TASK: {curr_task_addr:x}  PRIO: {prio}"
-            f'  COMMAND: "{comm}"',
+            f'  COMMAND: "{comm}"'
             f"  LOCKUP TIME: {timestamp_str(run_time)}",
         )
-        print("\nCalltrace:")
-        bt(task_or_prog=curr_task.address_of_())
-        print()
-        nr_processes += 1
+        if stack:
+            print("\nCalltrace:")
+            bt(task_or_prog=curr_task.address_of_())
+            print()
 
-    print(f"We found {nr_processes} processes running more than {min_run_time_seconds} seconds")
+    print(f"We found {total_entries} processes exceeding {min_run_time_seconds} seconds.")
+    if top_k > 0:
+        print(f"Longest {len(entries)} processes are printed above.")
 
     dump_tasks_waiting_rcu_gp(prog, min_run_time_seconds)
     dump_tasks_waiting_spinlock(prog, min_run_time_seconds)
@@ -163,12 +225,24 @@ class LockUp(CorelensModule):
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
+            "--stack",
+            action="store_true",
+            help="Print the stacks."
+        )
+        parser.add_argument(
             "--time",
             "-t",
             type=float,
             default=2,
             help="list all the processes that have been running more than <time> seconds",
         )
+        parser.add_argument(
+            "--top_k",
+            "-k",
+            type=int,
+            default=-1,
+            help="list top k processes in terms of runtime",
+        )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
-        scan_lockup(prog, args.time)
+        scan_lockup(prog, args.stack, args.time, args.top_k)
