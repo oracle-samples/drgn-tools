@@ -791,6 +791,12 @@ def drgn_prog_set(prog: Program) -> None:
     if not prog.flags & ProgramFlags.IS_LINUX_KERNEL:
         return
 
+    # It seems possible for plugins to be registered multiple times if there's
+    # an issue with the importlib metadata due to the installation. Defensively
+    # avoid re-running.
+    if "ol-vmlinux-repo" in prog.registered_debug_info_finders():
+        return
+
     if "drgn_tools.debuginfo.options" in prog.cache:
         opts = prog.cache["drgn_tools.debuginfo.options"]
     else:
