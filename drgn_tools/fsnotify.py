@@ -110,6 +110,9 @@ def fsnotify_mark_object(mark: Object) -> Tuple[str, Object]:
         # the object it contained. This was merged in 4.12.
         return _get_object_no_type(mark)
 
+    if not conn:
+        return "none", NULL(prog, "void *")
+
     try:
         type_ = conn.type.read_()
     except AttributeError:
@@ -305,6 +308,8 @@ def fsnotify_group_report(
     kind_counts: Dict[str, int] = {}
     for mark in fsnotify_group_for_each_mark(group):
         kind, ptr = fsnotify_mark_object(mark)
+        if not ptr:
+            continue
         kind_counts[kind] = kind_counts.get(kind, 0) + 1
         mask = decode_flags(
             mark.mask, FSNOTIFY_FLAGS.items(), bit_numbers=False
