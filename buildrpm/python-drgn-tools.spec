@@ -20,7 +20,7 @@
 
 
 Name:           python-drgn-tools
-Version:        2.2.0
+Version:        2.2.1
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -135,6 +135,14 @@ rm %{buildroot}/usr/bin/DRGN
 %endif
 
 %changelog
+* Fri Jan 30 2026 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.2.1-1
+- Print number of pending I/O requests for all virtio devices [Orabug: 38665851] (Siddhi Katage)
+- pstack: multiple fixes (Stephen Brennan)
+- fsnotify: fix FaultError on RHCK7 (Stephen Brennan)
+- memstate: fix miscounted hugepages (Stephen Brennan)
+- debuginfo: handle multiple calls to drgn_prog_set() (Stephen Brennan)
+- meminfo: handle "could not find symbol with name 'swapper_spaces'" (Stephen Brennan)
+
 * Tue Nov 04 2025 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.2.0-1
 - Rework drgn-tools debuginfo loading to be based on drgn's Module API (Stephen Brennan)
 - Create "oracle" drgn plugin which encapsulates drgn-tools debuginfo logic (Stephen Brennan)
