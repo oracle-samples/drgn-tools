@@ -162,11 +162,13 @@ def get_mm_constants(prog: Program) -> Dict[str, int]:
             unit = mm_consts["HPAGE_PMD_NR"]
         mm_consts["TRANS_HPAGE_UNIT"] = unit
 
-        # Determine the max number of swap file types.
-        # In mm/swap_state.c, ``nr_swapper_spaces`` is defined as:
-        # "static unsigned int nr_swapper_spaces[MAX_SWAPFILES] __read_mostly;"
-        if "nr_swapper_spaces" in prog:
-            mm_consts["MAX_SWAPFILES"] = len(prog["nr_swapper_spaces"])
+        # Determine the max number of swap file types by the length of
+        # "swap_cgroup_ctrl" array, defined in mm/swap_cgroup.c since UEK5.
+        # While the "swap_info" array may seem more obvious, some UEK6 versions
+        # don't have a length for this array in the debuginfo, and
+        # swap_cgroup_ctrl doesn't exhibit this issue.
+        if "swap_cgroup_ctrl" in prog:
+            mm_consts["MAX_SWAPFILES"] = len(prog["swap_cgroup_ctrl"])
         else:
             # "nr_swapper_spaces" does not exist in UEK-4.
             mm_consts["MAX_SWAPFILES"] = len(prog["swapper_spaces"])
