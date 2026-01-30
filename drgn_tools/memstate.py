@@ -189,7 +189,7 @@ def display_kernel_mm(
     kernel_stack = pages_to_gb(page_size, mm_stats["KernelStack"])
     percpu = pages_to_gb(page_size, mm_stats["Percpu"])
     total = slab_mm + vmalloc + page_tables + kernel_stack + percpu
-    hugepagessize = get_total_hugetlb_pages(prog)
+    hugepagessize = pages_to_gb(page_size, get_total_hugetlb_pages(prog))
     ukn = mem_total - (mem_free + total + user_alloc + hugepagessize)
     total = round(total + ukn, 1)
 
