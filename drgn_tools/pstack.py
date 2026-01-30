@@ -797,9 +797,16 @@ def pstack(prog: Program) -> None:
     args = parser.parse_args(sys.argv[2:])
     if args.online and prog.flags & ProgramFlags.IS_LIVE:
         sys.exit("error: --online: cannot unwind running tasks on live system")
+    errs = 0
     for task in get_tasks(prog, args):
-        pstack_print_process(task)
+        try:
+            pstack_print_process(task)
+        except Exception as e:
+            errs += 1
+            print(f"error: {str(e)}")
         print()
+    if errs > 0:
+        print(f"NOTE: encountered {errs} error{'s' if errs > 1 else ''}")
 
 
 class Pstack(CorelensModule):
@@ -817,9 +824,16 @@ class Pstack(CorelensModule):
                 "--online: cannot unwind running tasks on live system, skipping"
             )
             return
+        errs = 0
         for task in get_tasks(prog, args):
-            pstack_print_process(task)
+            try:
+                pstack_print_process(task)
+            except Exception as e:
+                errs += 1
+                print(f"error: {str(e)}")
             print()
+        if errs > 0:
+            print(f"NOTE: encountered {errs} error{'s' if errs > 1 else ''}")
 
 
 class PstackDump(CorelensModule):
