@@ -304,7 +304,7 @@ def task_dsos(mm: Object) -> List[Tuple[str, int, int, int]]:
     result = []
     for i, (path, (start, end, ino)) in enumerate(ranges):
         if i + 1 < len(ranges):
-            end = min(end, ranges[i + 1][1][1])
+            end = min(end, ranges[i + 1][1][0])
         if path in file_exec:
             result.append((path, start, end, ino))
     return result
