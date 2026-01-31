@@ -396,6 +396,37 @@ def _check_ctf_compat(prog: Program, kver: KernelVersion) -> bool:
     return False
 
 
+def _find_vmcore_path_from_stack() -> Optional[str]:
+    # Last-ditch fallback effort to get the core dump file path from the stack,
+    # when we're running from the drgn CLI. Only to be used on drgn 0.0.32,
+    # which is the oldest supported drgn release, and thus the only release that
+    # doesn't support Program.core_dump_path.
+    #
+    # Unwind our own stack and see if we can find the _main() function of the
+    # drgn CLI. If so, get the -c argument value.
+    #
+    # You might say we should just try to get the path from "sys.argv", but
+    # there's no guarantee that we are actually running from the drgn CLI. This
+    # method conveniently ensures this is the case, so it's safer than referring
+    # to the args.
+    try:
+        from drgn.cli import _main
+
+        drgn_main = _main.__code__
+
+        depth = 0
+        frame = sys._getframe(0)
+        while depth < 50 and frame:
+            if frame.f_code == drgn_main:
+                return frame.f_locals["args"].core
+            depth += 1
+            frame = frame.f_back  # type: ignore
+    except Exception:
+        pass
+
+    return None
+
+
 class OracleDebuginfo:
     """
     Implements Oracle Linux debuginfo finding logic
@@ -428,16 +459,19 @@ class OracleDebuginfo:
     def fmtparams(self) -> Dict[str, str]:
         if self._fmtparams is None:
             self._fmtparams = self.version.format_params()
-            # TODO: Drgn 0.0.33 introduces core_dump_path, which may contain the
-            # file path of the core dump if it was available to drgn. For prior
-            # drgn versions, we can retrieve it from a custom cache, which we
-            # set in corelens and the drgn-tools cli. The drgn CLI does not set
-            # this cache entry, however, so this won't work in all cases.
-            vmcore_path = getattr(
-                self.prog,
-                "core_dump_path",
-                self.prog.cache.get("drgn_tools.debuginfo.vmcore_path"),
-            )
+            # Drgn 0.0.33 introduces core_dump_path, which may contain the
+            # file path of the core dump if it was available to drgn.
+            vmcore_path = getattr(self.prog, "core_dump_path", None)
+            if not vmcore_path:
+                # For drgn 0.0.32, if drgn-tools/corelens created the program,
+                # then we cache the vmcore path. Read it here.
+                vmcore_path = self.prog.cache.get(
+                    "drgn_tools.debuginfo.vmcore_path"
+                )
+            if not vmcore_path:
+                # For drgn 0.0.32, if the vanilla drgn CLI created the program,
+                # we can try getting it from the stack.
+                vmcore_path = _find_vmcore_path_from_stack()
             if vmcore_path:
                 self._fmtparams["vmcore_path"] = os.path.abspath(vmcore_path)
 
@@ -880,7 +914,7 @@ def extract_rpm(
         # because when creating the directory, we need to set 777 permissions in
         # order to allow other users to extract debuginfo on shared
         # repositories.
-        dest_dir.mkdir()
+        dest_dir.mkdir(parents=True)
         if permissions is not None:
             dest_dir.chmod(permissions)
     elif not os.access(dest_dir, os.R_OK | os.W_OK | os.X_OK):
