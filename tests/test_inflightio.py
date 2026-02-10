@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from drgn import FaultError
 
-from drgn_tools import block
+from drgn_tools import inflightio
 
 
 @pytest.fixture(scope="module")
@@ -54,7 +54,7 @@ def test_dump_inflight_io(prog, fio):
     # Retry this test a few times since it is flaky on a live system
     for _ in range(3):
         try:
-            block.dump_inflight_io(prog)
+            inflightio.dump_inflight_io(prog)
             break
         except FaultError:
             pass
