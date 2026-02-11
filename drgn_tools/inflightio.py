@@ -17,6 +17,7 @@ from drgn_tools.block import rq_pending_time_ns
 from drgn_tools.block import show_rq_issued_cpu
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.nvme import for_each_nvme_ctrl
+from drgn_tools.util import has_member
 from drgn_tools.util import timestamp_str
 
 
@@ -31,10 +32,22 @@ def dump_nvme_mgmt_inflight_io(prog: drgn.Program, qtype: str) -> None:
         if qtype == "admin" and ctrl.admin_q.value_():
             q = ctrl.admin_q
             name = "nvme" + str(ctrl.instance.value_()) + "-admin"
-        elif qtype == "connect" and ctrl.connect_q.value_():
+        elif (
+            # commit 07bfcd09a288 ("nvme-fabrics: add a generic NVMe over Fabrics library")
+            # since v4.8
+            qtype == "connect"
+            and has_member(ctrl, "connect_q")
+            and ctrl.connect_q.value_()
+        ):
             q = ctrl.connect_q
             name = "nvme" + str(ctrl.instance.value_()) + "-connect"
-        elif qtype == "fabrics" and ctrl.fabrics_q.value_():
+        elif (
+            # commit e7832cb48a65 ("nvme: make fabrics command run on a separate request queue")
+            # since v5.4
+            qtype == "fabrics"
+            and has_member(ctrl, "fabrics_q")
+            and ctrl.fabrics_q.value_()
+        ):
             q = ctrl.fabrics_q
             name = "nvme" + str(ctrl.instance.value_()) + "-fabrics"
         else:
