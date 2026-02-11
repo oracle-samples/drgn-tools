@@ -33,6 +33,18 @@ def for_each_nvme_disk(prog: Program) -> Iterable[Object]:
             yield cast("struct nvme_ns *", disk.private_data)
 
 
+def for_each_nvme_ctrl(prog: Program) -> Iterable[Object]:
+    """
+    Return NVMe ctrl devices
+
+    :param prog: Program currently debugging
+    :returns: iterable of ``struct nvme_ctrl *`` in the program
+    """
+    ctrls = {ns.ctrl.value_() for ns in for_each_nvme_disk(prog)}
+    for ctrl in ctrls:
+        yield Object(prog, "struct nvme_ctrl *", ctrl)
+
+
 def show_ns_info(prog: Program) -> None:
     """
     Display namepsace information for each NVMe device

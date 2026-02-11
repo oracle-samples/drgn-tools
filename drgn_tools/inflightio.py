@@ -16,7 +16,49 @@ from drgn_tools.block import rq_op
 from drgn_tools.block import rq_pending_time_ns
 from drgn_tools.block import show_rq_issued_cpu
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.nvme import for_each_nvme_ctrl
 from drgn_tools.util import timestamp_str
+
+
+def dump_nvme_mgmt_inflight_io(prog: drgn.Program, qtype: str) -> None:
+    """
+    Dump inflight io from NVMe's management queue
+
+    :param prog: drgn program
+    :param qtype: managment queue name, "admin", "connect" or "fabrics"
+    """
+    for ctrl in for_each_nvme_ctrl(prog):
+        if qtype == "admin" and ctrl.admin_q.value_():
+            q = ctrl.admin_q
+            name = "nvme" + str(ctrl.instance.value_()) + "-admin"
+        elif qtype == "connect" and ctrl.connect_q.value_():
+            q = ctrl.connect_q
+            name = "nvme" + str(ctrl.instance.value_()) + "-connect"
+        elif qtype == "fabrics" and ctrl.fabrics_q.value_():
+            q = ctrl.fabrics_q
+            name = "nvme" + str(ctrl.instance.value_()) + "-fabrics"
+        else:
+            return
+
+        mq_pending = [
+            (hwq.value_(), hwq[0].read_(), rq.value_(), rq[0].read_())
+            for hwq, rq in for_each_mq_pending_request(q)
+        ]
+        for hwq_ptr, hwq, rq_ptr, rq in mq_pending:
+            print(
+                "%-20s %-20lx %-20lx %-16s %-16s\n%-20s %-20d %-20d %-16s"
+                % (
+                    name,
+                    hwq_ptr,
+                    rq_ptr,
+                    show_rq_issued_cpu(rq),
+                    rq_op(rq),
+                    rq_flags(rq),
+                    rq.__sector,
+                    rq.__data_len,
+                    timestamp_str(rq_pending_time_ns(rq)),
+                )
+            )
 
 
 def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
@@ -97,6 +139,12 @@ def dump_inflight_io(prog: drgn.Program, diskname: str = "all") -> None:
                     timestamp_str(rq_pending_time_ns(rq)),
                 )
             )
+
+    # dump nvme management inflight IO
+    if diskname == "all":
+        dump_nvme_mgmt_inflight_io(prog, "admin")
+        dump_nvme_mgmt_inflight_io(prog, "connect")
+        dump_nvme_mgmt_inflight_io(prog, "fabrics")
 
 
 class InflightIOModule(CorelensModule):
