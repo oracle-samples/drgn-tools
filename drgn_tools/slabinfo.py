@@ -4,6 +4,9 @@
 Helper to view slabinfo data
 """
 import argparse
+from itertools import islice
+from typing import Any
+from typing import Dict
 from typing import List
 from typing import NamedTuple
 from typing import Tuple
@@ -19,10 +22,13 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.nodemask import for_each_online_node
 from drgn.helpers.linux.percpu import per_cpu_ptr
 from drgn.helpers.linux.slab import _get_slab_cache_helper
+from drgn.helpers.linux.slab import find_slab_cache
 from drgn.helpers.linux.slab import for_each_slab_cache
+from drgn.helpers.linux.slab import slab_cache_for_each_allocated_object
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import FixedTable
+from drgn_tools.util import hexdump_mem
 
 
 class FreelistError(Exception):
@@ -408,6 +414,24 @@ def print_slab_info(prog: Program) -> None:
         table.write()
 
 
+def dump_slab_objects(slab_cache: Object, limit: int = 1000):
+    prog = slab_cache.prog_
+    object_size = int(slab_cache.size)
+    cache: Dict[Any, Any] = {}
+    for object in islice(
+        slab_cache_for_each_allocated_object(slab_cache, "void"), limit
+    ):
+        print(f"=== {int(object):x} ===")
+        hexdump_mem(
+            prog,
+            object,
+            object_size,
+            show_ascii=True,
+            annotate=True,
+            cache=cache,
+        )
+
+
 class SlabInfo(CorelensModule):
     """Print info about each slab cache"""
 
@@ -415,3 +439,24 @@ class SlabInfo(CorelensModule):
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         print_slab_info(prog)
+
+
+class SlabDump(CorelensModule):
+    """Dump slab objects as a hex dump for analysis"""
+
+    name = "slabdump"
+    run_when = "never"
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("slab_cache", help="name of the slab cache")
+        parser.add_argument(
+            "-l",
+            "--limit",
+            type=int,
+            default=1000,
+            help="maximum slab objects",
+        )
+
+    def run(self, prog: Program, args: argparse.Namespace) -> None:
+        cache = find_slab_cache(prog, args.slab_cache)
+        dump_slab_objects(cache, limit=args.limit)
