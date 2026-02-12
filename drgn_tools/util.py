@@ -4,6 +4,7 @@ import argparse
 import contextlib
 import logging
 import re
+import string
 import sys
 import time
 import typing as t
@@ -14,12 +15,15 @@ from urllib.error import HTTPError
 from urllib.request import Request
 from urllib.request import urlopen
 
+from drgn import IntegerLike
 from drgn import NULL
 from drgn import Object
+from drgn import PlatformFlags
 from drgn import Program
 from drgn import sizeof
 from drgn import Type
 from drgn.helpers.common.format import decode_enum_type_flags
+from drgn.helpers.common.memory import identify_address
 from drgn.helpers.linux.cpumask import for_each_cpu
 from drgn.helpers.linux.cpumask import for_each_possible_cpu
 from drgn.helpers.linux.percpu import per_cpu
@@ -606,3 +610,154 @@ def redirectable(f: F) -> F:
             return f(*args, **kwargs)
 
     return t.cast(F, inner)
+
+
+def program_word_size(prog: Program) -> int:
+    # TODO: drgn has this in 0.0.33, but we'll need to rely on the flags
+    # for prior versions. Also, we only support 64 bit platforms but it's
+    # more correct to detect this.
+    if hasattr(prog, "address_size"):
+        return prog.address_size()
+    elif prog.platform.flags & PlatformFlags.IS_64_BIT:
+        return 8
+    else:
+        return 4
+
+
+def hexdump(
+    prog: Program,
+    address: IntegerLike,
+    mem: bytes,
+    unit: t.Optional[int] = None,
+    show_ascii: bool = True,
+    annotate: bool = False,
+    endian: t.Optional[str] = None,
+    cache: t.Optional[t.Dict[t.Any, t.Any]] = None,
+) -> None:
+    """
+    A simplified version of the crash rd _print_memory() API in drgn 0.0.34
+
+    This function formats memory for display as a hexadecimal dump. It produces
+    output roughly similar to crash's rd command, but it is not a faithful
+    reproduction. The annotations it produces are a different format, and they
+    are displayed at the end of the line, rather than inline. This ensures
+    that text is scannable as you read the screen, but it does require more
+    screen width to read the whole line.
+
+    :param start_address: the starting address of the memory content
+    :param mem: the memory contents to format and display
+    :param unit: the number of bytes per value to format (default is the
+      program's word size)
+    :param endian: control the endianness (default is platform's endianness)
+    :param annotate: for word-sized values, use identify_address and display the
+      identified result if it exists
+    :param cache: opaque cache for identify_address()
+    """
+    address = int(address)
+    word_size = program_word_size(prog)
+    if unit is None:
+        unit = word_size
+    assert unit in (1, 2, 4, 8)
+    assert prog.platform is not None  # already verified by address_size()
+    if len(mem) % unit != 0:
+        raise ValueError("memory size must be an increment of unit")
+    if annotate and unit != word_size:
+        raise ValueError(
+            "Annotations may only be printed for units of the platform word size"
+        )
+    if endian is not None:
+        byteorder = endian
+    elif prog.platform.flags & PlatformFlags.IS_LITTLE_ENDIAN:
+        byteorder = "little"
+    else:
+        byteorder = "big"
+
+    chars: t.Dict[int, str] = {}
+    if show_ascii:
+        chars = {
+            ord(s): s
+            for s in string.ascii_letters
+            + string.digits
+            + string.punctuation
+            + " "
+        }
+
+    if cache is None:
+        cache = {}
+
+    width = unit * 2
+    bytes_per_line = 16
+    units_per_line = bytes_per_line // unit
+    annots = []
+    for offset in range(0, len(mem), unit):
+        line_index = (offset % bytes_per_line) // unit
+        if line_index == 0:
+            print(f"{offset + address:{word_size * 2}x}: ", end="")
+        value = int.from_bytes(
+            mem[offset : offset + unit],
+            byteorder,  # type: ignore[arg-type]  # t.Literal requires Py3.6
+            signed=False,
+        )
+        identified = None
+        if annotate:
+            # Don't try to "identify" NULL and NULL-adjacent pointers, which are
+            # x86_64 percpu addresses. Use <1MiB as an arbitrary starting point
+            identified = None
+            if value >= 0x100000:
+                identified = identify_address(prog, value)
+            annots.append(f"[{identified or ''}]")
+        print(f" {value:0{width}x}", end="")
+
+        is_end = (line_index + 1 == units_per_line) or offset + unit == len(
+            mem
+        )
+        if is_end:
+            annot_str = ""
+            if annotate:
+                annot_str = "  " + ", ".join(annots)
+                annots.clear()
+            if show_ascii:
+                # In case we didn't fill the line, pad it out so the ascii encoding
+                # aligns with the ones above.
+                padding = (units_per_line - line_index - 1) * (1 + width)
+                print(
+                    " " * padding
+                    + "   "
+                    + "".join(
+                        chars.get(b, ".")
+                        for b in mem[
+                            offset - (offset % bytes_per_line) : offset + unit
+                        ]
+                    )
+                    + annot_str,
+                )
+            else:
+                print(annot_str)
+
+
+def hexdump_mem(
+    prog: Program,
+    start: IntegerLike,
+    length: int,
+    unit: t.Optional[int] = None,
+    show_ascii: bool = True,
+    annotate: bool = False,
+    endian: t.Optional[str] = None,
+    cache: t.Optional[t.Dict[t.Any, t.Any]] = None,
+) -> None:
+    """
+    Read memory and format it as a hexdump -- see hexdump()
+
+    This is just a convenience which does the memory read for you, prior to
+    calling hexdump().
+    """
+    hexdump(
+        prog,
+        start,
+        prog.read(start, length),
+        unit=unit,
+        show_ascii=show_ascii,
+        annotate=annotate,
+        endian=endian,
+        cache=cache,
+    )
