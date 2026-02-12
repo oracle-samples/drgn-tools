@@ -473,4 +473,12 @@ class SlabDump(CorelensModule):
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         cache = find_slab_cache(prog, args.slab_cache)
+        if not cache:
+            aliases = get_slab_cache_aliases(prog)
+            alias = aliases.get(args.slab_cache)
+            if alias:
+                cache = find_slab_cache(prog, alias)
+                print(f"note: displaying merged cache {alias}")
+            else:
+                raise ValueError(f"slab cache {args.slab_cache} not found")
         dump_slab_objects(cache, limit=args.limit)
