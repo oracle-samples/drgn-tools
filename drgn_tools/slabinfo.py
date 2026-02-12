@@ -4,6 +4,7 @@
 Helper to view slabinfo data
 """
 import argparse
+from collections import defaultdict
 from itertools import islice
 from typing import Any
 from typing import Dict
@@ -24,6 +25,7 @@ from drgn.helpers.linux.percpu import per_cpu_ptr
 from drgn.helpers.linux.slab import _get_slab_cache_helper
 from drgn.helpers.linux.slab import find_slab_cache
 from drgn.helpers.linux.slab import for_each_slab_cache
+from drgn.helpers.linux.slab import get_slab_cache_aliases
 from drgn.helpers.linux.slab import slab_cache_for_each_allocated_object
 
 from drgn_tools.corelens import CorelensModule
@@ -364,7 +366,7 @@ def get_kmem_cache_slub_info(cache: Object) -> SlabCacheInfo:
     )
 
 
-def print_slab_info(prog: Program) -> None:
+def print_slab_info(prog: Program, aliases: bool = False) -> None:
     """Helper to print slab information"""
     table = FixedTable(
         [
@@ -378,12 +380,19 @@ def print_slab_info(prog: Program) -> None:
         ]
     )
     corruption = []
+    name_to_aliases = defaultdict(list)
+    if aliases:
+        for name, merged in get_slab_cache_aliases(prog).items():
+            name_to_aliases[merged].append(name)
     for cache in for_each_slab_cache(prog):
         slabinfo = get_kmem_cache_slub_info(cache)
         maybe_asterisk = ""
         if slabinfo.freelist_errors:
             maybe_asterisk = "*"
             corruption.append(slabinfo)
+        name = slabinfo.name
+        if name in name_to_aliases:
+            name = f"{name} ({', '.join(name_to_aliases[name])})"
         table.row(
             slabinfo.cache.value_(),
             slabinfo.objsize,
@@ -391,7 +400,7 @@ def print_slab_info(prog: Program) -> None:
             slabinfo.total,
             slabinfo.nr_slabs,
             f"{int(slabinfo.ssize / 1024)}k",
-            slabinfo.name,
+            name,
         )
     table.write()
 
@@ -437,8 +446,13 @@ class SlabInfo(CorelensModule):
 
     name = "slabinfo"
 
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "-a", "--aliases", action="store_true", help="show slab aliases"
+        )
+
     def run(self, prog: Program, args: argparse.Namespace) -> None:
-        print_slab_info(prog)
+        print_slab_info(prog, aliases=args.aliases)
 
 
 class SlabDump(CorelensModule):
