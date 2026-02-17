@@ -28,6 +28,8 @@ from drgn import Program
 from drgn.helpers.linux import for_each_online_cpu
 from drgn.helpers.linux import per_cpu
 from drgn.helpers.linux import xa_for_each
+from drgn.helpers.linux.bitops import test_bit
+from drgn.helpers.linux.cpumask import cpu_online_mask
 from drgn.helpers.linux.list import hlist_for_each_entry
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each
@@ -654,6 +656,7 @@ def rds_stats(prog: drgn.Program, fields: Optional[str] = None) -> None:
 @redirectable
 def rds_conn_info(
     prog: drgn.Program,
+    verbose: bool = False,
     laddr: Optional[str] = None,
     faddr: Optional[str] = None,
     tos: Optional[str] = None,
@@ -728,6 +731,98 @@ def rds_conn_info(
             flags = "s" + flags[1:]
         if int(conn.c_path.cp_pending_flush):
             flags = flags[:3] + "E"
+
+        # Structures for non-up connections
+        if verbose:
+            if conn_state != "RDS_CONN_UP":
+                print("Verbose output for non-up connections:")
+                print("## rds_connection ##")
+                print(
+                    f"\n\nConnection : <{conn_laddr}, {conn_faddr}, {conn_tos}>",
+                )
+                print(
+                    f"==== rds_connection ({hex(conn.value_())}) state={conn_state} ====",
+                )
+                print("## rds_connection ##")
+                try:
+                    print(conn)
+                except Exception as e:
+                    print(f"<Error printing rds_connection: {e}>")
+
+                print("\n## rds_conn_path ##")
+                try:
+                    cp = conn.c_path
+                    print(cp)
+                except Exception as e:
+                    print(f"<Error printing rds_conn_path: {e}>")
+
+                if trans_name == "infiniband" and ic is not None:
+                    print("\n## rds_ib_connection ##")
+                    try:
+                        print(ic)
+                    except Exception as e:
+                        print(
+                            f"<Error printing rds_ib_connection: {e}>",
+                        )
+
+                    # RDMA cm id
+                    i_cm_id = ic.member_("i_cm_id")
+                    print("\n## rdma_cm_id (i_cm_id) ##")
+                    try:
+                        print(i_cm_id)
+                    except Exception as e:
+                        print(f"<Error printing rdma_cm_id: {e}>")
+
+                    # struct rdma_id_private
+                    id_priv = None
+                    if i_cm_id:
+                        try:
+                            id_priv = container_of(
+                                i_cm_id, "struct rdma_id_private", "id"
+                            )
+                            print("\n## rdma_id_private ##")
+                            print(id_priv)
+                        except Exception as e:
+                            print(
+                                f"<Error printing rdma_id_private: {e}>",
+                            )
+                    else:
+                        print("\n## rdma_id_private ##\n<None>")
+
+                    # ib_cm_id
+                    if id_priv:
+                        try:
+                            ib_cm_id = cast(
+                                "struct ib_cm_id *", id_priv.cm_id.ib
+                            )
+                            print("\n## ib_cm_id ##")
+                            print(ib_cm_id)
+                        except Exception as e:
+                            print(f"<Error printing ib_cm_id: {e}>")
+                    else:
+                        print("\n## ib_cm_id ##\n<None>")
+
+                    # ibqp
+                    ibqp = getattr(i_cm_id, "qp", None) if i_cm_id else None
+                    print("\n## ibqp ##")
+                    try:
+                        print(ibqp)
+                    except Exception as e:
+                        print(f"<Error printing ibqp: {e}>")
+
+                    # mlx5_ib_qp
+                    if ibqp:
+                        try:
+                            mlx5_ib_qp = container_of(
+                                ibqp, "struct mlx5_ib_qp", "ibqp"
+                            )
+                            print("\n## mlx5_ib_qp ##")
+                            print(mlx5_ib_qp)
+                        except Exception as e:
+                            print(f"<Error printing mlx5_ib_qp: {e}>")
+                    else:
+                        print("\n## mlx5_ib_qp ##\n<None>")
+            print("\n" + "=" * 60 + "\n")
 
         ib_conn_info = rds_get_ib_conn_info(ic)
 
@@ -1629,8 +1724,114 @@ def rds_get_mr_list_info(
     )
 
 
+def cpu_online_state(prog: drgn.Program, cpu: int) -> str:
+    if test_bit(cpu, cpu_online_mask(prog).bits):
+        return "on"
+    else:
+        return "off"
+
+
 @redirectable
-def report(prog: drgn.Program) -> None:
+def rds_conn_cpu_info(
+    prog: drgn.Program,
+    laddr: Optional[str] = None,
+    faddr: Optional[str] = None,
+    state: Optional[str] = None,
+    tos: Optional[str] = None,
+) -> None:
+    """
+    Display all RDS connections
+
+    :param prog: drgn program
+    :param laddr: comma separated string list of LOCAL-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param faddr: comma separated string list of REMOTE-IP.  Ex: '192.168.X.X, 10.211.X.X, ...'
+    :param tos: comma separated string list of TOS.  Ex: '0, 3, ...'
+    :param state: comma separated string list of conn states. Ex 'RDS_CONN_UP, CONNECTING, ...'
+    :returns: None
+    """
+    msg = ensure_debuginfo(prog, ["rds"])
+    if msg:
+        print(msg)
+        return None
+
+    index = -1
+    conn_list = Table(
+        [
+            " ",  # index
+            "rds_conn",
+            "ib_conn",
+            "Conn Path",
+            "ToS",
+            "Local Addr",
+            "Remote Addr",
+            "State",
+            "preferred_send_cpu [state]",
+            "preferred_recv_cpu [state]",
+            "preferred_recv_sibling_cpu [state]",
+        ]
+    )
+
+    for conn in for_each_rds_conn(prog, laddr, faddr, tos, state):
+        conn_val = hex(conn.value_())
+        trans_name = "".join(re.findall('"([^"]*)"', str(conn.c_trans.t_name)))
+        if trans_name == "infiniband":
+            ic: Any = cast(
+                "struct rds_ib_connection *", conn.c_path.cp_transport_data
+            )
+            ib_conn = hex(ic.value_())
+        else:
+            ic = None
+            ib_conn = "N/A"
+        conn_tos = int(conn.c_tos)
+        conn_path = hex(conn.c_path.value_())
+        conn_laddr = rds_inet_ntoa(conn.c_laddr)
+        conn_faddr = rds_inet_ntoa(conn.c_faddr)
+        conn_state = rds_conn_path_state(conn)
+        preferred_send_cpu = str(int(ic.i_preferred_send_cpu))
+        preferred_send_cpu = (
+            preferred_send_cpu
+            + " ["
+            + cpu_online_state(prog, ic.i_preferred_send_cpu)
+            + "]"
+        )
+        preferred_recv_cpu = str(int(ic.i_preferred_recv_cpu))
+        preferred_recv_cpu = (
+            preferred_recv_cpu
+            + " ["
+            + cpu_online_state(prog, ic.i_preferred_recv_cpu)
+            + "]"
+        )
+        try:
+            preferred_recv_sibling = str(int(ic.i_preferred_recv_sibling))
+            preferred_recv_sibling = (
+                preferred_recv_sibling
+                + " ["
+                + cpu_online_state(prog, ic.i_preferred_recv_sibling)
+                + "]"
+            )
+        except Exception:
+            preferred_recv_sibling = "NA"
+
+        index += 1
+        conn_list.row(
+            index,
+            conn_val,
+            ib_conn,
+            conn_path,
+            conn_tos,
+            conn_laddr,
+            conn_faddr,
+            conn_state,
+            preferred_send_cpu,
+            preferred_recv_cpu,
+            preferred_recv_sibling,
+        )
+    print("RDS connections CPU information:")
+    conn_list.write()
+
+
+@redirectable
+def report(prog: drgn.Program, verbose: bool = False) -> None:
     """
     Generate a report of RDS related data.
     This functions runs all the functions in the module and saves the results to the output file provided.
@@ -1646,10 +1847,11 @@ def report(prog: drgn.Program) -> None:
     # rds_dev_info(prog)
     # rdma_resource_usage(prog)
     rds_sock_info(prog)
-    rds_conn_info(prog)
+    rds_conn_info(prog, verbose)
     rds_info_verbose(prog)
     rds_conn_cq_eq_info(prog)
     rds_stats(prog)
+    rds_conn_cpu_info(prog)
     rds_print_msg_queue(prog, queue="All")
 
 
@@ -1662,6 +1864,19 @@ class Rds(CorelensModule):
     # We access information from the following modules #
     debuginfo_kmods = ["mlx5_core", "mlx4_core", "mlx5_ib", "mlx4_ib"]
 
+    default_args = [
+        [
+            "--verbose",
+        ]
+    ]
+
+    def add_args(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="Print additional debug information",
+        )
+
     def run(self, prog: Program, args: argparse.Namespace) -> None:
-        report(prog)
+        report(prog, args.verbose)
         rds_ib_conn_ring_info(prog, 0xDEADBEEF)

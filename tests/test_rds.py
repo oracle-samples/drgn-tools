@@ -4,5 +4,6 @@ from drgn_tools import rds
 
 
 def test_run_rds(prog):
-    rds.report(prog)
+    verbose = True
+    rds.report(prog, verbose)
     rds.rds_ib_conn_ring_info(prog, 0xDEADBEEF)
