@@ -20,7 +20,7 @@
 
 
 Name:           python-drgn-tools
-Version:        2.2.1
+Version:        2.2.2
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -135,6 +135,9 @@ rm %{buildroot}/usr/bin/DRGN
 %endif
 
 %changelog
+* Thu Feb 19 2026 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.2.2-1
+- Add support for drgn 0.1.0
+
 * Fri Jan 30 2026 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.2.1-1
 - Print number of pending I/O requests for all virtio devices [Orabug: 38665851] (Siddhi Katage)
 - pstack: multiple fixes (Stephen Brennan)
