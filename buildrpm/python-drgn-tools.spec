@@ -59,7 +59,7 @@ a running kernel image (via /proc/kcore).}
 # The drgn dependency can be fulfilled by drgn with, or without, CTF support.
 # However, drgn-tools is tied to specific drgn releases.
 %global drgn_min 0.0.32
-%global drgn_max 0.0.34
+%global drgn_max 0.1.1
 
 %package -n     drgn-tools
 Summary:        %{summary}

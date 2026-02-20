@@ -51,7 +51,7 @@ jobs:
           sudo apt-get install qemu-kvm zstd gzip bzip2 cpio busybox-static fio \
                                autoconf automake check gcc git liblzma-dev \
                                libelf-dev libdw-dev libtool make pkgconf zlib1g-dev \
-                               binutils-dev rpm2cpio
+                               binutils-dev rpm2cpio libpcre2-dev
       - name: Setup test environment
         # Pinned virtualenv and tox are for the last versions which support
         # detecting Python 3.6 and running tests on it.
@@ -62,7 +62,7 @@ jobs:
       - name: Build and install drgn with CTF support
         run: |
           cd ..
-          git clone https://github.com/brenns10/drgn -b ctf_0.0.33
+          git clone https://github.com/brenns10/drgn -b ctf_0.1.0
           cd drgn
           ../drgn-tools/venv/bin/pip install .
       - name: Run tests
