@@ -9,7 +9,7 @@ from setuptools import setup
 
 long_description = "drgn helper script repository"
 
-RELEASE_VERSION = "2.2.1"
+RELEASE_VERSION = "2.2.2"
 PACKAGES = ["drgn_tools"]
 
 
