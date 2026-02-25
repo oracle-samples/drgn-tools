@@ -5,7 +5,6 @@ Helpers for block layers.
 
 No kernel modules are required since uek built in all io schduler modules.
 """
-import argparse
 from typing import Iterable
 from typing import Tuple
 
@@ -24,11 +23,8 @@ from drgn.helpers.linux.timekeeping import ktime_get_coarse_ns
 from drgn.helpers.linux.xarray import xa_for_each
 
 from drgn_tools.bitops import for_each_bit_set
-from drgn_tools.corelens import CorelensModule
-from drgn_tools.table import print_table
 from drgn_tools.util import has_member
 from drgn_tools.util import percpu_ref_sum
-from drgn_tools.util import timestamp_str
 from drgn_tools.util import type_exists
 
 BB_LEN_MASK = 0x00000000000001FF
@@ -624,52 +620,3 @@ def queue_freezed_depth(q: Object) -> int:
 
 def queue_usage_counter(q: Object) -> int:
     return percpu_ref_sum(q.prog_, q.q_usage_counter)
-
-
-def print_block_devs_info(prog: drgn.Program) -> None:
-    """
-    Prints the block device information
-    """
-    output = [
-        [
-            "MAJOR",
-            "GENDISK",
-            "NAME",
-            "REQUEST_QUEUE",
-            "Inflight I/Os",
-            "Max Inflight time",
-            "Freezed Depth",
-            "Usage Counter",
-        ]
-    ]
-    for disk in for_each_disk(prog):
-        q = disk.queue
-        major = int(disk.major)
-        gendisk = hex(disk.value_())
-        name = disk.disk_name.string_().decode("utf-8")
-        rq = hex(q.value_())
-        ios = get_inflight_io_nr(prog, disk)
-        output.append(
-            [
-                str(major),
-                gendisk,
-                name,
-                rq,
-                str(ios),
-                timestamp_str(get_max_io_inflight_ns(prog, disk)),
-                str(queue_freezed_depth(q)),
-                str(queue_usage_counter(q)),
-            ]
-        )
-    print_table(output)
-
-
-class BlockInfo(CorelensModule):
-    """
-    Corelens Module for block device info
-    """
-
-    name = "blockinfo"
-
-    def run(self, prog: drgn.Program, args: argparse.Namespace) -> None:
-        print_block_devs_info(prog)
