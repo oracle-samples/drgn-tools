@@ -9,9 +9,9 @@ satisfy specific goals:
    the host filesystem using 9p. The test suite can be executed directly from
    the host filesystem.
 2. The "heavyvm" testing system contains fully automated infrastructure that can
-   download Oracle Linux ISOs, install them inside a virtual machine, and then
-   install the UEK kernel and debuginfo. Tests can then be run by copying the
-   necessary files and executing them via SSH.
+   download Oracle Linux virtual machine images and customize them with a given
+   UEK kernel and debuginfo. Tests can then be run by copying the necessary
+   files and executing them via SSH.
 3. The "vmcore" testing system allows you to maintain a library of core dumps
    and their correpsonding debuginfo, and execute the drgn-tools test suite on
    each. It also comes with upload and download systems that allow users to
@@ -106,9 +106,9 @@ The heavyvm system contains several scripts to maintain disk images containing
 full Oracle Linux userspace and UEK kernel.
 
 - `testing/heavyvm/images.py` is a configuration file, which lists out the
-  different configurations which we build for: OL7-9, UEK4-7.
+  different configurations which we build for: OL7-10, UEK4-8.
 - `testing/heavyvm/imgbuild.py` is a script for automating the creation of qemu
-  disk images directly from the ISO installers. This is used periodically to
+  disk images directly from cloud image templates. This is used periodically to
   create fresh VM images with the latest package and kernel versions.
 - `testing/heavyvm/qemu.py` contains helpers for interacting with Qemu, and a
   quick command line tool for easily running a VM.
@@ -119,9 +119,9 @@ full Oracle Linux userspace and UEK kernel.
 Requirements:
 
 - Qemu, and the qemu disk utils (see oddities for Oracle Linux info)
-- `wget`
-- `7z` from the `p7zip-plugins` package
-- Quite a bit of time to build the VMs, and disk space to store them
+- A decently beefy machine and a decent amount of time for running the VMs,
+  especially if you'll use the parallelism
+- At least 60 GiB of disk space for storing disk images
 - In order to build OL7, you'll need the `drgn` RPM stored locally. See the
   `testing/heavyvm/images.py` configurations for the exact filenames, or you can
   comment out the OL7 definitions and use the OL8 and OL9 VMs only (which fetch
@@ -162,7 +162,7 @@ and run serial commands via the Qemu monitor. The test system avoids modifying
 the disk images by creating an "overlay" disk, so you don't need to worry about
 impacting the state of the VM for later tests.
 
-    python -m testing.heavyvm.qemu path/to/disk.img
+    python -m testing.heavyvm.qemu path/to/disk.qcow2
 
 Finally, to run the tests within the VMs, you'll need to first create a git
 archive of the current source tree, and specify that when you run the test.
