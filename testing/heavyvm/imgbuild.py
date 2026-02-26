@@ -1,39 +1,34 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2023-2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 Build QEMU virtual machine images with OL & UEK debuginfo.
 
-Requires packages qemu-kvm, qemu-img, genisoimage, python38 on OL8. (Note that
-this imgbuild script uses python 3.8, but drgn-tools in general does not.)
+This tool builds virtual machine images that are used for the "heavyvm" tests.
+These VM images are the full Oracle Linux userspace, with the official drgn RPMs
+& kernel-uek-debuginfo installed. This means they are the most accurate
+representation of a customer system, though they are heavyweight. The images
+need to be kept up-to-date, and the most reliable way to do this is to rebuild
+them periodically. Thus, it's important to have a fully automatic build process,
+which is implemented here.
 
-Getting a basic virtual machine image for testing from an ISO file is not
-exactly an automatic process. Most people resign themselves to launching the
-installer in their VM program, clicking through the GUI, and then using the
-resulting VM image.
-
-However, Oracle Linux uses the "anaconda" installer which allows for
-"kickstart" files to script the installation of a system. This is pretty darn
-cool, but the downside is that even if you prepare a kickstart file, you need
-to manually change the boot command line in GRUB. Unfortunately, qemu can't
-change the boot command line, and you can only access the GRUB menus via VNC.
-
-This script circumvents the problem by extracting the vmlinux and initrd for
-the installer right out of the ISO file, so that we can give them to QEMU
-directly, and provide a command line. We grep the kernel command line out of
-the ISO configurations, modify it to suit our automatic installer script, and
-launch a QEMU with all the right parameters to create a newly installed image.
+VM images are built on top of the KVM cloud image templates found on
+yum.oracle.com. We use cloud-init to configure users, and connect via SSH to
+configure the VMs.
 """
 import argparse
+import contextlib
 import dataclasses
 import http.server
 import logging
 import os
-import re
+import shutil
 import socketserver
 import subprocess
 import sys
 import tempfile
 import threading
+import time
+import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import wait
@@ -43,6 +38,12 @@ from typing import List
 from typing import Optional
 from typing import TextIO
 
+from paramiko.client import MissingHostKeyPolicy
+from paramiko.client import SSHClient
+from paramiko.ssh_exception import NoValidConnectionsError
+from paramiko.ssh_exception import SSHException
+
+from drgn_tools.debuginfo import _UEK_VER
 from drgn_tools.util import download_file
 from testing.heavyvm.images import CONFIGURATIONS
 from testing.heavyvm.images import ImageInfo
@@ -56,128 +57,7 @@ DOWNLOAD_LOCK = threading.Lock()
 DOWNLOADS: Dict[Path, threading.Event] = {}
 
 
-@dataclasses.dataclass
-class Context:
-    image_info: ImageInfo
-    iso_dir: Path
-    image_dir: Path
-    ks_dir: Path
-    ks_url: str
-    ks_srv: "KickstartServer"
-    tmp_dir: Path
-    overwrite: bool
-    interactive: bool
-    log: logging.Logger
-
-    def cmdlog(self) -> TextIO:
-        return open(self.tmp_dir / "output.log", "a")
-
-
-def download_image(ctx: Context) -> None:
-    # This is complicated by the fact that several threads could be racing to
-    # download the same ISO. While we could atomically open the file with
-    # O_CREAT|O_EXCL (or catch the EEXIST), the threads which lose the race
-    # would not know when the download is completed. So, we need to have some
-    # signalling. For each download, we have an event, and we protect the
-    # mapping of file to event with a lock. Threads that win the race create the
-    # event, do the download, and trigger the event. Threads that lose the race
-    # wait on the event.
-    output_file = ctx.iso_dir / ctx.image_info.iso_name
-    output_file = output_file.absolute()
-    partial = ctx.iso_dir / f"{ctx.image_info.iso_name}.part"
-
-    if output_file.exists():
-        ctx.log.info("ISO already downloaded")
-        return
-
-    event: Optional[threading.Event] = None
-    wait_event: Optional[threading.Event] = None
-    with DOWNLOAD_LOCK:
-        wait_event = DOWNLOADS.get(output_file)
-        if not wait_event:
-            event = threading.Event()
-            DOWNLOADS[output_file] = event
-
-    if wait_event:
-        # Somebody beat us to it, we now wait and then return
-        ctx.log.info("Waiting for download of ISO ...")
-        wait_event.wait()
-        ctx.log.info("Finished waiting for ISO download!")
-    else:
-        # We are responsible for downloading and then signaling
-        assert event is not None
-        ctx.log.info("Downloading ISO...")
-        ctx.iso_dir.mkdir(exist_ok=True)
-        with partial.open("wb") as f:
-            download_file(ctx.image_info.iso_url, f)
-        ctx.log.info("Finished downloading!")
-        os.rename(partial, output_file)
-        with DOWNLOAD_LOCK:
-            del DOWNLOADS[output_file]
-        event.set()
-
-
-def extract_boot_info(ctx: Context) -> List[str]:
-    """
-    Extract vmlinux and initrd.img to tmp_dir, and return the kernel cmdline.
-    """
-    iso_path_str = str(ctx.iso_dir / ctx.image_info.iso_name)
-
-    with tempfile.TemporaryDirectory() as td:
-        subprocess.run(
-            [
-                "7z",
-                "x",
-                iso_path_str,
-                "isolinux/vmlinuz",
-                "isolinux/initrd.img",
-                "isolinux/isolinux.cfg",
-            ],
-            cwd=td,
-            stdout=ctx.cmdlog(),
-            check=True,
-        )
-        tdpath = Path(td)
-        os.rename(tdpath / "isolinux/vmlinuz", ctx.tmp_dir / "vmlinuz")
-        os.rename(tdpath / "isolinux/initrd.img", ctx.tmp_dir / "initrd.img")
-        isolinux_cfg = tdpath / "isolinux/isolinux.cfg"
-        with isolinux_cfg.open() as f:
-            cfg = f.read()
-
-    ctx.log.info("Extracted vmlinuz, initrd.img, and isolinux.cfg from ISO")
-
-    for line in cfg.split("\n"):
-        if "initrd=initrd.img" in line:
-            args = line.strip().split()
-            args.remove("append")
-            args.remove("initrd=initrd.img")
-            ctx.log.info("ISO cmdline: %s", " ".join(args))
-            return args
-    raise Exception("Could not find kernel cmdline in ISO")
-
-
-def make_empty_image(ctx: Context) -> None:
-    image_path = ctx.image_dir / ctx.image_info.image_name
-    image_path.parent.mkdir(parents=True, exist_ok=True)
-    if image_path.exists():
-        if ctx.overwrite:
-            ctx.log.info(
-                "Already had an image, deleting and creating a new one"
-            )
-            image_path.unlink()
-        else:
-            raise Exception(
-                "Image already existed, use --overwrite to replace"
-            )
-    subprocess.run(
-        ["qemu-img", "create", "-f", "qcow2", str(image_path), "100G"],
-        check=True,
-        stdout=ctx.cmdlog(),
-        stderr=subprocess.STDOUT,
-    )
-
-
-class KickstartServer:
+class FileServer:
     def __init__(self, host: str, port: int = 8325) -> None:
         self.port = port
         self.host = host
@@ -202,133 +82,396 @@ class KickstartServer:
         self.thread.join()
 
 
-def get_qemu(ctx: Context) -> QemuRunner:
+@dataclasses.dataclass
+class Context:
+    image_info: ImageInfo
+    base_image_dir: Path
+    image_dir: Path
+    file_server: FileServer
+    tmp_dir: Path
+    overwrite: bool
+    log: logging.Logger
+
+    def cmdlog(self) -> TextIO:
+        return open(self.tmp_dir / "output.log", "a")
+
+
+def download_base_image(ctx: Context) -> None:
+    # This is complicated by the fact that several threads could be racing to
+    # download the same image. While we could atomically open the file with
+    # O_CREAT|O_EXCL (or catch the EEXIST), the threads which lose the race
+    # would not know when the download is completed. So, we need to have some
+    # signalling. For each download, we have an event, and we protect the
+    # mapping of file to event with a lock. Threads that win the race create the
+    # event, do the download, and trigger the event. Threads that lose the race
+    # wait on the event.
+    output_file = ctx.base_image_dir / ctx.image_info.base_image_name
+    output_file = output_file.absolute()
+    partial = ctx.base_image_dir / f"{ctx.image_info.base_image_name}.part"
+
+    if output_file.exists():
+        ctx.log.info("Base image %s already downloaded", str(output_file))
+        return
+
+    event: Optional[threading.Event] = None
+    wait_event: Optional[threading.Event] = None
+    with DOWNLOAD_LOCK:
+        wait_event = DOWNLOADS.get(output_file)
+        if not wait_event:
+            event = threading.Event()
+            DOWNLOADS[output_file] = event
+
+    if wait_event:
+        # Somebody beat us to it, we now wait and then return
+        ctx.log.info("Waiting for download of image ...")
+        wait_event.wait()
+        ctx.log.info("Finished waiting for image download!")
+    else:
+        # We are responsible for downloading and then signaling
+        assert event is not None
+        ctx.log.info("Downloading image...")
+        ctx.base_image_dir.mkdir(exist_ok=True)
+        with partial.open("wb") as f:
+            download_file(ctx.image_info.image_url, f)
+        ctx.log.info("Finished downloading!")
+        os.rename(partial, output_file)
+        with DOWNLOAD_LOCK:
+            del DOWNLOADS[output_file]
+        event.set()
+
+
+def make_image(ctx: Context) -> None:
+    # Create a qcow2 image based on the base image as a backing store.
+    base_image_path = ctx.base_image_dir / ctx.image_info.base_image_name
+    image_path = ctx.image_dir / ctx.image_info.disk_name
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    if image_path.exists():
+        if ctx.overwrite:
+            ctx.log.info(
+                "Already had an image, deleting and creating a new one"
+            )
+            image_path.unlink()
+        else:
+            raise Exception(
+                "VM image already existed, use --overwrite to replace"
+            )
+    subprocess.run(
+        [
+            "qemu-img",
+            "create",
+            "-b",
+            str(base_image_path),
+            "-f",
+            "qcow2",
+            "-F",
+            "qcow2",
+            str(image_path),
+            "100G",
+        ],
+        check=True,
+        stdout=ctx.cmdlog(),
+        stderr=subprocess.STDOUT,
+    )
+
+
+def build_cloud_init_disk(ctx: Context) -> Path:
+    # Create an ISO which cloud-init will recognize and use as configuration for
+    # the VM. We're using some things that are "deprecated" in cloud-init, but
+    # are necessary to maintain compatibility from OL7 through OL10.
+    ci_img = ctx.tmp_dir / "cloudinit.iso"
+    ci_builddir = ctx.tmp_dir / "cloudinit"
+    if ci_builddir.exists():
+        shutil.rmtree(ci_builddir)
+    ci_builddir.mkdir(parents=True)
+    (ci_builddir / "network-config").touch()
+    (ci_builddir / "meta-data").touch()
+    with (ci_builddir / "user-data").open("w") as f:
+        # It's probably a good thing that it's difficult to configure an admin
+        # with SSH password authentication. However, this is a totally valid use
+        # case.
+        #
+        # I haven't had much luck getting cloud-init to set the root password
+        # and allow root password login via SSH. Fortunately we can just create
+        # a user empowered to sudo without password, and allow password login
+        # via SSH to that account.
+        f.write(
+            "\n".join(
+                [
+                    "#cloud-config",
+                    "users:",
+                    "    - name: ci",
+                    "      groups: [users, wheel]",
+                    '      sudo: "ALL=(ALL) NOPASSWD:ALL"',
+                    "      lock_passwd: false",
+                    "chpasswd:",
+                    "  expire: false",
+                    "  list: |",
+                    "    root:password",
+                    "    ci:password",
+                    "ssh_pwauth: true",
+                    "disable_root: false",
+                    "resize_rootfs: true",
+                    "\n",
+                ]
+            )
+        )
+    args = [
+        "genisoimage",
+        "-output",
+        str(ci_img.absolute()),
+        "-volid",
+        "cidata",
+        "-rational-rock",
+        "-joliet",
+        "user-data",
+        "meta-data",
+        "network-config",
+    ]
+    ctx.log.info("Building cloud-init ISO: %r", args)
+    proc = subprocess.run(args, cwd=ci_builddir, capture_output=True)  # novm
+    ctx.log.debug(
+        "Image build result: code %d\nstderr: %r\nstdout:%r",
+        proc.returncode,
+        proc.stderr,
+        proc.stdout,
+    )
+    proc.check_returncode()
+    return ci_img
+
+
+class AutoAcceptPolicy(MissingHostKeyPolicy):
+    """
+    Accept SSH host keys without verification.
+
+    We're only connecting to local VMs, and if another process on our machine is
+    maliciously impersonating our test VM, we have bigger problems :)
+    """
+
+    def missing_host_key(self, client, hostname, key):
+        return key
+
+
+def wait_ssh(
+    ctx: Context,
+    hostname: str,
+    port: int,
+    username: str,
+    password: str,
+    timeout: int = 120,
+) -> SSHClient:
+    # Wait until a VM is accessible via SSH, and then return a connection.
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            ctx.log.debug(f"Try ssh {hostname}:{port}")
+            client = SSHClient()
+            client.set_missing_host_key_policy(AutoAcceptPolicy)
+            client.connect(
+                hostname,
+                port,
+                username=username,
+                password=password,
+                timeout=5,
+                banner_timeout=5,
+                auth_timeout=5,
+                allow_agent=False,
+                look_for_keys=False,
+            )
+            return client
+        except (NoValidConnectionsError, TimeoutError):
+            client.close()
+            pass
+        except SSHException as e:
+            if "No existing session" in str(
+                e
+            ) or "Error reading SSH protocol banner" in str(e):
+                client.close()
+                pass
+            else:
+                raise
+        time.sleep(1)
+    raise TimeoutError("could not connect to SSH")
+
+
+def run_cmd(
+    client: SSHClient, ctx: Context, cmd: str, check: bool = True
+) -> str:
+    # Run a command on the VM and return its output.
+    ctx.log.info(f"Running remote command: {cmd}")
+    transport = client.get_transport()
+    assert transport is not None
+    channel = transport.open_session()
+    channel.set_combine_stderr(True)
+    channel.exec_command(cmd)
+    data = bytearray()
+    while True:
+        new = channel.recv(4096)
+        if len(new) == 0:
+            break
+        data.extend(new)
+    status = channel.recv_exit_status()
+    result = data.decode("utf-8", errors="replace")
+    ctx.log.debug(f"Remote command: {cmd} => {status}:\n===\n{result}\n===")
+    if check and status != 0:
+        raise Exception(
+            f"SSH Command '{cmd}' failed (code {status}):\n{result}"
+        )
+    return result
+
+
+def configure_vm(ctx: Context) -> None:
+    # Install drgn and the appropriate kernel with debuginfo. Apply any other
+    # configuration tweaks necessary for the heavyvm runner to work nicely.
+    cloud_init_iso = build_cloud_init_disk(ctx)
+    ctx.log.info("Booting image and waiting for login...")
+    seriallog = str(ctx.tmp_dir / "install.log")
     qemu = (
         QemuRunner(2, 4096)
-        .hd(str(ctx.image_dir / ctx.image_info.image_name))
-        .net_user()
+        .hd(str(ctx.image_dir / ctx.image_info.disk_name))
+        .net_user(ssh=True)
+        .set_serial("socket")
+        .cdrom(str(cloud_init_iso))
     )
-    return qemu
+    assert qemu.ssh_port is not None  # to satisfy mypy
+    qemu.serial.log(seriallog)
+    ctx.log.debug(f"Qemu command: {qemu.get_cmd()}")
+    stack = contextlib.ExitStack()
+    with stack:
+        ctx.log.info(f"View serial output: {seriallog}")
+        stack.enter_context(qemu.run_errkill())
 
-
-def run_installer(ctx: Context, cmdline: List[str]) -> None:
-    """
-    Assuming we have the following:
-    - iso downloaded to iso_dir
-    - kickstart.img in tmp_dir
-    - vmlinuz and initrd.img in tmp_dir
-
-    Run the installer.
-    """
-    cmdline += [
-        f"inst.ks={ctx.ks_url}",
-        "console=ttyS0",
-    ]
-    qemu = get_qemu(ctx)
-    qemu.cdrom(str(ctx.iso_dir / ctx.image_info.iso_name))
-    if ctx.interactive:
-        qemu.mon_serial()
-        qemu.vnc()
-    else:
-        logfile = str(ctx.tmp_dir / "install.log")
-        qemu.serial.log(logfile)
-        ctx.log.info(f"View installer progress at {logfile}")
-    qemu.kernel(
-        str(ctx.tmp_dir / "vmlinuz"),
-        initrd=str(ctx.tmp_dir / "initrd.img"),
-        cmdline=" ".join(cmdline),
-    )
-    ctx.log.info("command: %r", qemu.get_cmd())
-    qemu.run()
-    qemu.wait()
-    ctx.log.info("Finished installing")
-
-
-def run_post_install(ctx: Context) -> None:
-    """
-    Install drgn and kernel-uek-debuginfo, then shut down.
-    """
-    ctx.log.info("Rebooting and waiting for login")
-    qemu = get_qemu(ctx).set_serial("socket")
-    ctx.log.info("qemu command: %r", qemu.get_cmd())
-    qemu.run()
-    ser = qemu.serial.get_repl()
-    ser.set_logger(str(ctx.tmp_dir / "post_install.log"))
-    ser.read_until(b"\nlocalhost login: ")
-    ctx.log.info("Login prompt is available")
-    # log in
-    ser.cmd(b"root")
-    ser.prompt = ser.ROOT_PROMPT
-    ser.cmd(b"password")
-    ctx.log.info("Logged in as root, installing drgn")
-    dnf = b"dnf" if ctx.image_info.ol > 7 else b"yum"
-    # install dependent packages
-    if ctx.image_info.ol > 7:
-        ser.cmd(
-            f"dnf config-manager --enable ol{ctx.image_info.ol}_appstream".encode()
+        # Connect via SSH
+        client = stack.enter_context(
+            wait_ssh(ctx, "localhost", qemu.ssh_port, "ci", "password")
         )
-        ser.cmd(
-            f"dnf config-manager --enable ol{ctx.image_info.ol}_addons".encode()
+        ol = ctx.image_info.ol
+        if ol == 7:
+            dnf = "yum"
+            cfgman = "yum-config-manager"
+        else:
+            dnf = "dnf"
+            cfgman = "dnf config-manager"
+        run_cmd(client, ctx, f"sudo {cfgman} --enable ol{ol}_addons")
+
+        install_packages = [
+            "python3-pip",
+            "fio",
+        ]
+        if ol >= 9:
+            # Starting in OL9, it looks like fio engines are packaged separately
+            install_packages.append("fio-engine-libaio")
+        if not ctx.image_info.rpms:
+            install_packages.append("drgn")
+        for filename in ctx.image_info.rpms:
+            install_packages.append(
+                ctx.file_server.url_for(Path(filename).absolute())
+            )
+
+        # Specify the UEK version by enabling the corresponding yum repo
+        if not ctx.image_info.is_default_uek():
+            run_cmd(
+                client,
+                ctx,
+                f"sudo {cfgman} --disable ol{ol}_UEKR{ctx.image_info.default_uek()}",
+            )
+            run_cmd(
+                client,
+                ctx,
+                f"sudo {cfgman} --enable ol{ol}_UEKR{ctx.image_info.uek}",
+            )
+
+        # Run a full upgrade, and install drgn & test dependencies.
+        run_cmd(client, ctx, f"sudo {dnf} upgrade -y")
+        run_cmd(
+            client, ctx, f"sudo {dnf} install -y " + " ".join(install_packages)
+        )
+        run_cmd(client, ctx, "sudo python3 -m pip install 'pytest<7.1'")
+
+        # Install kernel-uek from the repo established above:
+        run_cmd(client, ctx, f"sudo {dnf} install -y kernel-uek")
+
+        # Determine the kernel release
+        ver_to_tup = {v: k for k, v in _UEK_VER.items()}
+        uektup = ver_to_tup[ctx.image_info.uek]
+        uname = run_cmd(
+            client,
+            ctx,
+            f"ls /boot/vmlinuz-{uektup}*uek* | sed 's/^.*vmlinuz-//' | sort -V | tail -n 1",
+        ).strip()
+
+        # Set this as the default boot kernel, and ensure console output goes to
+        # the serial port.
+        run_cmd(
+            client,
+            ctx,
+            f"sudo grubby --update-kernel /boot/vmlinuz-{uname} "
+            "--args=console=ttyS0",
+        )
+        run_cmd(
+            client, ctx, f"sudo grubby --set-default /boot/vmlinuz-{uname}"
         )
 
-    install_packages = [
-        "python3-pip",
-        "fio",
-    ]
-    if ctx.image_info.ol >= 9:
-        # Starting in OL9, it looks like fio engines are packaged separately
-        install_packages.append("fio-engine-libaio")
+        # We may encounter an issue here. At least on the OL8 cloud images,
+        # /boot/grub2/grubenv is a symlink, which GRUB seems unable to follow
+        # because its target is on a different filesystem. The grubenv file is
+        # where the saved kernel preference is stored. Replace this symlink
+        # with a copy of the target.
+        run_cmd(
+            client,
+            ctx,
+            "sudo sh -c 'test -L  /boot/grub2/grubenv && "
+            "cp --remove-destination $(readlink -f /boot/grub2/grubenv) "
+            "/boot/grub2/grubenv'",
+            check=False,
+        )
 
-    # Install drgn from RPMs hosted on kickstart server
-    for filename in ctx.image_info.rpms:
-        install_packages.append(ctx.ks_srv.url_for(Path(filename).absolute()))
+        # Remove any restriction on root SSH login. Cloud-init cannot handle
+        # this reliably for the first boot, but we do want to be able to
+        # directly login as root for the test runs, so handle it now.
+        run_cmd(
+            client,
+            ctx,
+            "sudo rm -f /etc/ssh/sshd_config.d/01-permitrootlogin.conf",
+        )
+        run_cmd(
+            client,
+            ctx,
+            "sudo sed -i '/^PermitRootLogin/d' /etc/ssh/sshd_config",
+        )
+        run_cmd(
+            client,
+            ctx,
+            "sudo sh -c 'echo PermitRootLogin yes >>/etc/ssh/sshd_config'",
+        )
 
-    ser.cmd(
-        dnf + b" install -y " + b" ".join(s.encode() for s in install_packages)
-    )
-
-    # Install the pytest dependency
-    ser.cmd(b"python3 -m pip install 'pytest<7.1'")
-
-    # OL9 disables root login fia SSH. That's probably good for most cases but
-    # not here!
-    if ctx.image_info.ol == 9:
-        ser.cmd(b"echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config")
-
-    # get uname and download debuginfo
-    uname_output = ser.cmd(b"uname -r")
-    res = re.search(rb"\d+\.\d+\.\d+-.*el\d+uek\.\w+", uname_output)
-    assert res, uname_output
-    uname = res.group()
-    ctx.log.info(
-        f"Installed drgn, now installing debuginfo for {uname.decode('utf-8')}"
-    )
-    url_base = (
-        b"https://oss.oracle.com/ol%d/debuginfo/kernel-uek-debuginfo"
-        % (ctx.image_info.ol)
-    )
-    ser.cmd(
-        dnf
-        + b" install -y %s-%s.rpm %s-common-%s.rpm"
-        % (url_base, uname, url_base, uname)
-    )
-    ctx.log.info("Completed debuginfo installation, now shutting down")
-    ser.send_cmd(b"shutdown now")
-    ser.read_until(b"Power down")
-    ser.close()
-    qemu.wait()
-    ctx.log.info("All done!")
+        # Install debuginfo
+        ctx.log.info(f"Installing debuginfo for {uname}")
+        url_base = (
+            f"https://oss.oracle.com/ol{ol}/debuginfo/kernel-uek-debuginfo"
+        )
+        run_cmd(
+            client,
+            ctx,
+            f"sudo {dnf} install -y {url_base}-{uname}.rpm {url_base}-common-{uname}.rpm",
+        )
+        # This returns non-zero, probably because the SSH session is immediately
+        # torn down. So don't check its output.
+        ctx.log.info("Completed debuginfo installation, now shutting down")
+        run_cmd(client, ctx, "sudo shutdown now", check=False)
+        qemu.wait()
+        ctx.log.info("All done!")
 
 
 def do_imgbuild(ctx: Context) -> None:
-    download_image(ctx)
-    cmdline = extract_boot_info(ctx)
-    make_empty_image(ctx)
-    run_installer(ctx, cmdline)
-    run_post_install(ctx)
+    # Run the full image creation process for a single image.
+    download_base_image(ctx)
+    make_image(ctx)
+    configure_vm(ctx)
 
 
 def validate_rpms(images: List[ImageInfo]) -> None:
+    # Before we do a build, ensure that all local RPMs we will install are
+    # available.
     missing = defaultdict(list)
     for image in images:
         for rpm in image.rpms:
@@ -348,22 +491,16 @@ def main() -> None:
         description="Automated OL ISO installer to qcow2 image"
     )
     parser.add_argument(
-        "--iso-dir",
+        "--base-image-dir",
         type=Path,
         default=BASE_DIR / "iso",
-        help="Directory to store ISOs in",
+        help="Directory to store base images in",
     )
     parser.add_argument(
         "--image-dir",
         type=Path,
         default=BASE_DIR / "images",
         help="Directory to store QEMU images in",
-    )
-    parser.add_argument(
-        "--ks-dir",
-        type=Path,
-        default=KS_DIR,
-        help="Directory to find kickstart scripts in",
     )
     parser.add_argument(
         "-n",
@@ -383,11 +520,6 @@ def main() -> None:
         help="Overwrite existing images",
     )
     parser.add_argument(
-        "--interactive",
-        action="store_true",
-        help="Show serial on stdout to allow interaction (forces -n 1)",
-    )
-    parser.add_argument(
         "images",
         nargs="*",
         help="Images to create",
@@ -399,53 +531,57 @@ def main() -> None:
     else:
         info = CONFIGURATIONS.copy()
 
-    if args.interactive:
-        print(
-            "Interactive mode, you'll be able to interact with the installer"
-        )
-        print("over serial port. Limited to one task at a time.")
-        args.num_workers = 1
-
     validate_rpms(info)
 
-    srv = KickstartServer("10.0.2.2")
+    srv = FileServer("10.0.2.2")
     srv.start()
-    logging.basicConfig(level=logging.INFO)
+    errh = logging.StreamHandler()
+    errh.setLevel(logging.INFO)
+    errh.addFilter(lambda r: not r.name.startswith("paramiko"))
+    logging.basicConfig(level=logging.DEBUG, handlers=[errh])
     ret = 0
     with tempfile.TemporaryDirectory() as td:
         tmp_dir = Path(td)
         tpe = ThreadPoolExecutor(max_workers=args.num_workers)
         futures = []
         for image_info in info:
-            log = logging.getLogger(image_info.name)
             tmp_sub_dir = tmp_dir / image_info.name
             tmp_sub_dir.mkdir()
+            log = logging.getLogger(image_info.name)
+            hdlr = logging.FileHandler(tmp_sub_dir / "debug.log")
+            hdlr.setLevel(logging.DEBUG)
+            log.addHandler(hdlr)
             log.info("Launching with tmpdir: %s", tmp_sub_dir)
-            ks_url = srv.url_for(args.ks_dir / image_info.ks_name)
             ctx = Context(
                 image_info,
-                args.iso_dir,
+                args.base_image_dir,
                 args.image_dir,
-                args.ks_dir,
-                ks_url,
                 srv,
                 tmp_sub_dir,
                 args.overwrite,
-                args.interactive,
                 log,
             )
             futures.append(tpe.submit(do_imgbuild, ctx))
         wait(futures, return_when="ALL_COMPLETED")
         for f in futures:
-            if f.exception() is not None:
-                ret = 1
-                # f.result()
-                print(f.exception())
+            try:
+                f.result()
+            except Exception:
+                traceback.print_exc()
+                ret += 1
         if ret == 1:
-            print("Completed with with errors")
+            print(f"Completed with with {ret} errors")
             if not args.no_wait:
                 print(f"Tmpdir: {td}")
                 input("Hit enter when done examining tmpdir")
+            else:
+                # Tar up the temporary directory for debugging and then fail.
+                logbundle = Path.cwd() / "imgbuild-logs.tar.gz"
+                subprocess.run(
+                    ["tar", "-czvf", str(logbundle.absolute()), "."],
+                    cwd=str(tmp_dir),
+                    check=False,
+                )
     srv.stop()
     sys.exit(ret)
 

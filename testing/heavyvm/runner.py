@@ -1,4 +1,4 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2023-2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import argparse
 import dataclasses
@@ -31,7 +31,7 @@ class VmInfo:
     overlay_disk: Path
     nvme_disk: Path
 
-    ol_version: t.Tuple[int, int]
+    ol_version: int
     uek_version: int
 
     def get_serial_repl(self) -> UnixSocketRepl:
@@ -67,9 +67,7 @@ class VmInfo:
 
     @property
     def name(self) -> str:
-        return (
-            f"ol{self.ol_version[0]}u{self.ol_version[1]}uek{self.uek_version}"
-        )
+        return f"ol{self.ol_version}uek{self.uek_version}"
 
     @classmethod
     def from_dict(cls, d: t.Dict[str, t.Any]) -> "VmInfo":
@@ -109,7 +107,7 @@ class TestRunner:
         for i, image in enumerate(CONFIGURATIONS):
             if self.images and image.name not in self.images:
                 continue
-            image_path = self.image_dir / image.image_name
+            image_path = self.image_dir / image.disk_name
             overlay = create_overlay_disk(
                 image_path, "testrunner", where=self.overlay_dir
             )
@@ -138,7 +136,7 @@ class TestRunner:
                     monitor_socket=self.vm_info_dir / runner.monitor._filename,  # type: ignore # noqa
                     overlay_disk=overlay,
                     nvme_disk=Path(blank_nvme.name),
-                    ol_version=(image.ol, image.ol_update),
+                    ol_version=image.ol,
                     uek_version=image.uek,
                 )
             )
@@ -243,9 +241,7 @@ class TestRunner:
             "run_cmd", f"Running command {cmd}", collapsed=True
         )
         for vm in self.vms.values():
-            print(
-                f"Running command on ol{vm.ol_version[0]} uek{vm.uek_version}"
-            )
+            print(f"Running command on ol{vm.ol_version} uek{vm.uek_version}")
             ssh_client = self._get_ssh(vm)
             _, result = self._run_cmd(ssh_client, cmd)
             print("Result:\n" + result)
@@ -261,7 +257,7 @@ class TestRunner:
         for vm in self.vms.values():
             if vm.uek_version == 4 and ctf:
                 continue
-            slug = f"ol{vm.ol_version[0]}uek{vm.uek_version}"
+            slug = f"ol{vm.ol_version}uek{vm.uek_version}"
             if ctf:
                 slug += "_CTF"
             self._section_start(

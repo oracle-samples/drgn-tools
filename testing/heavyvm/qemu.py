@@ -1,9 +1,10 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2023-2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 Module which facilitates running Qemu and interacting with VMs.
 """
 import argparse
+import contextlib
 import os
 import queue
 import random
@@ -388,7 +389,7 @@ class QemuRunner:
         return self
 
     def net_user(self, ssh: bool = False, rand: bool = False) -> "QemuRunner":
-        self._net_args = ["-net", "nic", "-net"]
+        self._net_args = ["-net", "nic,model=virtio", "-net"]
         if ssh:
             if rand:
                 port = choose_ssh_port()
@@ -481,6 +482,24 @@ class QemuRunner:
     def run(self) -> subprocess.Popen:
         self._proc = subprocess.Popen(self.get_cmd(), cwd=self._cwd)
         return self._proc
+
+    @contextlib.contextmanager
+    def run_errkill(self) -> t.Iterator[None]:
+        """
+        Like run(), but if the wrapped code exits with an exception,
+        terminate (or kill after a timeout) the QEMU process.
+        """
+        proc = self.run()
+        with proc:
+            try:
+                yield
+            except Exception:  # noqa
+                proc.terminate()
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                raise
 
     def wait(self):
         self._proc.wait()

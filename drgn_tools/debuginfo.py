@@ -65,6 +65,7 @@ CTF_PATHS = [
 
 # Mapping of kernel version (without release) to the UEK major version. The
 # kernel version 3-tuple never changes throughout a UEK release.
+# NB: this is used by the testing code, don't change without having a look
 _UEK_VER = {
     "2.6.32": 1,
     "2.6.39": 2,

@@ -15,7 +15,7 @@ vmtest:
     # to the latest generation of VMs promptly, and developers should rebase
     # their branches as soon as possible. This system just allows for a little
     # bit of slack in the process.
-    - venv/bin/python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images-gen01 --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz
+    - venv/bin/python -m testing.heavyvm.runner --image-dir /var/drgn-tools/images-gen02 --vm-info-dir tmp/info --overlay-dir tmp/overlays --tarball archive.tar.gz
   artifacts:
     when: always
     paths:
