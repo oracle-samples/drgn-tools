@@ -21,6 +21,14 @@ from drgn_tools.util import has_member
 from drgn_tools.util import percpu_ref_sum
 
 
+def md_raid_driver(prog: Program, disk: Object) -> str:
+    diskname = disk.disk_name.string_().decode()
+    if not diskname.startswith("md"):
+        return "unknown"
+    mddev = Object(prog, "struct mddev *", value=disk.private_data.value_())
+    return mddev.pers.owner.name.string_().decode()
+
+
 def for_each_md(prog: Program) -> Iterable[Object]:
     """
     List all soft raid disk in the system
