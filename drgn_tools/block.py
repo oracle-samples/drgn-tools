@@ -28,6 +28,7 @@ from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_table
 from drgn_tools.util import has_member
 from drgn_tools.util import percpu_ref_sum
+from drgn_tools.util import timestamp_str
 from drgn_tools.util import type_exists
 
 BB_LEN_MASK = 0x00000000000001FF
@@ -576,6 +577,43 @@ def get_inflight_io_nr(prog: drgn.Program, disk: Object) -> int:
     return int(nr)
 
 
+def get_max_io_inflight_ns(prog: drgn.Program, disk: Object) -> int:
+    """
+    Get max io inflight time for some disk
+
+    :param prog: drgn program
+    :param disk: ``struct gendisk *``
+    :returns: max io inflight time in nano seconds
+    """
+    rq_pending = []
+    q = disk.queue
+    if not is_mq(q):
+        rq_pending += [rq[0].read_() for rq in for_each_sq_pending_request(q)]
+    else:
+        try:
+            BLK_MQ_F_TAG_SHARED = prog.constant("BLK_MQ_F_TAG_SHARED")
+        except LookupError:
+            BLK_MQ_F_TAG_SHARED = prog.constant("BLK_MQ_F_TAG_QUEUE_SHARED")
+
+        mq_pending = [
+            (hwq[0].read_(), rq[0].read_())
+            for hwq, rq in for_each_mq_pending_request(q)
+        ]
+        for hwq, rq in mq_pending:
+            if (hwq.flags & BLK_MQ_F_TAG_SHARED) != 0 and request_target(
+                rq
+            ).value_() != disk.value_():
+                continue
+            rq_pending.append(rq)
+
+    max_ns = 0
+    for rq in rq_pending:
+        if rq_pending_time_ns(rq) > max_ns:
+            max_ns = rq_pending_time_ns(rq)
+
+    return max_ns
+
+
 def queue_freezed_depth(q: Object) -> int:
     depth = q.mq_freeze_depth
     if depth.type_.kind == TypeKind.INT:
@@ -599,6 +637,7 @@ def print_block_devs_info(prog: drgn.Program) -> None:
             "NAME",
             "REQUEST_QUEUE",
             "Inflight I/Os",
+            "Max Inflight time",
             "Freezed Depth",
             "Usage Counter",
         ]
@@ -617,6 +656,7 @@ def print_block_devs_info(prog: drgn.Program) -> None:
                 name,
                 rq,
                 str(ios),
+                timestamp_str(get_max_io_inflight_ns(prog, disk)),
                 str(queue_freezed_depth(q)),
                 str(queue_usage_counter(q)),
             ]
