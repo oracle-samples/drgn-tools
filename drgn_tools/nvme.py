@@ -21,6 +21,23 @@ from drgn_tools.table import print_table
 from drgn_tools.util import enum_name_get
 
 
+def nvme_ctrl(prog: Program, disk: Object) -> Object:
+    diskname = disk.disk_name.string_().decode()
+    if not diskname.startswith("nvme"):
+        return None
+
+    q = disk.queue
+    ns = Object(prog, "struct nvme_ns *", value=q.queuedata.value_())
+    return ns.ctrl
+
+
+def nvme_disk_driver(prog: Program, disk: Object) -> str:
+    ctrl = nvme_ctrl(prog, disk)
+    if not ctrl:
+        return "unknown"
+    return ctrl.ops.module.name.string_().decode()
+
+
 def for_each_nvme_disk(prog: Program) -> Iterable[Object]:
     """
     Return each NVMe device
