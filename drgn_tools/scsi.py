@@ -76,6 +76,19 @@ def host_module_name(shost: Object) -> str:
     return name
 
 
+def scsi_host(prog: Program, disk: Object) -> Object:
+    diskname = disk.disk_name.string_().decode()
+    if not diskname.startswith("sd"):
+        return None
+    q = disk.queue
+    sdev = Object(prog, "struct scsi_device *", value=q.queuedata.value_())
+    return sdev.host
+
+
+def scsi_disk_driver(prog: Program, disk: Object) -> str:
+    return host_module_name(scsi_host(prog, disk))
+
+
 def for_each_scsi_host_device(shost: Object) -> Iterator[Object]:
     """
     Iterates thru all scsi device and returns a scsi_device address
