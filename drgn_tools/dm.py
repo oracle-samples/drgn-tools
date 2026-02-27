@@ -164,6 +164,17 @@ def dm_target_name(dm: Object) -> str:
     return table.targets.type.name.string_().decode()
 
 
+def dm_target_driver(prog: Program, disk: Object) -> str:
+    diskname = disk.disk_name.string_().decode()
+    if not diskname.startswith("dm-"):
+        return "unknown"
+    dm = Object(
+        prog, "struct mapped_device *", value=disk.private_data.value_()
+    )
+
+    return dm_target_name(dm)
+
+
 def show_table_linear(dm: Object, name: str) -> None:
     table = dm_table(dm)
     for tid in range(table.num_targets):
