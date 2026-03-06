@@ -26,7 +26,12 @@ def md_raid_driver(prog: Program, disk: Object) -> str:
     if not diskname.startswith("md"):
         return "unknown"
     mddev = Object(prog, "struct mddev *", value=disk.private_data.value_())
-    return mddev.pers.owner.name.string_().decode()
+    pers = mddev.pers
+    if has_member(pers, "owner"):
+        return pers.owner.name.string_().decode()
+    else:
+        # v6.15 commit d3beb7c9c61d2("md: introduce struct md_submodule_head and APIs")
+        return pers.head.owner.name.string_().decode()
 
 
 def for_each_md(prog: Program) -> Iterable[Object]:
