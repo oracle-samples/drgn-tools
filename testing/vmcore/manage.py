@@ -17,7 +17,7 @@ CORE_DIR = BASE_DIR / "vmcores"
 CORE_PFX = "drgn-tools-vmcores/"
 
 
-def download_all(client: ParClient):
+def download_all(client: ParClient, verbose: bool = False):
     objects = client.list_objects_simple(prefix=CORE_PFX, fields="size")
     CORE_DIR.mkdir(exist_ok=True)
     for obj in objects:
@@ -25,15 +25,17 @@ def download_all(client: ParClient):
         path = CORE_DIR / name
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.is_file() and path.stat().st_size == obj["size"]:
-            print(f"Already exists: {name}")
+            if verbose:
+                print(f"Already exists: {name}")
         else:
             print(f"Download: {name}")
             with path.open("wb") as f:
                 shutil.copyfileobj(client.get_object(obj["name"]), f)
 
 
-def delete_orphans(client: ParClient):
-    print("Searching for orphaned files to remove...")
+def delete_orphans(client: ParClient, verbose: bool = False):
+    if verbose:
+        print("Searching for orphaned files to remove...")
     objs = client.list_objects_simple(prefix=CORE_PFX, fields="size")
     keys = set()
     for obj in objs:
@@ -49,16 +51,16 @@ def delete_orphans(client: ParClient):
         key = str(fn.relative_to(CORE_DIR))
         if key in keys:
             continue
-        print(f"Remove orphaned file: {key}")
+        print(f"Removing orphaned file: {key}")
         fn.unlink()
         parent = fn.parent
         while not list(parent.iterdir()):
-            print(f"Remove empty parent: {parent}")
+            print(f"Removing empty parent: {parent}")
             parent.rmdir()
             parent = parent.parent
 
 
-def upload_all(client: ParClient, core: str) -> None:
+def upload_all(client: ParClient, core: str, verbose: bool = False) -> None:
     core_path = CORE_DIR / core
     vmlinux_path = core_path / "vmlinux"
     vmcore_path = core_path / "vmcore"
@@ -80,7 +82,8 @@ def upload_all(client: ParClient, core: str) -> None:
         existing_size = object_to_size.get(key)
         size = path.stat().st_size
         if existing_size is not None and existing_size == size:
-            print(f"Already uploaded: {key}")
+            if verbose:
+                print(f"Already uploaded: {key}")
             continue
         with path.open("rb") as f:
             print(f"Upload: {key}")
@@ -124,6 +127,11 @@ def main():
         action="store_true",
         help="delete any files which are not listed on block storage",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="output verbose information about what is happening",
+    )
     args = parser.parse_args()
     if args.core_directory:
         CORE_DIR = args.core_directory.absolute()
@@ -133,13 +141,13 @@ def main():
         sys.exit("error: either --par-url or $OCI_PAR_URL is required")
     client = ParClient(args.par_url)
     if args.action == "download":
-        download_all(client)
+        download_all(client, verbose=args.verbose)
         if args.delete_orphan:
-            delete_orphans(client)
+            delete_orphans(client, verbose=args.verbose)
     elif args.action == "upload":
         if not args.upload_core:
             sys.exit("error: --upload-core is required for upload operation")
-        upload_all(client, args.upload_core)
+        upload_all(client, args.upload_core, verbose=args.verbose)
 
 
 if __name__ == "__main__":
