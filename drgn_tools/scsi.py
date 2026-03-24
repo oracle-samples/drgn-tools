@@ -8,6 +8,7 @@ import argparse
 import enum
 from typing import Iterator
 
+from drgn import cast
 from drgn import container_of
 from drgn import FaultError
 from drgn import Object
@@ -22,6 +23,8 @@ from drgn_tools.block import request_target
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.device import class_to_subsys
 from drgn_tools.module import ensure_debuginfo
+from drgn_tools.table import FixedTable
+from drgn_tools.table import print_dictionary
 from drgn_tools.table import print_table
 from drgn_tools.util import has_member
 from drgn_tools.util import timestamp_str
@@ -205,12 +208,14 @@ def scsi_id(scsi_dev: Object) -> str:
     return hctl
 
 
-def print_scsi_hosts(prog: Program) -> None:
+def print_scsi_hosts(prog: Program, verbose: bool = False) -> None:
     """
     Prints scsi host information
     """
-    output = [
-        [
+    print("-" * 120)
+    # Use FixedTable so that each row is printed immediately.
+    table = FixedTable(
+        header=[
             "SCSI_HOST",
             "NAME",
             "DRIVER",
@@ -220,8 +225,10 @@ def print_scsi_hosts(prog: Program) -> None:
             "Fail",
             "State",
             "EH val",
+            "cmd/lun",
+            "hwq",
         ]
-    ]
+    )
 
     for shost in for_each_scsi_host(prog):
         if shost.hostt.module.version:
@@ -243,21 +250,41 @@ def print_scsi_hosts(prog: Program) -> None:
         else:
             eh_deadline = "n/a"
 
-        output.append(
-            [
-                hex(shost.value_()),
-                f"host{shost.host_no.value_():>}",
-                host_module_name(shost),
-                modver,
-                host_busy,
-                shost.host_blocked.counter.value_(),
-                shost.host_failed.value_(),
-                shost.shost_state.format_(type_name=False),
-                eh_deadline,
-            ]
+        table.row(
+            hex(shost.value_()),
+            f"host{shost.host_no.value_():>}",
+            host_module_name(shost),
+            modver,
+            host_busy,
+            shost.host_blocked.counter.value_(),
+            shost.host_failed.value_(),
+            shost.shost_state.format_(type_name=False),
+            eh_deadline,
+            shost.cmd_per_lun.value_(),
+            shost.nr_hw_queues.value_(),
         )
-    print_table(output)
-    return
+        if verbose:
+            print("-" * 120)
+            try:
+                if host_module_name(shost) == "qla2xxx":
+                    print_qla2xxx_shost_info(prog, shost)
+                elif host_module_name(shost) == "lpfc":
+                    print_lpfc_shost_info(prog, shost)
+                elif host_module_name(shost) == "megaraid_sas":
+                    print_megaraid_shost_info(prog, shost)
+            except ValueError:
+                print(
+                    "Details Unavailable for Scsi_Host: {} ({:x})".format(
+                        shost.shost_gendev.kobj.name.string_().decode(),
+                        shost.value_(),
+                    )
+                )
+
+    if not verbose:
+        print("-" * 120)
+        print(
+            "  Run with -v or --verbose for more Host HBA specific information."
+        )
 
 
 def print_shost_header(shost: Object) -> None:
@@ -288,7 +315,199 @@ def print_shost_header(shost: Object) -> None:
     )
     print_table(output)
     print("-" * 110)
-    return
+
+
+def fc_hba_port_attr(shost: Object) -> Object:
+    return cast("struct fc_host_attrs *", shost.shost_data)
+
+
+def print_port_addr(fc_host_attrs: Object) -> None:
+    if fc_host_attrs:  # NULL check
+        print("{:<20}: 0x{:x}".format("fc_host_attrs", fc_host_attrs.value_()))
+        print(
+            "{:<20}: 0x{:x}".format(
+                "node_name (wwn)", fc_host_attrs.node_name.value_()
+            )
+        )
+        print(
+            "{:<20}: 0x{:x}".format(
+                "port_name (wwpn)", fc_host_attrs.port_name.value_()
+            )
+        )
+    else:
+        print("Port attributes are NULL\n")
+
+
+def print_megaraid_shost_info(prog: Program, shost: Object) -> None:
+    """
+    print MegaRAID-specific host details, if available.
+    """
+    try:
+        prog.module("megaraid_sas")
+    except LookupError:
+        return
+
+    msg = ensure_debuginfo(prog, ["megaraid_sas"])
+    if msg:
+        print("megaraid_sas debuginfo not loaded!")
+        return
+
+    megasas_inst = cast("struct megasas_instance *", shost.hostdata)
+    if not megasas_inst:
+        return
+
+    output = {}
+
+    print("\nMegaRAID SAS HBA specific details\n")
+    output["megasas_instance"] = hex(megasas_inst.value_())
+    output["megasas_ctrl_info"] = hex(megasas_inst.ctrl_info_buf.value_())
+    output[
+        "serial_no"
+    ] = megasas_inst.ctrl_info_buf.serial_no.string_().decode()
+    output[
+        "product_name"
+    ] = megasas_inst.ctrl_info_buf.product_name.string_().decode()
+    output[
+        "package_version"
+    ] = megasas_inst.ctrl_info_buf.package_version.string_().decode()
+    output["pci_dev"] = hex(megasas_inst.pdev.value_())
+    output["pci_dev slot"] = megasas_inst.pdev.dev.kobj.name.string_().decode()
+    output["ld_ids"] = megasas_inst.ld_ids.value_()
+    output["max_num_sge"] = megasas_inst.max_num_sge.value_()
+    output["max_fw_cmds"] = megasas_inst.max_fw_cmds.value_()
+    output["max_mpt_cmds"] = megasas_inst.max_mpt_cmds.value_()
+    output["max_mfi_cmds"] = megasas_inst.max_mfi_cmds.value_()
+    output["max_scsi_cmds"] = megasas_inst.max_scsi_cmds.value_()
+    output["ldio_threshold"] = megasas_inst.ldio_threshold.value_()
+    output["cur_can_queue"] = megasas_inst.cur_can_queue.value_()
+    output["max_sectors_per_req"] = megasas_inst.max_sectors_per_req.value_()
+    output["fw_outstanding"] = megasas_inst.fw_outstanding.counter.value_()
+    output["ldio_outstanding"] = megasas_inst.ldio_outstanding.counter.value_()
+    output[
+        "fw_reset_no_pci_access"
+    ] = megasas_inst.fw_reset_no_pci_access.counter.value_()
+    output["total_io_count"] = megasas_inst.total_io_count.counter.value_()
+    output[
+        "high_iops_outstanding"
+    ] = megasas_inst.high_iops_outstanding.counter.value_()
+    output["megasas_inst.flag"] = megasas_inst.flag.value_()
+    output["issuepend_done"] = megasas_inst.issuepend_done.value_()
+    output[
+        "disableOnlineCtrlReset"
+    ] = megasas_inst.disableOnlineCtrlReset.value_()
+    output["adprecovery"] = megasas_inst.adprecovery.counter.value_()
+    output[
+        "fw_supported_vd_count"
+    ] = megasas_inst.fw_supported_vd_count.value_()
+    output[
+        "fw_supported_pd_count"
+    ] = megasas_inst.fw_supported_pd_count.value_()
+    output[
+        "drv_supported_vd_count"
+    ] = megasas_inst.drv_supported_vd_count.value_()
+    output[
+        "drv_supported_pd_count"
+    ] = megasas_inst.drv_supported_pd_count.value_()
+    output["reset_flags"] = megasas_inst.reset_flags.value_()
+    output["throttle queue depth"] = megasas_inst.throttlequeuedepth.value_()
+    output["adapter_type"] = megasas_inst.adapter_type.format_(type_name=False)
+    output[
+        "support_nvme_passthru"
+    ] = megasas_inst.support_nvme_passthru.value_()
+    output["task_abort_tmo"] = megasas_inst.task_abort_tmo.value_()
+    output["max_reset_tmo"] = megasas_inst.max_reset_tmo.value_()
+    output["perf_mode"] = megasas_inst.perf_mode.format_(type_name=False)
+    print_dictionary(output)
+    print("-" * 120)
+
+
+def print_lpfc_shost_info(prog: Program, shost: Object) -> None:
+    """
+    print lpfc HBA specific information.
+    """
+    print("\nFC/FCoE HBA attributes")
+    print("----------------------")
+
+    port_attr = fc_hba_port_attr(shost)
+    print_port_addr(port_attr)
+
+    print("\nEmulex HBA specific details")
+    print("---------------------------")
+
+    output = {}
+
+    lpfc_vport = cast("struct lpfc_vport *", shost.hostdata)
+    if lpfc_vport:
+        lpfc_hba = lpfc_vport.phba
+
+        output["lpfc_vport"] = hex(lpfc_vport.value_())
+        output["lpfc_hba"] = hex(lpfc_hba.value_())
+        output["sli_ver"] = lpfc_hba.sli_rev.value_()
+        output["pci_dev"] = hex(lpfc_hba.pcidev.value_())
+        output[
+            "pci_dev slot"
+        ] = lpfc_hba.pcidev.dev.kobj.name.string_().decode()
+        output["board no"] = lpfc_hba.brd_no.value_()
+        output["Serial no"] = lpfc_hba.SerialNumber.string_().decode()
+        output[
+            "OptionROMVersion"
+        ] = lpfc_hba.OptionROMVersion.string_().decode()
+        output["BIOSVersion"] = lpfc_hba.BIOSVersion.string_().decode()
+        output["Program Type"] = lpfc_hba.ProgramType.string_().decode()
+        output["ModelDesc"] = lpfc_hba.ModelDesc.string_().decode()
+        output["ModelName"] = lpfc_hba.ModelName.string_().decode()
+        output["cfg_hba_queue_depth"] = lpfc_hba.cfg_hba_queue_depth.value_()
+        output["cfg_lun_queue_depth"] = lpfc_vport.cfg_lun_queue_depth.value_()
+        if prog.type("struct lpfc_vport").has_member("cfg_tgt_queue_depth"):
+            output[
+                "cfg_tgt_queue_depth"
+            ] = lpfc_vport.cfg_tgt_queue_depth.value_()
+    else:
+        print("Need to fetch standard queue data")
+
+    print_dictionary(output)
+    print("-" * 120)
+
+
+def print_qla2xxx_shost_info(prog: Program, shost: Object) -> None:
+    """
+    print QLogic qla2xxx HBA specific information.
+    """
+
+    print("\nFC/FCoE HBA attributes")
+    print("----------------------")
+
+    port_attr = fc_hba_port_attr(shost)
+    print_port_addr(port_attr)
+
+    print("\nQLogic HBA specific details")
+    print("---------------------------")
+
+    output = {}
+
+    scsi_qla_host = cast("struct scsi_qla_host *", shost.hostdata)
+    if scsi_qla_host:
+        qla_hw_data = cast("struct qla_hw_data *", scsi_qla_host.hw)
+
+        output["scsi_qla_host"] = hex(scsi_qla_host.value_())
+        output["qla_hw_data"] = hex(qla_hw_data.value_())
+        output["pci_dev"] = hex(qla_hw_data.pdev.value_())
+        output[
+            "pci_dev slot"
+        ] = qla_hw_data.pdev.dev.kobj.name.string_().decode()
+        output["operating_mode"] = qla_hw_data.operating_mode.value_()
+        output["model_desc"] = qla_hw_data.model_desc.string_().decode()
+        output["FW version"] = (
+            f"{qla_hw_data.fw_major_version.value_()}."
+            f"{qla_hw_data.fw_minor_version.value_()}."
+            f"{qla_hw_data.fw_subminor_version.value_()}"
+        )
+        output["fw_dumped"] = qla_hw_data.fw_dumped.value_()
+        output["ql2xmaxqdepth"] = prog["ql2xmaxqdepth"].value_()
+    else:
+        print("Unable to fetch QLogic HBA details")
+    print_dictionary(output)
+    print("-" * 120)
 
 
 def print_shost_devs(prog: Program) -> None:
@@ -334,7 +553,7 @@ def print_shost_devs(prog: Program) -> None:
         print_table(output)
 
 
-def print_inflight_scsi_cmnds(prog: Program):
+def print_inflight_scsi_cmnds(prog: Program) -> None:
     """
     print all inflight SCSI commands for all SCSI devices.
     """
@@ -419,13 +638,12 @@ def print_inflight_scsi_cmnds(prog: Program):
                     ]
                 )
 
-            if counter > 1:
+            if counter > 0:
                 TotalInflight += counter
                 print_table(output)
                 print("-" * 115)
     print(f" Total inflight commands across all disks : {TotalInflight}")
     print("-" * 115)
-    return
 
 
 class ScsiInfo(CorelensModule):
@@ -435,39 +653,49 @@ class ScsiInfo(CorelensModule):
 
     name = "scsiinfo"
 
-    debuginfo_kmods = ["sd_mod"]
+    debuginfo_kmods = ["sd_mod", "megaraid_sas", "qla2xxx", "lpfc"]
 
     default_args = [
         [
             "--hosts",
             "--devices",
             "--queue",
+            "--verbose",
         ]
     ]
 
     def add_args(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
             "--hosts",
+            "-s",
             action="store_true",
-            help="Print Scsi Hosts",
+            help="Print SCSI Hosts",
         )
         parser.add_argument(
             "--devices",
+            "-d",
             action="store_true",
-            help="Print Scsi Devices",
+            help="Print SCSI Devices",
         )
         parser.add_argument(
             "--queue",
+            "-q",
             action="store_true",
             help="Print Inflight SCSI commands",
+        )
+        parser.add_argument(
+            "--verbose",
+            "-v",
+            action="store_true",
+            help="print verbose",
         )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         if args.hosts:
-            print_scsi_hosts(prog)
+            print_scsi_hosts(prog, verbose=args.verbose)
         elif args.devices:
             print_shost_devs(prog)
         elif args.queue:
             print_inflight_scsi_cmnds(prog)
         else:
-            print_scsi_hosts(prog)
+            print_scsi_hosts(prog, verbose=args.verbose)
