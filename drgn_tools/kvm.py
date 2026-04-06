@@ -9,6 +9,7 @@ from drgn import cast
 from drgn import Object
 from drgn import Program
 from drgn.helpers.common.type import enum_type_to_class
+from drgn.helpers.linux.list import hlist_for_each_entry
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.pid import find_task
 from drgn.helpers.linux.sched import task_state_to_char
@@ -16,6 +17,7 @@ from drgn.helpers.linux.xarray import xa_for_each
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_table
+from drgn_tools.util import BitNumberFlags
 from drgn_tools.util import enum_name_get
 from drgn_tools.util import has_member
 
@@ -36,13 +38,14 @@ class KvmVcpuState(enum.Enum):
     LOAD = 8
 
 
-class MemSlotFlag(enum.Enum):
+class MemSlotFlag(BitNumberFlags):
     """
     kvm_memory_region::flags
     """
 
-    KVM_MEM_LOG_DIRTY_PAGES = 1
-    KVM_MEM_READONLY = 2
+    KVM_MEM_LOG_DIRTY_PAGES = 0
+    KVM_MEM_READONLY = 1
+    KVM_MEM_GUEST_MEMFD = 2
 
 
 def for_each_vm(prog: Program) -> Iterable[Object]:
@@ -214,60 +217,79 @@ def print_memslot_info(prog: Program) -> None:
                 "FLAGS",
             ]
         ]
-        nr_pages = 0
-        for memslot in vm.memslots:
-            # for UEK5 to UEK7-U2
-            if has_member(memslot, "memslots"):
-                for j in range(memslot.used_slots.value_()):
-                    mm = memslot.memslots[j]
-                    gfn = mm.base_gfn.value_()
-                    pages = mm.npages.value_()
-                    arch = hex(mm.arch.address_of_())
-                    usr_addr = hex(mm.userspace_addr.value_())
-                    if mm.flags.value_() == 0:
-                        flags = mm.flags.value_()
-                    else:
-                        flags = MemSlotFlag(mm.flags.value_()).name
-                    nr_pages = nr_pages + pages
+        total_pages = 0
+        for memslots_ref in vm.memslots:
+            memslots_addr_value = memslots_ref.value_()
+            if memslots_addr_value == 0:
+                continue
+            memslots_obj = memslots_ref[0]
+            memslots_addr = hex(memslots_addr_value)
+
+            if has_member(memslots_obj, "memslots"):
+                used = memslots_obj.used_slots.value_()
+                for idx in range(used):
+                    slot_obj = memslots_obj.memslots[idx]
+                    slot_addr_value = slot_obj.address_of_().value_()
+
+                    base_gfn = slot_obj.base_gfn.value_()
+                    pages = slot_obj.npages.value_()
+                    total_pages += pages
+                    arch = hex(slot_obj.arch.address_of_().value_())
+                    userspace_addr = hex(slot_obj.userspace_addr.value_())
+                    flags_value = slot_obj.flags.value_()
+                    flags = MemSlotFlag.decode(flags_value)
+                    if flags == "0x0":
+                        flags = "0"
+
                     rows.append(
                         [
                             hex(vm.value_()),
-                            hex(memslot.address_of_()),
-                            hex(mm.address_of_()),
-                            gfn,
+                            memslots_addr,
+                            hex(slot_addr_value),
+                            base_gfn,
                             pages,
                             arch,
-                            usr_addr,
+                            userspace_addr,
                             flags,
                         ]
                     )
             else:
-                # Starting from UEK7-U3
-                for vcpu in for_each_vcpu(vm):
-                    mmslot = vcpu.last_used_slot
-                    gfn = mmslot.base_gfn.value_()
-                    pages = mmslot.npages.value_()
-                    arch = hex(mmslot.arch.address_of_())
-                    usr_addr = hex(mmslot.userspace_addr.value_())
-                    if mmslot.flags.value_() == 0:
-                        flags = mmslot.flags.value_()
-                    else:
-                        flags = MemSlotFlag(mmslot.flags.value_()).name
-                    nr_pages = nr_pages + pages
-                    rows.append(
-                        [
-                            hex(vm.value_()),
-                            hex(memslot.value_()),
-                            hex(mmslot.address_of_()),
-                            gfn,
-                            pages,
-                            arch,
-                            usr_addr,
-                            flags,
-                        ]
-                    )
+                node_idx = memslots_obj.node_idx.value_()
+                member = f"id_node[{node_idx}]"
+                for bucket in memslots_obj.id_hash:
+                    for slot_ref in hlist_for_each_entry(
+                        "struct kvm_memory_slot", bucket, member
+                    ):
+                        slot_addr_value = slot_ref.value_()
+                        if slot_addr_value == 0:
+                            continue
+                        slot_obj = slot_ref[0]
+
+                        base_gfn = slot_obj.base_gfn.value_()
+                        pages = slot_obj.npages.value_()
+                        total_pages += pages
+                        arch = hex(slot_obj.arch.address_of_().value_())
+                        userspace_addr = hex(slot_obj.userspace_addr.value_())
+                        flags_value = slot_obj.flags.value_()
+                        flags = MemSlotFlag.decode(flags_value)
+                        if flags == "0x0":
+                            flags = "0"
+
+                        rows.append(
+                            [
+                                hex(vm.value_()),
+                                memslots_addr,
+                                hex(slot_addr_value),
+                                base_gfn,
+                                pages,
+                                arch,
+                                userspace_addr,
+                                flags,
+                            ]
+                        )
+
         print_table(rows)
-        print("\n## Total Pages: %d ##" % (nr_pages))
+        print(f"\n## Total Pages: {total_pages} ##")
 
 
 def print_ioeventfd_info(prog: Program) -> None:
