@@ -204,6 +204,19 @@ def task_lastrun2now(task: drgn.Object) -> int:
     return rq_clock - arrival_time
 
 
+def task_lastqueue2now(task: drgn.Object) -> int:
+    """
+    Get the duration from task queued in runqueue to current runqueue clock.
+
+    This duration maybe only interesting for the tasks who are pending running
+    in the runqueue, to tell the schedule delay.
+    """
+    prog = task.prog_
+    last_queue = task.sched_info.last_queued.value_()
+    rq_clock = runq_clock(prog, task_cpu(task))
+    return rq_clock - last_queue
+
+
 def get_current_run_time(prog: drgn.Program, cpu: int) -> int:
     """
     Get running duration of the current task on some cpu
