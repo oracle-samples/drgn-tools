@@ -13,6 +13,7 @@ from drgn.helpers.linux.percpu import per_cpu
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.task import task_lastqueue2now
 from drgn_tools.task import task_lastrun2now
+from drgn_tools.util import has_member
 from drgn_tools.util import timestamp_str
 
 # List runqueus per cpu
@@ -20,8 +21,19 @@ from drgn_tools.util import timestamp_str
 
 def _print_rt_runq(runqueue: Object) -> None:
     count = 0
-    prio_array = hex(runqueue.rt.active.address_ - 16)
-    print("  RT PRIO_ARRAY:", prio_array)
+    rt = runqueue.rt
+    if has_member(rt, "rt_throttled"):
+        print(
+            "  RT RT_RQ: {}  THROTTLED: {}  RT_TIME: {}ns  RT_RUNTIME: {}ns".format(
+                hex(rt.address_),
+                rt.rt_throttled.value_(),
+                rt.rt_time.value_(),
+                rt.rt_runtime.value_(),
+            )
+        )
+    else:
+        print("  RT RT_RQ: ", hex(rt.address_))
+
     rt_prio_array = runqueue.rt.active.queue
     for que in rt_prio_array:
         for t in list_for_each_entry(
