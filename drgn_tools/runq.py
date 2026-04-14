@@ -11,6 +11,7 @@ from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
 
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.task import task_lastqueue2now
 from drgn_tools.task import task_lastrun2now
 from drgn_tools.util import timestamp_str
 
@@ -32,11 +33,12 @@ def _print_rt_runq(runqueue: Object) -> None:
             count += 1
             print(
                 " " * 4,
-                '[{:3d}] PID: {:<6d} TASK: {} COMMAND: "{}"'.format(
+                '[{:3d}] PID: {:<6d} TASK: {} COMMAND: "{}" PENDINGTIME: "{}"'.format(
                     tsk.prio.value_(),
                     tsk.pid.value_(),
                     hex(tsk),
                     escape_ascii_string(tsk.comm.string_()),
+                    timestamp_str(task_lastqueue2now(tsk)),
                 ),
             )
     if count == 0:
@@ -56,11 +58,12 @@ def _print_cfs_runq(runqueue: Object) -> None:
         count += 1
         print(
             " " * 4,
-            '[{:3d}] PID: {:<6d} TASK: {}  COMMAND: "{}"'.format(
+            '[{:3d}] PID: {:<6d} TASK: {}  COMMAND: "{}" PENDINGTIME: {}'.format(
                 t.prio.value_(),
                 t.pid.value_(),
                 hex(t),
                 escape_ascii_string(t.comm.string_()),
+                timestamp_str(task_lastqueue2now(t)),
             ),
         )
     if count == 0:
