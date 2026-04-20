@@ -1755,21 +1755,45 @@ def rds_conn_cpu_info(
         return None
 
     index = -1
-    conn_list = Table(
-        [
-            " ",  # index
-            "rds_conn",
-            "ib_conn",
-            "Conn Path",
-            "ToS",
-            "Local Addr",
-            "Remote Addr",
-            "State",
-            "preferred_send_cpu [state]",
-            "preferred_recv_cpu [state]",
-            "preferred_recv_sibling_cpu [state]",
-        ]
-    )
+    columns = [
+        " ",  # index
+        "rds_conn",
+        "ib_conn",
+        "Conn Path",
+        "ToS",
+        "Local Addr",
+        "Remote Addr",
+        "State",
+    ]
+
+    # Preferred CPUs on IB connections have been stored in various struct fields
+    # over time. Add columns for any of the below if they are found. Don't add
+    # any columns if we cannot find rds_ib_connection struct.
+    cpu_field_candidates = [
+        "irq_local_cpu",
+        "preferred_cpu",
+        "preferred_send_cpu",
+        "preferred_recv_cpu",
+        "preferred_recv_sibling",
+    ]
+    cpu_fields = []
+    try:
+        tp = prog.type("struct rds_ib_connection")
+        for candidate in cpu_field_candidates:
+            if tp and tp.has_member(f"i_{candidate}"):
+                cpu_fields.append(candidate)
+                columns.append(f"{candidate} [state]")
+    except LookupError:
+        pass
+
+    def format_cpu_field(ic: Optional[Object], field: str) -> str:
+        if ic is None:
+            return "N/A"
+        prog = ic.prog_
+        cpu = ic.member_(f"i_{field}")
+        return f"{cpu.value_()} [{cpu_online_state(prog, cpu.value_())}]"
+
+    conn_list = Table(columns)
 
     for conn in for_each_rds_conn(prog, laddr, faddr, tos, state):
         conn_val = hex(conn.value_())
@@ -1787,30 +1811,7 @@ def rds_conn_cpu_info(
         conn_laddr = rds_inet_ntoa(conn.c_laddr)
         conn_faddr = rds_inet_ntoa(conn.c_faddr)
         conn_state = rds_conn_path_state(conn)
-        preferred_send_cpu = str(int(ic.i_preferred_send_cpu))
-        preferred_send_cpu = (
-            preferred_send_cpu
-            + " ["
-            + cpu_online_state(prog, ic.i_preferred_send_cpu)
-            + "]"
-        )
-        preferred_recv_cpu = str(int(ic.i_preferred_recv_cpu))
-        preferred_recv_cpu = (
-            preferred_recv_cpu
-            + " ["
-            + cpu_online_state(prog, ic.i_preferred_recv_cpu)
-            + "]"
-        )
-        try:
-            preferred_recv_sibling = str(int(ic.i_preferred_recv_sibling))
-            preferred_recv_sibling = (
-                preferred_recv_sibling
-                + " ["
-                + cpu_online_state(prog, ic.i_preferred_recv_sibling)
-                + "]"
-            )
-        except Exception:
-            preferred_recv_sibling = "NA"
+        cpus = [format_cpu_field(ic, field) for field in cpu_fields]
 
         index += 1
         conn_list.row(
@@ -1822,9 +1823,7 @@ def rds_conn_cpu_info(
             conn_laddr,
             conn_faddr,
             conn_state,
-            preferred_send_cpu,
-            preferred_recv_cpu,
-            preferred_recv_sibling,
+            *cpus,
         )
     print("RDS connections CPU information:")
     conn_list.write()
