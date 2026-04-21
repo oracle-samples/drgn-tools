@@ -292,6 +292,13 @@ def find_vmlinuz(release: str, root_dir: Path) -> Path:
     return root_dir / f"boot/vmlinuz-{release}"
 
 
+def find_qemu(arch: str) -> str:
+    if os.path.exists("/usr/libexec/qemu-kvm"):
+        return "/usr/libexec/qemu-kvm"
+    else:
+        return f"qemu-system-{arch}"
+
+
 def run_vm(kernel: TestKernel, extract_dir: Path, commands: List[List[str]]):
     release = kernel.latest_release()
     extract_dir = extract_dir / release
@@ -307,7 +314,7 @@ def run_vm(kernel: TestKernel, extract_dir: Path, commands: List[List[str]]):
     initrd = create_initrd(release, extract_dir, command=script)
     vmlinuz = find_vmlinuz(release, extract_dir)
     with create_block_image() as block_img_path, tempfile.NamedTemporaryFile() as tf:
-        qemu = f"qemu-system-{kernel.arch}"
+        qemu = find_qemu(kernel.arch)
         if os.access("/dev/kvm", os.R_OK | os.W_OK):
             args = [qemu, "-cpu", "host", "--enable-kvm"]
         else:
