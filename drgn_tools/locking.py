@@ -25,6 +25,7 @@ from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.sched import cpu_curr
 from drgn.helpers.linux.sched import task_cpu
 from drgn.helpers.linux.sched import task_state_to_char
+from drgn.helpers.linux.wait import waitqueue_for_each_task
 
 from drgn_tools.bt import bt
 from drgn_tools.mm import AddrKind
@@ -589,8 +590,9 @@ def is_task_blocked_on_lock(
     """
     Check if a task is blocked on a given lock or not
     :param pid: PID of task
-    :param var_name: variable name (sem, or mutex)
+    :param var_name: variable name (sem, mutex or completion)
     :param lock: ``struct mutex *`` or ``struct semaphore *`` or ``struct rw_semaphore *``
+                 ``struct completion *``
     :returns: True if task is blocked on given lock, False otherwise.
     """
 
@@ -604,6 +606,11 @@ def is_task_blocked_on_lock(
             return pid in [
                 waiter.pid.value_()
                 for waiter in for_each_mutex_waiter_careful(lock.prog_, lock)
+            ]
+        elif lock_type == "completion":
+            return pid in [
+                waiter.pid.value_()
+                for waiter in completion_for_each_task_careful(lock)
             ]
         else:
             return False
@@ -670,3 +677,70 @@ def get_lock_from_frame(
         if is_task_blocked_on_lock(pid, kind, lock):
             return lock
     return None
+
+
+# Once next drgn version has been released and we have moved to that
+# we will have helpers to traverse completion waiters and swaitq
+# Until then we use following helpers (taken from my upstream commit)
+def swait_for_each_task(wq: Object) -> Iterable[Object]:
+    for entry in list_for_each_entry(
+        "struct swait_queue", wq.task_list.address_of_(), "task_list"
+    ):
+        yield entry.task
+
+
+def completion_for_each_task(completion: Object) -> Iterable[Object]:
+    """
+    Iterate over all tasks waiting on a completion variable.
+
+    :param completion: ``struct completion *``
+    :return: Iterator of ``struct task_struct *`` objects.
+    """
+    wait = completion.wait.address_of_()
+    # completion->wait is a simple wait queue since Linux kernel commit
+    # a5c6234e1028 ("completion: Use simple wait queues") (in v5.7).
+    # Also Linux kernel commit 2055da97389a ("sched/wait: Disambiguate
+    # wq_entry->task_list and wq_head->task_list naming") (in v4.13) renamed
+    # the task_list member to head.
+    # So completion->wait in kernels v5.7 and later and in kernels prior to v4.13,
+    # have task_list member, but of different types. So use type of completion->wait
+    # to differentiate between completion backends.
+    if wait.type_.type_name() == "struct swait_queue_head *":
+        return swait_for_each_task(wait)
+    else:
+        return waitqueue_for_each_task(wait)
+
+
+def completion_for_each_task_careful(completion: Object) -> Iterable[Object]:
+    """
+    Iterate over all tasks waiting on a completion variable, with circular
+    list detection.
+
+    :param completion: ``struct completion *``
+    :return: Iterator of ``struct task_struct *`` objects.
+    """
+    seen = set()
+    prog = completion.prog_
+    wait = completion.wait.address_of_()
+    # completion->wait changed from wait_queue_head to swait_queue_head since
+    # Linux kernel commit a5c6234e1028 ("completion: Use simple wait queues") (in v5.7).
+    if wait.type_.type_name() == "struct swait_queue_head *":
+        for entry in validate_list_for_each_entry(
+            "struct swait_queue", wait.task_list.address_of_(), "task_list"
+        ):
+            addr = entry.value_()
+            if addr in seen:
+                raise ValidationError("circular list")
+            seen.add(addr)
+            yield entry.task
+    else:
+        for entry in validate_list_for_each_entry(
+            prog.type("struct wait_queue_entry"),
+            wait.head.address_of_(),
+            "entry",
+        ):
+            addr = entry.value_()
+            if addr in seen:
+                raise ValidationError("circular list")
+            seen.add(addr)
+            yield cast("struct task_struct *", entry.private)

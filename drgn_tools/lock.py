@@ -37,6 +37,7 @@ from drgn import Program
 from drgn import StackFrame
 from drgn.helpers.common import identify_address
 from drgn.helpers.linux.cpumask import for_each_present_cpu
+from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import find_task
 
@@ -46,6 +47,7 @@ from drgn_tools.corelens import CorelensModule
 from drgn_tools.deadlock import DependencyGraph
 from drgn_tools.locking import _RWSEM_READER_MASK
 from drgn_tools.locking import _RWSEM_READER_SHIFT
+from drgn_tools.locking import completion_for_each_task
 from drgn_tools.locking import for_each_mutex_waiter
 from drgn_tools.locking import for_each_rwsem_waiter
 from drgn_tools.locking import get_lock_from_frame
@@ -384,6 +386,61 @@ def show_rwsem_lock(
         print("")
 
 
+def show_completion(
+    prog: Program,
+    frame_list: List[Tuple[Object, StackFrame]],
+    stack: bool,
+    time: Optional[int] = None,
+    pid: Optional[int] = None,
+) -> None:
+    """Show completion details"""
+    wtask = None
+    if pid is not None:
+        wtask = find_task(prog, pid)
+
+    seen_completions: Set[int] = set()
+    completion_waiters: Set[int] = set()
+    completions_done = 0
+
+    for task, frame in frame_list:
+        completion = get_lock_from_frame(prog, task, frame, "completion", "x")
+        if not completion:
+            continue
+        completion_addr = completion.value_()
+        if completion_addr in seen_completions:
+            continue
+        seen_completions.add(completion_addr)
+
+        index = 0
+        addr_info = _addr_info(prog, completion_addr)
+        print(f"Completion: 0x{completion_addr:x}{addr_info}")
+        if list_empty(completion.wait.task_list.address_of_()):
+            completions_done = completions_done + 1
+            continue
+
+        if pid is None:
+            if time is None:
+                time = 0
+            for waiter in completion_for_each_task(completion):
+                completion_waiters.add(waiter.value_())
+                waittime = task_lastrun2now(waiter)
+                timens = time * 1000000000
+                index = index + 1
+                if waittime > timens or timens == 0:
+                    show_lock_waiter(prog, waiter, index, stacktrace=stack)
+                else:
+                    continue
+        else:
+            show_lock_waiter(prog, wtask, index, stacktrace=stack)
+
+        print("")
+
+    print(f"Number of tasks waiting on completions: {len(completion_waiters)}")
+    print(f"Number of completions: {len(seen_completions)}")
+    print(f"Number of completions wih no waiters: {completions_done}")
+    print("")
+
+
 def scan_sem_lock(
     prog: Program,
     stack: bool,
@@ -431,6 +488,25 @@ def scan_rwsem_lock(
     frame_list = bt_has_any(prog, functions, wtask, one_per_task=True)
     if frame_list:
         show_rwsem_lock(prog, frame_list, stack, time, pid)
+
+
+def scan_completion(
+    prog: Program,
+    stack: bool,
+    time: Optional[int] = None,
+    pid: Optional[int] = None,
+) -> None:
+    """Scan for completion variables and show details"""
+    wtask = None
+    if pid is not None:
+        wtask = find_task(prog, pid)
+
+    functions = [
+        "__wait_for_common",
+    ]
+    frame_list = bt_has_any(prog, functions, wtask, one_per_task=True)
+    if frame_list:
+        show_completion(prog, frame_list, stack, time, pid)
 
 
 def scan_lock(
