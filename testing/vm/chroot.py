@@ -42,6 +42,22 @@ def run_in_chroot(rootfs: Path, command: str, binds: List[BindMount]) -> None:
                 "mount -o remount,ro,bind " f"{shlex.quote(str(target))}"
             )
 
+    for host_path, dst in (
+        (Path("/etc/resolv.conf"), "/etc/resolv.conf"),
+        (Path("/etc/hosts"), "/etc/hosts"),
+    ):
+        if not host_path.is_file():
+            raise RuntimeError(f"Required host file is missing: {host_path}")
+        target = _rootfs_mount_target(rootfs, dst)
+        mount_targets.append(target)
+        lines.append(f"mkdir -p {shlex.quote(str(target.parent))}")
+        lines.append(f"touch {shlex.quote(str(target))}")
+        lines.append(
+            "mount --bind "
+            f"{shlex.quote(str(host_path))} {shlex.quote(str(target))}"
+        )
+        lines.append("mount -o remount,ro,bind " f"{shlex.quote(str(target))}")
+
     proc_target = _rootfs_mount_target(rootfs, "/proc")
     lines.append(f"mkdir -p {shlex.quote(str(proc_target))}")
     mount_targets.append(proc_target)
