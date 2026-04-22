@@ -332,6 +332,7 @@ TEST_KERNELS = [
             "kernel-ueknext-core",
             "kernel-ueknext-modules",
             "kernel-ueknext-modules-core",
+            "kernel-ueknext-devel",
         ],
         yum_fmt=(
             "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/"
@@ -344,17 +345,27 @@ TEST_KERNELS = [
         9,
         8,
         "x86_64",
-        ["kernel-uek-core", "kernel-uek-modules", "kernel-uek-modules-core"],
+        [
+            "kernel-uek-core",
+            "kernel-uek-modules",
+            "kernel-uek-modules-core",
+            "kernel-uek-devel",
+        ],
     ),
     # UEK7 switches from a single "kernel-uek" to "-core" and "-modules".
     # The "kernel-uek" package still exists as a placeholder.
-    TestKernel(9, 7, "x86_64", ["kernel-uek-core", "kernel-uek-modules"]),
-    TestKernel(8, 6, "x86_64", ["kernel-uek"]),
+    TestKernel(
+        9,
+        7,
+        "x86_64",
+        ["kernel-uek-core", "kernel-uek-modules", "kernel-uek-devel"],
+    ),
+    TestKernel(8, 6, "x86_64", ["kernel-uek", "kernel-uek-devel"]),
     # UEK5 is based on 4.14. 9p is available and supported here, but
     # unfortunately the UEK kernel configuration does not enable CONFIG_9P_FS.
     # Thankfully, this can be resolved by simply building the module
     # out-of-tree.
-    TestKernel(7, 5, "x86_64", ["kernel-uek"]),
+    TestKernel(7, 5, "x86_64", ["kernel-uek", "kernel-uek-devel"]),
     # UEK4 is based on 4.1. Unfortunately, 9p is not supported as an overlay
     # lower filesystem here. The changes required in order to make overlayfs
     # support 9p are too invasive; we can't simply replace the overlay module
