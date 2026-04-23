@@ -1,4 +1,4 @@
-# Copyright (c) 2024, Oracle and/or its affiliates.
+# Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 Helpers related to accessing fields of task_struct in a compatible way.
@@ -588,6 +588,27 @@ def check_arg_type(arg: Optional[str]) -> Tuple[str, Any]:
             return ("comm", str(arg))
     else:
         return ("none", None)
+
+
+def task_open_filepath(task: Object) -> str:
+    """
+    Return the filepath name a task is attempting to open if applicable.
+    """
+    pathname = ""
+    trace = task.prog_.stack_trace(task)
+
+    # Find do_filp_open frame
+    filp_frame = None
+    for frame in trace:
+        if frame.name == "do_filp_open":
+            filp_frame = frame
+            break
+
+    if filp_frame and "nd" in filp_frame.locals():
+        nameidata = filp_frame["nd"]
+        pathname = escape_ascii_string(nameidata.name.name.string_())
+
+    return pathname
 
 
 class Taskinfo(CorelensModule):

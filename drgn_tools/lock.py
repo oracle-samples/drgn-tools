@@ -363,7 +363,7 @@ def show_rwsem_lock(
             print(f" rwsem is {owner_type.value}")
 
         print(
-            "Rwsem WAITERS (Index, cpu, comm, pid, state, type, wait time (d hr:min:sec:ms)):"
+            "Rwsem WAITERS (Index, cpu, comm, pid, state, type, wait time (d hr:min:sec:ms) filepath (if applicable))"
         )
         if pid is None:
             if time is None:
@@ -375,11 +375,15 @@ def show_rwsem_lock(
                 index = index + 1
 
                 if waittime > timens or timens == 0:
-                    show_lock_waiter(prog, waiter, index, stacktrace=stack)
+                    show_lock_waiter(
+                        prog, waiter, index, stacktrace=stack, filepath=True
+                    )
                 else:
                     continue
         else:
-            show_lock_waiter(prog, wtask, index, stacktrace=stack)
+            show_lock_waiter(
+                prog, wtask, index, stacktrace=stack, filepath=True
+            )
 
         print("")
 

@@ -1,4 +1,4 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 Helper for linux kernel locking
@@ -31,6 +31,7 @@ from drgn_tools.mm import AddrKind
 from drgn_tools.table import FixedTable
 from drgn_tools.task import get_current_run_time
 from drgn_tools.task import task_lastrun2now
+from drgn_tools.task import task_open_filepath
 from drgn_tools.util import per_cpu_owner
 from drgn_tools.util import timestamp_str
 
@@ -175,7 +176,11 @@ def mutex_is_locked(lock: Object) -> bool:
 
 
 def show_lock_waiter(
-    prog: Program, task: Object, index: int, stacktrace: bool
+    prog: Program,
+    task: Object,
+    index: int,
+    stacktrace: bool,
+    filepath: bool = False,
 ) -> None:
     """
     Show lock waiter
@@ -184,25 +189,32 @@ def show_lock_waiter(
     :param task: ``struct task_struct *``
     :param index: index of waiter
     :param stacktrace: true to dump stack trace of the waiter
+    :param filepath: true to include open filepath info
     :returns: None
     """
     prefix = "[%d]" % index
     ncpu = task_cpu(task)
-    print(
-        "%12s: %-4s %-4d %-16s %-8d %-6s %-16s"
-        % (
-            prefix,
-            "cpu:",
-            ncpu,
-            task.comm.string_().decode(),
-            task.pid.value_(),
-            task_state_to_char(task),
-            timestamp_str(task_lastrun2now(task)),
-        )
-    )
+
+    fmt = "%12s: %-4s %-4d %-16s %-8d %-6s %-16s"
+    fields = [
+        prefix,
+        "cpu:",
+        ncpu,
+        task.comm.string_().decode(),
+        task.pid.value_(),
+        task_state_to_char(task),
+        timestamp_str(task_lastrun2now(task)),
+    ]
+
+    if filepath:
+        fmt += " %-16s"
+        fields.append(task_open_filepath(task))
+
+    print(fmt % tuple(fields))
+
     if stacktrace:
         bt(task, indent=12)
-        print("")
+    print("")
 
 
 def for_each_rwsem_waiter(prog: Program, rwsem: Object) -> Iterable[Object]:
