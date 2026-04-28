@@ -105,6 +105,19 @@ def for_each_scsi_host_device(shost: Object) -> Iterator[Object]:
         yield scsi_dev
 
 
+def for_each_scsi_target(shost: Object) -> Iterator[Object]:
+    """
+    Iterates thru all scsi targets and returns a scsi_target address
+
+    :param shost: ``struct Scsi_Host *``
+    :returns: an iterator of ``struct scsi_target *``
+    """
+    for scsi_target in list_for_each_entry(
+        "struct scsi_target", shost.__targets.address_of_(), "siblings"
+    ):
+        yield scsi_target
+
+
 def scsi_device_name(sdev: Object) -> str:
     """
     Get the device name associated with scsi_device.
@@ -646,6 +659,43 @@ def print_inflight_scsi_cmnds(prog: Program) -> None:
     print("-" * 115)
 
 
+def print_scsi_target(prog: Program) -> None:
+    table = FixedTable(
+        header=[
+            "Target Device",
+            "scsi_target",
+            "Channel",
+            "Id",
+            "Status",
+            "Busy",
+            "Blocked",
+        ]
+    )
+
+    for shost in for_each_scsi_host(prog):
+        if shost.__targets.next != shost.__targets.next.next:
+            print("-" * 110)
+            print_shost_header(shost)
+            for target in for_each_scsi_target(shost):
+                if has_member(target, "target_busy"):
+                    tbusy = target.target_busy.counter.value_()
+                else:
+                    tbusy = -1
+
+                table.row(
+                    target.dev.kobj.name.string_().decode(),
+                    hex(target.value_()),
+                    target.channel.value_(),
+                    target.id.value_(),
+                    target.state.format_(type_name=False),
+                    tbusy,
+                    target.target_blocked.counter.value_(),
+                )
+            table.write()
+
+    print("-" * 110)
+
+
 class ScsiInfo(CorelensModule):
     """
     Corelens Module for scsi device information
@@ -660,6 +710,7 @@ class ScsiInfo(CorelensModule):
             "--hosts",
             "--devices",
             "--queue",
+            "--target",
             "--verbose",
         ]
     ]
@@ -684,6 +735,12 @@ class ScsiInfo(CorelensModule):
             help="Print Inflight SCSI commands",
         )
         parser.add_argument(
+            "--target",
+            "-t",
+            action="store_true",
+            help="Print Targets connected on each SCSI host",
+        )
+        parser.add_argument(
             "--verbose",
             "-v",
             action="store_true",
@@ -697,5 +754,7 @@ class ScsiInfo(CorelensModule):
             print_shost_devs(prog)
         elif args.queue:
             print_inflight_scsi_cmnds(prog)
+        elif args.target:
+            print_scsi_target(prog)
         else:
             print_scsi_hosts(prog, verbose=args.verbose)
