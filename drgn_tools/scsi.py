@@ -14,6 +14,7 @@ from drgn import FaultError
 from drgn import Object
 from drgn import Program
 from drgn import sizeof
+from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.block import for_each_mq_pending_request
@@ -26,6 +27,7 @@ from drgn_tools.module import ensure_debuginfo
 from drgn_tools.table import FixedTable
 from drgn_tools.table import print_dictionary
 from drgn_tools.table import print_table
+from drgn_tools.table import Table
 from drgn_tools.util import has_member
 from drgn_tools.util import timestamp_str
 
@@ -660,37 +662,38 @@ def print_inflight_scsi_cmnds(prog: Program) -> None:
 
 
 def print_scsi_target(prog: Program) -> None:
-    table = FixedTable(
-        header=[
-            "Target Device",
-            "scsi_target",
-            "Channel",
-            "Id",
-            "Status",
-            "Busy",
-            "Blocked",
-        ]
-    )
-
     for shost in for_each_scsi_host(prog):
-        if shost.__targets.next != shost.__targets.next.next:
-            print("-" * 110)
-            print_shost_header(shost)
-            for target in for_each_scsi_target(shost):
-                if has_member(target, "target_busy"):
-                    tbusy = target.target_busy.counter.value_()
-                else:
-                    tbusy = -1
+        if list_empty(shost.__targets.address_of_()):
+            continue
+        table = Table(
+            header=[
+                "Target Device",
+                "scsi_target",
+                "Channel",
+                "Id",
+                "Status",
+                "Busy",
+                "Blocked",
+            ]
+        )
+        print_shost_header(shost)
 
-                table.row(
-                    target.dev.kobj.name.string_().decode(),
-                    hex(target.value_()),
-                    target.channel.value_(),
-                    target.id.value_(),
-                    target.state.format_(type_name=False),
-                    tbusy,
-                    target.target_blocked.counter.value_(),
-                )
+        for target in for_each_scsi_target(shost):
+            if has_member(target, "target_busy"):
+                tbusy = target.target_busy.counter.value_()
+            else:
+                tbusy = -1
+
+            table.row(
+                target.dev.kobj.name.string_().decode(),
+                hex(target.value_()),
+                target.channel.value_(),
+                target.id.value_(),
+                target.state.format_(type_name=False),
+                tbusy,
+                target.target_blocked.counter.value_(),
+            )
+        if table.rows:
             table.write()
 
     print("-" * 110)
@@ -748,13 +751,13 @@ class ScsiInfo(CorelensModule):
         )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
+        if not (args.queue or args.devices or args.target):
+            args.hosts = True
         if args.hosts:
             print_scsi_hosts(prog, verbose=args.verbose)
-        elif args.devices:
+        if args.devices:
             print_shost_devs(prog)
-        elif args.queue:
+        if args.queue:
             print_inflight_scsi_cmnds(prog)
-        elif args.target:
+        if args.target:
             print_scsi_target(prog)
-        else:
-            print_scsi_hosts(prog, verbose=args.verbose)
