@@ -9,3 +9,9 @@ def test_run_queue(prog):
     if ProgramFlags.IS_LIVE & prog.flags:
         return
     runq.run_queue(prog)
+
+
+def test_run_queue_check(prog):
+    if ProgramFlags.IS_LIVE & prog.flags:
+        return
+    runq.run_queue_check(prog)
