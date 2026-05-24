@@ -9,6 +9,7 @@ import drgn
 from drgn import Object
 from drgn import Program
 from drgn import Type
+from drgn import container_of
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_possible_cpu
 from drgn.helpers.linux.llist import llist_empty
@@ -24,6 +25,9 @@ from drgn_tools.task import get_runq_lag
 from drgn_tools.task import has_member
 from drgn_tools.task import nanosecs_to_secs
 from drgn_tools.task import task_lastrun2now
+
+_CSD_TYPE_TTWU = 0x30
+_CSD_FLAG_TYPE_MASK = 0xF0
 
 
 def _get_csd_type(prog: drgn.Program) -> Type:
@@ -271,6 +275,7 @@ def dump_smp_ipi_state(prog: drgn.Program) -> None:
     """
 
     csd_type = _get_csd_type(prog)
+
     if not csd_type.has_member("src") and not csd_type.has_member("node"):
         print(
             "This kernel does not record CSD src and destination information"
@@ -288,6 +293,17 @@ def dump_smp_ipi_state(prog: drgn.Program) -> None:
                 src = csd.src.value_()
             else:
                 src = csd.node.src.value_()
+                # Linux kernel commit 90b5363acd47 ("sched: Clean up scheduler_ipi()")(in v5.10)
+                # started using CSD framework for remote wakeups.
+                # Report tasks in the wake list but don't report source and destination CPUs for
+		# such CSDs because these fields are not used in this case.
+                if csd.node.u_flags.value_() & _CSD_FLAG_TYPE_MASK == _CSD_TYPE_TTWU:
+                    task = container_of(csd.node.address_of_(), "struct task_struct", "wake_entry")
+                    pid = task.pid.value_()
+                    comm = escape_ascii_string(task.comm.string_(), escape_backslash=True)
+                    print(f"\ncpu: {cpu} has pid: {pid} comm: {comm} in its wake list")
+                    continue
+
             print(f"\ncpu: {cpu} has pending csd requests from cpu:", src)
 
             print("\nCall stack at source cpu: ", src)
