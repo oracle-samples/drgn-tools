@@ -1,30 +1,85 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Configuration objects and target matrix for testing.vm."""
-from dataclasses import dataclass
 from pathlib import Path
 from typing import List
+from typing import NamedTuple
 from typing import Union
 
-from testing.litevm.rpm import TestKernel
-from testing.util import BASE_DIR
+
+SHARED_FS_AUTO = "auto"
+SHARED_FS_9P = "9p"
+SHARED_FS_VIRTIOFS = "virtiofs"
+SHARED_FS_CHOICES = (SHARED_FS_AUTO, SHARED_FS_9P, SHARED_FS_VIRTIOFS)
+SUPPORTED_SHARED_FS = (SHARED_FS_9P, SHARED_FS_VIRTIOFS)
 
 
-@dataclass(frozen=True)
-class VmTarget:
-    name: str
+class KernelCategory(NamedTuple):
     ol_ver: int
     uek_ver: Union[int, str]
     arch: str
-    kernel: TestKernel
+
+    @property
+    def uek_name(self) -> str:
+        return "ueknext" if self.uek_ver == "next" else f"uek{self.uek_ver}"
+
+    @property
+    def name(self) -> str:
+        return f"ol{self.ol_ver}-{self.uek_name}-{self.arch}"
+
+    @property
+    def slug(self) -> str:
+        return f"ol{self.ol_ver}uek{self.uek_ver}{self.arch}"
+
+    @property
+    def rpmbase(self) -> str:
+        if self.uek_ver == "next":
+            return "kernel-ueknext"
+        else:
+            return "kernel-uek"
+
+    def rpms(self) -> List[str]:
+        if self.uek_ver in ("next", 8):
+            subpkgs = ["-core", "-modules", "-modules-core", "-devel"]
+        elif self.uek_ver == 7:
+            subpkgs = ["-core", "-modules", "-devel"]
+        elif self.uek_ver in (4, 5, 6):
+            subpkgs = ["", "-devel"]
+        else:
+            raise ValueError(f"Unsupported UEK target '{self.uek_ver}'")
+        return [f"{self.rpmbase}{subpkg}" for subpkg in subpkgs]
+
+    @property
+    def shared_fs(self) -> str:
+        if self.uek_ver == 6:
+            return SHARED_FS_9P
+        return SHARED_FS_VIRTIOFS
 
 
-@dataclass(frozen=True)
-class VmPaths:
-    extract_dir: Path
-    yum_cache_dir: Path
-    rootfs_dir: Path
-    work_dir: Path
+class KernelVer(NamedTuple):
+    category: KernelCategory
+    release: str
+    urls: List[str]
+
+
+class VmLayout(NamedTuple):
+    base_dir: Path
+
+    @property
+    def extract_dir(self) -> Path:
+        return self.base_dir / "rpmextract"
+
+    @property
+    def yum_cache_dir(self) -> Path:
+        return self.base_dir / "yumcache"
+
+    @property
+    def work_dir(self) -> Path:
+        return self.base_dir / "vm"
+
+    @property
+    def rootfs_dir(self) -> Path:
+        return self.work_dir / "rootfs"
 
     @property
     def kmod_dir(self) -> Path:
@@ -34,97 +89,25 @@ class VmPaths:
     def logs_dir(self) -> Path:
         return self.work_dir / "logs"
 
-    @property
-    def junit_dir(self) -> Path:
-        return self.work_dir / "junit"
+    def rootfs_path(self, ol_ver: int) -> Path:
+        return self.rootfs_dir / f"ol{ol_ver}"
+
+    def extract_path(self, release: str) -> Path:
+        return self.extract_dir / release
+
+    def kmod_path(self, release: str) -> Path:
+        return self.kmod_dir / release / "drgntools_test.ko"
+
+    def log_path(self, target_name: str, mode_name: str) -> Path:
+        return self.logs_dir / target_name / f"{mode_name}.log"
 
 
-def default_paths() -> VmPaths:
-    work_dir = BASE_DIR / "vm"
-    return VmPaths(
-        extract_dir=BASE_DIR / "rpmextract",
-        yum_cache_dir=BASE_DIR / "yumcache",
-        rootfs_dir=work_dir / "rootfs",
-        work_dir=work_dir,
-    )
-
-
-def _kernel_for_uek(
-    ol_ver: int,
-    uek_ver: Union[int, str],
-    arch: str,
-) -> TestKernel:
-    if uek_ver == "next":
-        return TestKernel(
-            ol_ver,
-            uek_ver,
-            arch,
-            [
-                "kernel-ueknext-core",
-                "kernel-ueknext-modules",
-                "kernel-ueknext-modules-core",
-                "kernel-ueknext-devel",
-            ],
-            yum_fmt=(
-                "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/"
-                "developer/UEK{uek_ver}/{arch}/"
-            ),
-            pkgbase="kernel-ueknext",
-        )
-    elif uek_ver == 8:
-        return TestKernel(
-            ol_ver,
-            uek_ver,
-            arch,
-            [
-                "kernel-uek-core",
-                "kernel-uek-modules",
-                "kernel-uek-modules-core",
-                "kernel-uek-devel",
-            ],
-        )
-    elif uek_ver == 7:
-        return TestKernel(
-            ol_ver,
-            uek_ver,
-            arch,
-            [
-                "kernel-uek-core",
-                "kernel-uek-modules",
-                "kernel-uek-devel",
-            ],
-        )
-    elif uek_ver == 6:
-        return TestKernel(
-            ol_ver,
-            uek_ver,
-            arch,
-            [
-                "kernel-uek",
-                "kernel-uek-devel",
-            ],
-        )
-    raise ValueError(f"Unsupported UEK target: UEK{uek_ver}")
-
-
-def _target(ol_ver: int, uek_ver: Union[int, str], arch: str) -> VmTarget:
-    uek_suffix = "ueknext" if uek_ver == "next" else f"uek{uek_ver}"
-    name = f"ol{ol_ver}-{uek_suffix}-{arch}"
-    return VmTarget(
-        name=name,
-        ol_ver=ol_ver,
-        uek_ver=uek_ver,
-        arch=arch,
-        kernel=_kernel_for_uek(ol_ver, uek_ver, arch),
-    )
-
-
-TARGETS: List[VmTarget] = [
-    _target(10, "next", "x86_64"),
-    _target(10, 8, "x86_64"),
-    _target(9, "next", "x86_64"),
-    _target(9, 8, "x86_64"),
-    _target(9, 7, "x86_64"),
-    _target(8, 7, "x86_64"),
-    _target(8, 6, "x86_64"),
+TARGETS = [
+    KernelCategory(10, "next", "x86_64"),
+    KernelCategory(10, 8, "x86_64"),
+    KernelCategory(9, "next", "x86_64"),
+    KernelCategory(9, 8, "x86_64"),
+    KernelCategory(9, 7, "x86_64"),
+    KernelCategory(8, 7, "x86_64"),
+    KernelCategory(8, 6, "x86_64"),
 ]

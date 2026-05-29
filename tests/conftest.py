@@ -29,6 +29,29 @@ KVER: Optional[KernelVersion] = None
 PROG: Optional[drgn.Program] = None
 
 
+def _extra_live_debuginfo() -> List[Path]:
+    """
+    Return additional debuginfo files for live-kernel tests.
+
+    The VM runner sets DRGNTOOLS_TEST_KMOD to the out-of-tree module path. We
+    explicitly load that module's debuginfo before default module discovery so
+    drgn doesn't fail the session with MissingDebugInfoError.
+    """
+    kmod = os.environ.get("DRGNTOOLS_TEST_KMOD")
+    if not kmod:
+        return []
+    path = Path(kmod)
+    if not path.is_file():
+        pytest.exit(
+            reason=(
+                "error: DRGNTOOLS_TEST_KMOD is set but path does not exist: "
+                f"{path}"
+            ),
+            returncode=1,
+        )
+    return [path]
+
+
 @pytest.fixture(scope="session")
 def prog() -> drgn.Program:
     assert PROG is not None
@@ -197,6 +220,7 @@ def pytest_configure(config):
             getattr(drgn, "__version__", "unknown"),
         )
     )
+    extra_debuginfo = _extra_live_debuginfo()
     if CTF:
         try:
             from drgn.helpers.linux.ctf import load_ctf
@@ -213,9 +237,13 @@ def pytest_configure(config):
                     module.debug_file_status = ModuleFileStatus.DONT_NEED
         except ModuleNotFoundError:
             raise Exception("CTF is not supported, cannot run CTF test")
+        if extra_debuginfo:
+            PROG.load_debug_info(extra_debuginfo)
     elif DEBUGINFO:
-        PROG.load_debug_info(DEBUGINFO)
+        PROG.load_debug_info(DEBUGINFO + extra_debuginfo)
     else:
+        if extra_debuginfo:
+            PROG.load_debug_info(extra_debuginfo)
         # Some UEK versions had mismatched vmlinux build IDs due to packaging
         # issues. Most have been fixed, but for the remainder, set the main
         # module's build ID to None manually, forcing drgn to skip verifying

@@ -4,16 +4,15 @@
 import argparse
 import shlex
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import List
+from typing import NamedTuple
 
 
-@dataclass(frozen=True)
-class BindMount:
+class BindMount(NamedTuple):
     source: Path
     destination: str
-    readonly: bool = False
+    readonly: bool
 
 
 def _rootfs_mount_target(rootfs: Path, destination: str) -> Path:
@@ -24,7 +23,12 @@ def _rootfs_mount_target(rootfs: Path, destination: str) -> Path:
     return rootfs / destination.lstrip("/")
 
 
-def run_in_chroot(rootfs: Path, command: str, binds: List[BindMount]) -> None:
+def run_in_chroot(
+    rootfs: Path,
+    command: str,
+    binds: List[BindMount],
+    verbose: bool = False,
+) -> None:
     lines = ["set -euo pipefail"]
     mount_targets = []
 
@@ -76,6 +80,10 @@ def run_in_chroot(rootfs: Path, command: str, binds: List[BindMount]) -> None:
     )
 
     script = "\n".join(lines)
+    if verbose:
+        stdout = stderr = None
+    else:
+        stdout = stderr = subprocess.DEVNULL
     subprocess.run(
         [
             "unshare",
@@ -89,6 +97,8 @@ def run_in_chroot(rootfs: Path, command: str, binds: List[BindMount]) -> None:
             script,
         ],
         check=True,
+        stdout=stdout,
+        stderr=stderr,
     )
 
 
@@ -163,6 +173,7 @@ def main() -> None:
         args.rootfs.absolute(),
         _command_to_shell(args.command),
         binds=binds,
+        verbose=True,
     )
 
 

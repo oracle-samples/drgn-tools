@@ -1,11 +1,17 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Rootfs build and validation for testing.vm."""
+import contextlib
 import inspect
 import os
 import shutil
 import subprocess
 from pathlib import Path
+
+from testing.vm.chroot import run_in_chroot
+from testing.vm.config import KernelCategory
+from testing.vm.config import VmLayout
+from testing.vm.logging import VmLogger
 
 
 def _validate_rootfs(path: Path) -> None:
@@ -21,7 +27,12 @@ def _validate_rootfs(path: Path) -> None:
             raise RuntimeError(f"Rootfs is missing required file: {fullpath}")
 
 
-def _build_rootfs(ol_ver: int, build_dir: Path) -> None:
+def _build_rootfs(
+    ol_ver: int,
+    build_dir: Path,
+    output_log: Path,
+    log: VmLogger,
+) -> None:
     if not shutil.which("podman"):
         raise RuntimeError("podman is required to build rootfs")
 
@@ -40,11 +51,12 @@ def _build_rootfs(ol_ver: int, build_dir: Path) -> None:
         "make",
         "binutils-devel",
         "dwarves",
+        "util-linux",  # needed for "setsid" command
+        # "e2fsprogs", - not required, busybox provides it in initrd
     ]
     if ol_ver == 8:
         rpm_list.extend(
             [
-                "platform-python",
                 "gcc-toolset-11-gcc",
                 "gcc-toolset-11-binutils-devel",
             ]
@@ -72,20 +84,39 @@ def _build_rootfs(ol_ver: int, build_dir: Path) -> None:
     """
     )
 
-    subprocess.run(
-        [
-            "podman",
-            "run",
-            "--rm",
-            "--mount",
-            f"type=bind,src={build_dir},dst=/rootfs",
-            f"oraclelinux:{ol_ver}",
-            "bash",
-            "-lc",
-            install_cmd,
-        ],
-        check=True,
-    )
+    command = [
+        "podman",
+        "run",
+        "--rm",
+        "--mount",
+        f"type=bind,src={build_dir},dst=/rootfs",
+        f"oraclelinux:{ol_ver}",
+        "bash",
+        "-lc",
+        install_cmd,
+    ]
+    with contextlib.ExitStack() as stack:
+        stdout = None
+        stderr = None
+
+        # Redirect stdout to file unless verbose
+        if not log.verbose:
+            output_log.parent.mkdir(parents=True, exist_ok=True)
+            stdout = stack.enter_context(output_log.open("wb"))
+            stderr = subprocess.STDOUT
+
+        subprocess.run(command, stdout=stdout, stderr=stderr, check=True)
+
+        # Install pytest by running in the newly created chroot:
+        # This can be done in the above step, but OL8's python is symlinked via
+        # an absolute path through /etc/alternatives, which conflicts with the
+        # build container's rootfs. This makes things messier than we'd like.
+        run_in_chroot(
+            build_dir,
+            "python3 -m pip install 'pytest<7'",
+            [],
+            verbose=log.verbose,
+        )
 
 
 def _rmtree_rootfs(path: Path) -> None:
@@ -93,26 +124,28 @@ def _rmtree_rootfs(path: Path) -> None:
         path.unlink()
         return
 
-    for root, dirs, files in path.walk():
+    for root, dirs, files in os.walk(str(path)):
         # The rootfs contains many directories which have 555 permissions.
         # This blocks modifying the contents of any of the directories,
         # including deleting them. The resulting error makes the user want to
         # use sudo, which works reasonably safely, but is not necessary. Just
         # set the proper directory permissions.
-        root.chmod(0o755)
-    shutil.rmtree(root)
+        Path(root).chmod(0o755)
+    shutil.rmtree(str(path))
 
 
 def ensure_rootfs(
-    ol_ver: int,
-    rootfs_dir: Path,
+    category: KernelCategory,
+    layout: VmLayout,
+    log: VmLogger,
     skip_build: bool = False,
 ) -> Path:
-    rootfs_dir.mkdir(parents=True, exist_ok=True)
+    layout.rootfs_dir.mkdir(parents=True, exist_ok=True)
 
-    final_dir = rootfs_dir / f"ol{ol_ver}"
+    final_dir = layout.rootfs_path(category.ol_ver)
     if final_dir.is_dir():
         _validate_rootfs(final_dir)
+        log.already_present("rootfs", final_dir)
         return final_dir
 
     if skip_build:
@@ -120,17 +153,22 @@ def ensure_rootfs(
             f"Rootfs {final_dir} does not exist (disable --skip-rootfs-build)"
         )
 
-    building_dir = rootfs_dir / f"ol{ol_ver}.building"
+    building_dir = layout.rootfs_dir / f"ol{category.ol_ver}.building"
     if building_dir.exists():
         _rmtree_rootfs(building_dir)
 
     try:
-        _build_rootfs(ol_ver, building_dir)
+        _build_rootfs(
+            category.ol_ver,
+            building_dir,
+            layout.logs_dir / "rootfs" / f"ol{category.ol_ver}.log",
+            log,
+        )
         _validate_rootfs(building_dir)
         os.rename(building_dir, final_dir)
     except BaseException:
         _rmtree_rootfs(building_dir)
         raise
 
-    _validate_rootfs(final_dir)
+    log.built("rootfs", final_dir)
     return final_dir
