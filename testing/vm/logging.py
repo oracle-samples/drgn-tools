@@ -23,6 +23,9 @@ class VmLogger:
     def begin_test(self, target: str, mode: str, fs_mode: str) -> None:
         print(f"Running {mode} tests for {target} using {fs_mode}...")
 
+    def skip_test(self, target: str, mode: str, reason: str) -> None:
+        print(f"Skipping {mode} tests for {target}: {reason}")
+
     def fail_test(self, target: str, mode: str) -> None:
         print(f"FAILED: {target} {mode}")
 

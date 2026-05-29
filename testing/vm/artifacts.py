@@ -19,12 +19,16 @@ from testing.litevm.rpm import download_file_cached
 from testing.litevm.rpm import REPODATA
 from testing.litevm.rpm import UEK_YUM
 from testing.vm.config import KernelCategory
+from testing.vm.config import KernelKind
 from testing.vm.config import KernelVer
 from testing.vm.config import VmLayout
 from testing.vm.logging import VmLogger
 
 
-UEKNEXT_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/developer/UEK{uek_ver}/{arch}/"
+UEKNEXT_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/developer/UEKNEXT/{arch}/"
+RHCK_YUM = (
+    "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/baseos/latest/{arch}/"
+)
 
 
 def _cache_key(category: KernelCategory, kind: str) -> str:
@@ -50,12 +54,15 @@ def _require_cached_file(
 
 
 def _yum_base(category: KernelCategory) -> str:
-    fmt = UEKNEXT_YUM if category.uek_ver == "next" else UEK_YUM
-    return fmt.format(
-        ol_ver=category.ol_ver,
-        uek_ver=category.uek_ver,
-        arch=category.arch,
-    )
+    fmtdict = category._asdict()
+    if category.kind == KernelKind.UEKNEXT:
+        fmt = UEKNEXT_YUM
+    elif category.kind == KernelKind.RHCK:
+        fmt = RHCK_YUM
+    else:
+        fmt = UEK_YUM
+        fmtdict["uek_ver"] = category.uek_ver
+    return fmt.format_map(fmtdict)
 
 
 def _fetch_repomd(
@@ -129,7 +136,21 @@ def _resolve_urls(
     base_url = _yum_base(category) + href
     urls = []
     for pkg in category.rpms():
-        urls.append(_rpm_url(base_url, category.rpmbase, pkg))
+        if (
+            pkg.startswith("kernel-devel")
+            and category.kind == KernelKind.RHCK
+            and category.ol_ver >= 9
+        ):
+            # RHCK put kernel-devel in appstream from OL9
+            urls.append(
+                _rpm_url(
+                    base_url.replace("baseos/latest", "appstream"),
+                    category.rpmbase,
+                    pkg,
+                )
+            )
+        else:
+            urls.append(_rpm_url(base_url, category.rpmbase, pkg))
     dbinfo_url = DEBUGINFO_URL.format(
         ol_ver=category.ol_ver,
         release=release,

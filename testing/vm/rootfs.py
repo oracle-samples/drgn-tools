@@ -58,13 +58,17 @@ def _build_rootfs(
     if ol_ver == 8:
         rpm_list.extend(
             [
+                # For UEK7 module build
                 "gcc-toolset-11-gcc",
                 "gcc-toolset-11-binutils-devel",
+                # For RHCK module build (ORC generation)
+                "elfutils-libelf-devel",
             ]
         )
     elif ol_ver == 9:
         rpm_list.extend(
             [
+                # For UEK8 module build
                 "gcc-toolset-14-gcc",
                 "gcc-toolset-14-binutils-devel",
             ]

@@ -13,6 +13,7 @@ from testing.vm.artifacts import ensure_kernel
 from testing.vm.artifacts import resolve_kernel
 from testing.vm.boot import run_in_vm
 from testing.vm.config import KernelCategory
+from testing.vm.config import KernelKind
 from testing.vm.config import SHARED_FS_AUTO
 from testing.vm.config import SHARED_FS_CHOICES
 from testing.vm.config import TARGETS
@@ -221,6 +222,11 @@ def main() -> None:
                     f"{target.name}_{mode_name}",
                     f"Run {mode_name.upper()} tests for {target.name}",
                 ):
+                    if kernel.category.kind == KernelKind.RHCK and ctf:
+                        log.skip_test(
+                            target.name, mode_name, "CTF unsupported"
+                        )
+                        continue
                     log.begin_test(target.name, mode_name, shared_fs)
                     log_path = layout.log_path(target.name, mode_name)
                     run_command = _command_for_mode(
