@@ -1,6 +1,15 @@
 // Copyright (c) 2026, Oracle and/or its affiliates.
 // Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+#include <linux/export.h>
 #include <linux/module.h>
+
+struct drgn_tools_test_object {
+	int foo;
+	const char *bar;
+};
+
+struct drgn_tools_test_object drgn_tools_test_object_data = { 5, "foobar" };
+EXPORT_SYMBOL(drgn_tools_test_object_data);
 
 static int __init drgntools_init(void)
 {

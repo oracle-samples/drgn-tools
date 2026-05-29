@@ -8,6 +8,7 @@ from drgn_tools.module import module_exports
 @pytest.fixture
 def common_mod(prog):
     COMMON_MODS = [
+        "drgntools_test",
         "nf_nat",
         "ib_core",
         "9pnet",
