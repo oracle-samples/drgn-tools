@@ -51,6 +51,7 @@ def _build_rootfs(
         "make",
         "binutils-devel",
         "dwarves",
+        "hostname",
         "util-linux",  # needed for "setsid" command
         # "e2fsprogs", - not required, busybox provides it in initrd
     ]
@@ -145,13 +146,14 @@ def ensure_rootfs(
     final_dir = layout.rootfs_path(category.ol_ver)
     if final_dir.is_dir():
         _validate_rootfs(final_dir)
-        log.already_present("rootfs", final_dir)
+        log.already_done("build rootfs", final_dir)
         return final_dir
 
     if skip_build:
         raise RuntimeError(
             f"Rootfs {final_dir} does not exist (disable --skip-rootfs-build)"
         )
+    log.working("build rootfs", final_dir)
 
     building_dir = layout.rootfs_dir / f"ol{category.ol_ver}.building"
     if building_dir.exists():
@@ -170,5 +172,5 @@ def ensure_rootfs(
         _rmtree_rootfs(building_dir)
         raise
 
-    log.built("rootfs", final_dir)
+    log.done("build rootfs", final_dir)
     return final_dir

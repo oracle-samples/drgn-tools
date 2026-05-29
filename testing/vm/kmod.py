@@ -30,7 +30,7 @@ def ensure_kmod(
         out_path.is_file()
         and out_path.stat().st_mtime >= source_file.stat().st_mtime
     ):
-        log.already_present("kernel module", out_path)
+        log.already_done("build kmod", out_path)
         return out_path
 
     if skip_build:
@@ -38,6 +38,7 @@ def ensure_kmod(
             f"Kernel module does not exist: {out_path} "
             "(disable --skip-kmod-build)"
         )
+    log.working("build kmod", out_path)
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -93,6 +94,6 @@ def ensure_kmod(
         )
 
     shutil.copy2(source_module, out_path)
-    log.built("kernel module", out_path)
+    log.done("build kmod", out_path)
 
     return out_path

@@ -65,7 +65,7 @@ set -eu
 result=FAIL
 cleanup() {{
     echo DRGN_VMTEST: $result
-    poweroff -f
+    echo b >/proc/sysrq-trigger
 }}
 trap cleanup EXIT
 
@@ -92,9 +92,8 @@ mount --bind /host /tmp/root/host
 
 {pre_chroot_setup}
 
-echo 'drgntools-test' >/tmp/root/etc/hostname
-chroot /tmp/root setsid -c /bin/sh -lc {guest_command}
-result=PASS
+hostname {hostname}
+exec switch_root /tmp/root /usr/bin/setsid -c /bin/sh -lc {guest_command}
 """
 
 
@@ -274,6 +273,8 @@ def _create_guest_command(
 
     lines = [
         "set -euo pipefail",
+        'cleanup() { [ "$?" -eq 0 ] && echo "DRGN_VMTEST: PASS" || echo "DRGN_VMTEST: FAIL" ; sleep 0.1; echo b >/proc/sysrq-trigger; }',
+        "trap cleanup EXIT",
         "export PATH=/sbin:/usr/sbin:/bin:/usr/bin",
         "export DRGNTOOLS_BLOCK_TEST_DIR=/mnt",
         f"cd {shlex.quote(repo_guest)}",
@@ -313,11 +314,18 @@ def _create_pre_chroot_setup(
     if kmod_path is not None:
         kmod_guest = _guest_path(kmod_path, shared_dir)
         lines.insert(-3, f"insmod {shlex.quote(kmod_guest)}")
+
+    terminal_size = shutil.get_terminal_size((0, 0))
+    if terminal_size.columns or terminal_size.lines:
+        lines.append(
+            f"stty cols {terminal_size.columns} rows {terminal_size.lines}"
+        )
+
     return "\n".join(lines)
 
 
 def _create_initrd(
-    release: str,
+    kernel: KernelVer,
     extract_dir: Path,
     rootfs_dir: Path,
     shared_dir: Path,
@@ -334,7 +342,7 @@ def _create_initrd(
             (td / path).mkdir(parents=True, exist_ok=True)
 
         initrd_modules = _copy_initrd_modules(
-            release, extract_dir, td, shared_fs
+            kernel.release, extract_dir, td, shared_fs
         )
 
         busybox_path = _require_tool("busybox")
@@ -347,7 +355,7 @@ def _create_initrd(
 
         module_load = "\n".join(
             "insmod {} || true".format(
-                shlex.quote(f"/lib/modules/{release}/{mod_path}")
+                shlex.quote(f"/lib/modules/{kernel.release}/{mod_path}")
             )
             for mod_path in initrd_modules
         )
@@ -355,6 +363,7 @@ def _create_initrd(
         init = td / "init"
         init.write_text(
             INIT_SCRIPT.format(
+                hostname=kernel.category.name,
                 module_load=module_load,
                 mount_host=_host_mount_command(shared_fs),
                 rootfs_host_path=shlex.quote(
@@ -366,7 +375,9 @@ def _create_initrd(
         )
         init.chmod(0o755)
 
-        out_path = extract_dir / "boot" / f"drgn-tools-initramfs-{release}.img"
+        out_path = (
+            extract_dir / "boot" / f"drgn-tools-initramfs-{kernel.release}.img"
+        )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with out_path.open("wb") as f:
             subprocess.run(
@@ -527,12 +538,11 @@ def run_in_vm(
     kmod_path: Optional[Path] = None,
     shared_fs: Optional[str] = None,
 ) -> None:
-    release = kernel.release
     if shared_fs is None:
         shared_fs = kernel.category.shared_fs
     _validate_shared_fs(shared_fs)
 
-    extract_dir = layout.extract_path(release)
+    extract_dir = layout.extract_path(kernel.release)
     qemu = _find_qemu(kernel.category.arch)
 
     repo_root = repo_root.absolute()
@@ -564,13 +574,13 @@ def run_in_vm(
         command,
     )
     pre_chroot_setup = _create_pre_chroot_setup(
-        release,
+        kernel.release,
         extract_dir,
         kmod_path,
         shared_dir,
     )
     initrd = _create_initrd(
-        release,
+        kernel,
         extract_dir,
         rootfs_dir,
         shared_dir,
@@ -578,7 +588,7 @@ def run_in_vm(
         guest_command,
         shared_fs,
     )
-    vmlinuz = _find_vmlinuz(release, extract_dir)
+    vmlinuz = _find_vmlinuz(kernel.release, extract_dir)
 
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -602,7 +612,7 @@ def run_in_vm(
         else:
             serial_args = ["-serial", "stdio", "-monitor", "none"]
 
-        kernel_cmdline = "console=ttyS0 panic=-1"
+        kernel_cmdline = "console=ttyS0,115200 panic=-1"
         if not log.verbose:
             kernel_cmdline = "quiet loglevel=1 " + kernel_cmdline
 

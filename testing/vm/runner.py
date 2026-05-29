@@ -121,14 +121,14 @@ def _parse_args() -> argparse.Namespace:
         "--interactive",
         "-i",
         action="store_true",
-        help="Connect stdout/stdin of the test to the terminal",
+        help="Connect stdout/stdin of the VM to the terminal",
     )
     parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
         default=default_verbose(),
-        help="Enable verbose orchestration and VM output",
+        help="Print output from builds & increase kernel log level",
     )
     parser.add_argument(
         "--shared-fs",
@@ -160,19 +160,24 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     layout = VmLayout(args.base_dir)
-    log = VmLogger(args.verbose)
+    log = VmLogger(args.verbose, args.interactive)
 
     base_command = args.command if args.command else _default_command()
+    is_pytest = _is_pytest_command(base_command)
     targets = _select_targets(args.kernel)
     if not targets:
         raise SystemExit(f"No targets matched --kernel {args.kernel!r}")
 
     repo_root = Path.cwd().absolute()
     modes = []
-    if args.dwarf:
-        modes.append(("dwarf", False))
-    if args.ctf:
-        modes.append(("ctf", True))
+    if not is_pytest:
+        args.interactive = True
+        modes.append(("interactive", False))
+    else:
+        if args.dwarf:
+            modes.append(("dwarf", False))
+        if args.ctf:
+            modes.append(("ctf", True))
 
     failures: List[str] = []
 
@@ -183,6 +188,7 @@ def main() -> None:
                 f"{target.name}_setup",
                 f"Set up rootfs, kernel RPMs, and kmod for {target.name}",
             ):
+                log.begin_target(target.name)
                 rootfs = ensure_rootfs(
                     target,
                     layout,
@@ -215,31 +221,29 @@ def main() -> None:
                     f"{target.name}_{mode_name}",
                     f"Run {mode_name.upper()} tests for {target.name}",
                 ):
-                    log.message(
-                        (
-                            f"Running {mode_name} tests for {target.name} "
-                            f"using {shared_fs}"
-                        ),
-                        verbose_only=False,
-                    )
+                    log.begin_test(target.name, mode_name, shared_fs)
                     log_path = layout.log_path(target.name, mode_name)
                     run_command = _command_for_mode(
                         base_command,
                         ctf,
                     )
-                    run_in_vm(
-                        kernel,
-                        rootfs,
-                        layout,
-                        repo_root,
-                        run_command,
-                        None if args.interactive else log_path,
-                        log,
-                        kmod_path=kmod_path,
-                        shared_fs=shared_fs,
-                    )
-                    if not args.interactive and args.verbose:
-                        log.message(f"VM log: {log_path}", verbose_only=True)
+                    try:
+                        run_in_vm(
+                            kernel,
+                            rootfs,
+                            layout,
+                            repo_root,
+                            run_command,
+                            None if args.interactive else log_path,
+                            log,
+                            kmod_path=kmod_path,
+                            shared_fs=shared_fs,
+                        )
+                    except RuntimeError as e:
+                        failures.append(f"{target.name} {mode_name}: {e}")
+                        log.fail_test(target.name, mode_name)
+                    else:
+                        log.pass_test(target.name, mode_name)
         except BaseException as e:
             failures.append(f"{target.name}: {e}")
             if isinstance(e, (SystemExit, KeyboardInterrupt)):
