@@ -6,6 +6,7 @@ from pathlib import Path
 
 from testing.vm.chroot import BindMount
 from testing.vm.chroot import run_in_chroot
+from testing.vm.config import KernelKind
 from testing.vm.config import KernelVer
 from testing.vm.config import VmLayout
 from testing.vm.logging import VmLogger
@@ -54,11 +55,11 @@ def ensure_kmod(
 
     command_parts = ["set -euo pipefail"]
 
-    if kernel.category.ol_ver == 8 and kernel.category.uek_ver == 7:
+    if kernel.category.ol_ver == 8 and kernel.category.kind == KernelKind.UEK7:
         command_parts.append("source /opt/rh/gcc-toolset-11/enable")
-    elif kernel.category.ol_ver == 9 and kernel.category.uek_ver in (
-        8,
-        "next",
+    elif kernel.category.ol_ver == 9 and kernel.category.kind in (
+        KernelKind.UEK8,
+        KernelKind.UEKNEXT,
     ):
         command_parts.append("source /opt/rh/gcc-toolset-14/enable")
 

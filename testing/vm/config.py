@@ -1,10 +1,10 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Configuration objects and target matrix for testing.vm."""
+import enum
 from pathlib import Path
 from typing import List
 from typing import NamedTuple
-from typing import Union
 
 
 SHARED_FS_AUTO = "auto"
@@ -14,45 +14,68 @@ SHARED_FS_CHOICES = (SHARED_FS_AUTO, SHARED_FS_9P, SHARED_FS_VIRTIOFS)
 SUPPORTED_SHARED_FS = (SHARED_FS_9P, SHARED_FS_VIRTIOFS)
 
 
+class KernelKind(enum.Enum):
+    UEK4 = "uek4"
+    UEK5 = "uek5"
+    UEK6 = "uek6"
+    UEK7 = "uek7"
+    UEK8 = "uek8"
+    UEKNEXT = "ueknext"
+    RHCK = "rhck"
+
+
 class KernelCategory(NamedTuple):
     ol_ver: int
-    uek_ver: Union[int, str]
+    kind: KernelKind
     arch: str
 
     @property
-    def uek_name(self) -> str:
-        return "ueknext" if self.uek_ver == "next" else f"uek{self.uek_ver}"
+    def uek_ver(self) -> int:
+        if self.kind in (KernelKind.UEKNEXT, KernelKind.RHCK):
+            raise ValueError(f"{self.kind.name} has no UEK version")
+        return int(self.kind.name[3:])
 
     @property
     def name(self) -> str:
-        return f"ol{self.ol_ver}-{self.uek_name}-{self.arch}"
+        return f"ol{self.ol_ver}-{self.kind.value}-{self.arch}"
 
     @property
     def slug(self) -> str:
-        return f"ol{self.ol_ver}uek{self.uek_ver}{self.arch}"
+        return f"ol{self.ol_ver}{self.kind.value}{self.arch}"
 
     @property
     def rpmbase(self) -> str:
-        if self.uek_ver == "next":
+        if self.kind == KernelKind.UEKNEXT:
             return "kernel-ueknext"
+        elif self.kind == KernelKind.RHCK:
+            return "kernel"
         else:
             return "kernel-uek"
 
     def rpms(self) -> List[str]:
-        if self.uek_ver in ("next", 8):
+        if self.kind == KernelKind.RHCK:
+            if self.ol_ver == 8:
+                subpkgs = ["-core", "-modules", "-devel"]
+            else:
+                subpkgs = ["-core", "-modules-core", "-devel"]
+        elif self.kind in (KernelKind.UEKNEXT, KernelKind.UEK8):
             subpkgs = ["-core", "-modules", "-modules-core", "-devel"]
-        elif self.uek_ver == 7:
+        elif self.kind == KernelKind.UEK7:
             subpkgs = ["-core", "-modules", "-devel"]
-        elif self.uek_ver in (4, 5, 6):
+        elif self.kind in (KernelKind.UEK4, KernelKind.UEK5, KernelKind.UEK6):
             subpkgs = ["", "-devel"]
         else:
-            raise ValueError(f"Unsupported UEK target '{self.uek_ver}'")
+            raise ValueError(
+                f"Unsupported target kernel kind '{self.kind.value}'"
+            )
         return [f"{self.rpmbase}{subpkg}" for subpkg in subpkgs]
 
     @property
     def shared_fs(self) -> str:
-        if self.uek_ver == 6:
+        if self.kind == KernelKind.UEK6:
             return SHARED_FS_9P
+        elif self.kind in (KernelKind.UEK4, KernelKind.UEK5):
+            raise ValueError("VM testing is not supported for UEK4, UEK5")
         return SHARED_FS_VIRTIOFS
 
 
@@ -103,11 +126,14 @@ class VmLayout(NamedTuple):
 
 
 TARGETS = [
-    KernelCategory(10, "next", "x86_64"),
-    KernelCategory(10, 8, "x86_64"),
-    KernelCategory(9, "next", "x86_64"),
-    KernelCategory(9, 8, "x86_64"),
-    KernelCategory(9, 7, "x86_64"),
-    KernelCategory(8, 7, "x86_64"),
-    KernelCategory(8, 6, "x86_64"),
+    KernelCategory(10, KernelKind.UEKNEXT, "x86_64"),
+    KernelCategory(10, KernelKind.UEK8, "x86_64"),
+    KernelCategory(10, KernelKind.RHCK, "x86_64"),
+    KernelCategory(9, KernelKind.UEKNEXT, "x86_64"),
+    KernelCategory(9, KernelKind.UEK8, "x86_64"),
+    KernelCategory(9, KernelKind.UEK7, "x86_64"),
+    KernelCategory(9, KernelKind.RHCK, "x86_64"),
+    KernelCategory(8, KernelKind.UEK7, "x86_64"),
+    KernelCategory(8, KernelKind.UEK6, "x86_64"),
+    KernelCategory(8, KernelKind.RHCK, "x86_64"),
 ]
