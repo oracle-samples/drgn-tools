@@ -1,74 +1,82 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-"""New VM test runner orchestration (initial implementation)."""
+"""New VM test runner orchestration."""
 import argparse
 import fnmatch
-import shlex
 import sys
 from pathlib import Path
 from typing import List
 
+from testing.util import BASE_DIR
 from testing.util import ci_section
-from testing.vm.artifacts import ensure_kernel_artifacts
-from testing.vm.config import default_paths
+from testing.vm.artifacts import ensure_kernel
+from testing.vm.artifacts import resolve_kernel
+from testing.vm.boot import run_in_vm
+from testing.vm.config import KernelCategory
+from testing.vm.config import SHARED_FS_AUTO
+from testing.vm.config import SHARED_FS_CHOICES
 from testing.vm.config import TARGETS
-from testing.vm.config import VmPaths
-from testing.vm.config import VmTarget
+from testing.vm.config import VmLayout
 from testing.vm.kmod import ensure_kmod
+from testing.vm.logging import default_verbose
+from testing.vm.logging import VmLogger
 from testing.vm.rootfs import ensure_rootfs
 
 
-def _select_targets(pattern: str = "*") -> List[VmTarget]:
+def _select_targets(pattern: str = "*") -> List[KernelCategory]:
     return [t for t in TARGETS if fnmatch.fnmatch(t.name, pattern)]
 
 
 def _default_command() -> List[str]:
-    return [sys.executable, "-m", "pytest", "tests"]
+    return ["python3", "-m", "pytest", "tests"]
 
 
-def _stub_test_execution(
-    target: VmTarget, command: List[str], kmod_path: Path
-) -> None:
-    command_str = " ".join(shlex.quote(arg) for arg in command)
-    print(
-        "TODO: VM boot/test execution not implemented yet "
-        f"for {target.name}; would run: {command_str}; "
-        f"module: {kmod_path}"
-    )
+def _is_pytest_command(command: List[str]) -> bool:
+    if not command:
+        return False
+    if "pytest" in command:
+        return True
+    for i, arg in enumerate(command[:-1]):
+        if arg == "-m" and command[i + 1] == "pytest":
+            return True
+    return False
+
+
+def _command_for_mode(
+    base_command: List[str],
+    ctf: bool,
+) -> List[str]:
+    command = list(base_command)
+    is_pytest = _is_pytest_command(command)
+
+    if not is_pytest:
+        return command
+
+    if ctf and "--ctf" not in command:
+        command.append("--ctf")
+
+    return command
+
+
+def _shared_fs_for_target(target: KernelCategory, shared_fs: str) -> str:
+    if shared_fs == SHARED_FS_AUTO:
+        return target.shared_fs
+    return shared_fs
 
 
 def _parse_args() -> argparse.Namespace:
-    defaults = default_paths()
-
     parser = argparse.ArgumentParser(description="testing.vm runner")
     parser.add_argument(
         "--kernel",
+        "-k",
         default="*",
         help="Match against target slug (example: ol9-uek8-*)",
     )
     parser.add_argument(
-        "--extract-dir",
+        "--base-dir",
         type=Path,
-        default=defaults.extract_dir,
-        help="Directory for extracted kernel RPMs",
-    )
-    parser.add_argument(
-        "--yum-cache-dir",
-        type=Path,
-        default=defaults.yum_cache_dir,
-        help="Directory for YUM metadata and RPM cache",
-    )
-    parser.add_argument(
-        "--rootfs-dir",
-        type=Path,
-        default=defaults.rootfs_dir,
-        help="Directory containing OL rootfs chroots",
-    )
-    parser.add_argument(
-        "--work-dir",
-        type=Path,
-        default=defaults.work_dir,
-        help="Directory for VM work artifacts",
+        default=BASE_DIR,
+        help="Base directory for cached and generated test artifacts",
     )
     parser.add_argument(
         "--skip-rootfs-build",
@@ -78,7 +86,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-rpm-fetch",
         action="store_true",
-        help="Do not fetch/extract kernel RPMs (requires existing extract dir)",
+        help=(
+            "Do not download repodata or RPMs "
+            "(requires cached metadata/RPMs)"
+        ),
     )
     parser.add_argument(
         "--skip-kmod-build",
@@ -86,75 +97,160 @@ def _parse_args() -> argparse.Namespace:
         help="Do not build kernel module (requires existing .ko output)",
     )
     parser.add_argument(
+        "--skip-all",
+        "-n",
+        action="store_true",
+        help=(
+            "Activate all --skip-* options "
+            "(requires everything already built)"
+        ),
+    )
+    parser.add_argument(
+        "--no-ctf",
+        dest="ctf",
+        action="store_false",
+        help="Skip CTF mode",
+    )
+    parser.add_argument(
+        "--no-dwarf",
+        dest="dwarf",
+        action="store_false",
+        help="Skip DWARF mode",
+    )
+    parser.add_argument(
+        "--interactive",
+        "-i",
+        action="store_true",
+        help="Connect stdout/stdin of the test to the terminal",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=default_verbose(),
+        help="Enable verbose orchestration and VM output",
+    )
+    parser.add_argument(
+        "--shared-fs",
+        choices=SHARED_FS_CHOICES,
+        default=SHARED_FS_AUTO,
+        help=(
+            "Host/guest shared filesystem. auto uses 9p for UEK6 and "
+            "virtiofs for newer UEKs"
+        ),
+    )
+    parser.add_argument(
         "command",
         nargs="*",
-        help="Command to run in-guest once VM execution is implemented",
+        help="Command to run in guest (default: python3 -m pytest tests)",
     )
-    return parser.parse_args()
 
-
-def _paths_from_args(args: argparse.Namespace) -> VmPaths:
-    return VmPaths(
-        extract_dir=args.extract_dir,
-        yum_cache_dir=args.yum_cache_dir,
-        rootfs_dir=args.rootfs_dir,
-        work_dir=args.work_dir,
-    )
+    args = parser.parse_args()
+    if not args.dwarf and not args.ctf:
+        raise SystemExit(
+            "Both --no-dwarf and --no-ctf were set, nothing to run"
+        )
+    if args.skip_all:
+        args.skip_rootfs_build = True
+        args.skip_rpm_fetch = True
+        args.skip_kmod_build = True
+    return args
 
 
 def main() -> None:
     args = _parse_args()
-    paths = _paths_from_args(args)
+    layout = VmLayout(args.base_dir)
+    log = VmLogger(args.verbose)
 
-    command = args.command if args.command else _default_command()
+    base_command = args.command if args.command else _default_command()
     targets = _select_targets(args.kernel)
     if not targets:
         raise SystemExit(f"No targets matched --kernel {args.kernel!r}")
 
     repo_root = Path.cwd().absolute()
+    modes = []
+    if args.dwarf:
+        modes.append(("dwarf", False))
+    if args.ctf:
+        modes.append(("ctf", True))
+
+    failures: List[str] = []
 
     for target in targets:
-        with ci_section(
-            f"{target.name}_rootfs",
-            f"Build rootfs for {target.name}",
-        ):
-            rootfs = ensure_rootfs(
-                target.ol_ver,
-                paths.rootfs_dir,
-                skip_build=args.skip_rootfs_build,
-            )
+        try:
+            shared_fs = _shared_fs_for_target(target, args.shared_fs)
+            with ci_section(
+                f"{target.name}_setup",
+                f"Set up rootfs, kernel RPMs, and kmod for {target.name}",
+            ):
+                rootfs = ensure_rootfs(
+                    target,
+                    layout,
+                    log,
+                    skip_build=args.skip_rootfs_build,
+                )
+                kernel = resolve_kernel(
+                    target,
+                    layout,
+                    log,
+                    skip_fetch=args.skip_rpm_fetch,
+                )
+                ensure_kernel(
+                    kernel,
+                    layout,
+                    log,
+                    skip_fetch=args.skip_rpm_fetch,
+                )
+                kmod_path = ensure_kmod(
+                    rootfs,
+                    kernel,
+                    repo_root,
+                    layout,
+                    log,
+                    skip_build=args.skip_kmod_build,
+                )
 
-        with ci_section(
-            f"{target.name}_kernel",
-            f"Download/extract kernel RPMs for {target.name}",
-        ):
-            artifacts = ensure_kernel_artifacts(
-                target.kernel,
-                paths.extract_dir,
-                paths.yum_cache_dir,
-                skip_fetch=args.skip_rpm_fetch,
-            )
+            for mode_name, ctf in modes:
+                with ci_section(
+                    f"{target.name}_{mode_name}",
+                    f"Run {mode_name.upper()} tests for {target.name}",
+                ):
+                    log.message(
+                        (
+                            f"Running {mode_name} tests for {target.name} "
+                            f"using {shared_fs}"
+                        ),
+                        verbose_only=False,
+                    )
+                    log_path = layout.log_path(target.name, mode_name)
+                    run_command = _command_for_mode(
+                        base_command,
+                        ctf,
+                    )
+                    run_in_vm(
+                        kernel,
+                        rootfs,
+                        layout,
+                        repo_root,
+                        run_command,
+                        None if args.interactive else log_path,
+                        log,
+                        kmod_path=kmod_path,
+                        shared_fs=shared_fs,
+                    )
+                    if not args.interactive and args.verbose:
+                        log.message(f"VM log: {log_path}", verbose_only=True)
+        except BaseException as e:
+            failures.append(f"{target.name}: {e}")
+            if isinstance(e, (SystemExit, KeyboardInterrupt)):
+                print("\ninterrupted")
+                break
 
-        with ci_section(
-            f"{target.name}_kmod",
-            f"Build test kernel module for {target.name}",
-        ):
-            kmod_path = ensure_kmod(
-                rootfs,
-                target,
-                artifacts.release,
-                repo_root,
-                paths.extract_dir,
-                paths.kmod_dir,
-                skip_build=args.skip_kmod_build,
-            )
-            print(f"Built module: {kmod_path}")
-
-        with ci_section(
-            f"{target.name}_run",
-            f"Run tests for {target.name}",
-        ):
-            _stub_test_execution(target, command, kmod_path)
+    if failures:
+        print("VM test failures:")
+        for failure in failures:
+            print(f"- {failure}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

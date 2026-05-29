@@ -5,7 +5,6 @@ RPM Fetching for Tests
 """
 import argparse
 import fnmatch
-import io
 import os
 import shlex
 import shutil
@@ -74,9 +73,7 @@ def download_file_cached(
     """
     if not cache:
         cache = YUM_CACHE_DIR
-    if cache_key:
-        cache = cache / cache_key
-    cached_file = cache / url.split("/")[-1]
+    cached_file = cached_file_path(url, cache, cache_key)
     cached_file.parent.mkdir(exist_ok=True, parents=True)
     if not cached_file.is_file():
         if cache_key and delete_on_miss and cached_file.parent.is_dir():
@@ -87,7 +84,7 @@ def download_file_cached(
                 download_file(url, cache_f, quiet=quiet, desc=desc)
             except BaseException:
                 # Yes, BaseException is correct. If we're interrupted for _any_
-                # reason, our cached downolad is invalid and must be removed.
+                # reason, our cached download is invalid and must be removed.
                 cache_f.close()
                 cached_file.unlink()
                 raise
@@ -97,13 +94,18 @@ def download_file_cached(
 def check_file_cached(
     url: str, cache: Optional[Path], cache_key: Optional[str]
 ) -> bool:
+    cached_file = cached_file_path(url, cache, cache_key)
+    return cached_file.is_file() or head_file(url)
+
+
+def cached_file_path(
+    url: str, cache: Optional[Path], cache_key: Optional[str]
+) -> Path:
     if not cache:
         cache = YUM_CACHE_DIR
     if cache_key:
         cache = cache / cache_key
-    cached_file = cache / url.split("/")[-1]
-    rv = cached_file.is_file() or head_file(url)
-    return rv
+    return cache / url.split("/")[-1]
 
 
 class TestKernel:
@@ -124,6 +126,8 @@ class TestKernel:
         pkgbase: str = "kernel-uek",
         yum_fmt: Optional[str] = None,
         frozen_release: Optional[str] = None,
+        skip_fetch: bool = False,
+        verbose: bool = True,
     ) -> None:
         self.ol_ver = ol_ver
         self.uek_ver = uek_ver
@@ -131,6 +135,8 @@ class TestKernel:
         self.pkgs = pkgs
         self.yum_fmt = yum_fmt
         self.pkgbase = pkgbase
+        self.skip_fetch = skip_fetch
+        self.verbose = verbose
 
         self._release: str = frozen_release or ""
         self._rpm_urls: List[str] = []
@@ -155,18 +161,44 @@ class TestKernel:
     def _cache_key(self, kind: str) -> str:
         return f"{self.slug()}/{kind}"
 
+    def _cached_path(self, kind: str, url: str) -> Path:
+        return cached_file_path(url, self.cache_dir, self._cache_key(kind))
+
+    def _cache_hit(self, kind: str, url: str) -> bool:
+        if self.skip_fetch:
+            return self._cached_path(kind, url).is_file()
+        return check_file_cached(url, self.cache_dir, self._cache_key(kind))
+
+    def _require_cached_file(self, kind: str, url: str) -> Path:
+        path = self._cached_path(kind, url)
+        if not path.is_file():
+            raise RuntimeError(
+                f"Cached file is missing for {self.slug()}: {path} "
+                "(disable skip_fetch)"
+            )
+        return path
+
+    def _get_repomd(self, index_url: str) -> Path:
+        if self.skip_fetch:
+            return self._require_cached_file("db", index_url)
+        return download_file_cached(
+            index_url,
+            quiet=not self.verbose,
+            desc="Fetching index",
+            cache=self.cache_dir,
+            cache_key=self._cache_key("db"),
+        )
+
     def _getlatest(self) -> None:
         # Fetch Yum index (repomd.xml) to get the database filename.
-        # This is never cached, and it's a small file.
         yumbase = (self.yum_fmt or UEK_YUM).format(
             ol_ver=self.ol_ver,
             uek_ver=self.uek_ver,
             arch=self.arch,
         )
         index_url = yumbase + REPODATA
-        xml = io.BytesIO()
-        download_file(index_url, xml, desc="Fetching index", quiet=False)
-        tree = ET.fromstring(xml.getvalue().decode("utf-8"))
+        repomd_path = self._get_repomd(index_url)
+        tree = ET.fromstring(repomd_path.read_text())
         ns = "http://linux.duke.edu/metadata/repo"
         primary_db_node = tree.findall(
             f".//{{{ns}}}data[@type='primary_db']/{{{ns}}}location"
@@ -174,16 +206,22 @@ class TestKernel:
 
         # Now fetch the database and decompress it if necessary
         db_url = yumbase + primary_db_node.attrib["href"]
-        db_path = download_file_cached(
-            db_url,
-            cache=self.cache_dir,
-            cache_key=self._cache_key("db"),
-            desc="Fetching primary_db",
-        )
+        if self.skip_fetch:
+            db_path = self._require_cached_file("db", db_url)
+        else:
+            db_path = download_file_cached(
+                db_url,
+                quiet=not self.verbose,
+                cache=self.cache_dir,
+                cache_key=self._cache_key("db"),
+                desc="Fetching primary_db",
+                delete_on_miss=False,
+            )
         if db_path.name.endswith(".bz2"):
             db_path_dec = db_path.parent / db_path.name[: -len(".bz2")]
             if not db_path_dec.is_file():
-                print("Decompressing primary_db")
+                if self.verbose:
+                    print("Decompressing primary_db")
                 subprocess.run(
                     ["bunzip2", "-k", "-q", str(db_path)], check=True
                 )
@@ -232,9 +270,7 @@ class TestKernel:
             release = f"{ver}-{rel}.{self.arch}"
             for final_pkg in self.pkgs:
                 url = rpm_url.replace(self.pkgbase, final_pkg)
-                if not check_file_cached(
-                    url, self.cache_dir, self._cache_key("rpm")
-                ):
+                if not self._cache_hit("rpm", url):
                     missing_urls.append(url)
                 rpm_urls.append(url)
             dbinfo_url = DEBUGINFO_URL.format(
@@ -242,9 +278,7 @@ class TestKernel:
                 release=release,
                 pkgbase=self.pkgbase,
             )
-            if not check_file_cached(
-                dbinfo_url, self.cache_dir, self._cache_key("rpm")
-            ):
+            if not self._cache_hit("rpm", dbinfo_url):
                 missing_urls.append(dbinfo_url)
 
             # If some RPMs are available, we have two options:
@@ -279,21 +313,29 @@ class TestKernel:
         self._rpm_paths = []
         try:
             for i, url in enumerate(self._rpm_urls):
+                if self.skip_fetch:
+                    path = self._require_cached_file("rpm", url)
+                else:
+                    path = download_file_cached(
+                        url,
+                        quiet=not self.verbose,
+                        desc=f"RPM {i + 1}/{len(self._rpm_urls)}",
+                        cache=self.cache_dir,
+                        cache_key=self._cache_key("rpm"),
+                        delete_on_miss=(i == 0),
+                    )
+                self._rpm_paths.append(path)
+            if self.skip_fetch:
+                path = self._require_cached_file("rpm", self._dbinfo_url)
+            else:
                 path = download_file_cached(
-                    url,
-                    desc=f"RPM {i + 1}/{len(self._rpm_urls)}",
+                    self._dbinfo_url,
+                    quiet=not self.verbose,
+                    desc="Debuginfo RPM",
                     cache=self.cache_dir,
                     cache_key=self._cache_key("rpm"),
-                    delete_on_miss=(i == 0),
+                    delete_on_miss=False,
                 )
-                self._rpm_paths.append(path)
-            path = download_file_cached(
-                self._dbinfo_url,
-                desc="Debuginfo RPM",
-                cache=self.cache_dir,
-                cache_key=self._cache_key("rpm"),
-                delete_on_miss=False,
-            )
         except HTTPError as e:
             sys.exit(
                 f"HTTP error {e.code} {e.reason} encountered while "
