@@ -284,6 +284,7 @@ def ensure_kernel(
     """
     out_dir = layout.extract_path(kernel.release)
     if out_dir.is_dir():
+        log.already_done("Fetch & Extract Kernel RPMs", out_dir)
         return out_dir
 
     if skip_fetch:
@@ -306,5 +307,5 @@ def ensure_kernel(
         if building_dir.exists():
             shutil.rmtree(str(building_dir))
         raise
-    log.built("kernel RPMs extracted", out_dir)
+    log.done("Fetch & Extract Kernel RPMs", out_dir)
     return out_dir
