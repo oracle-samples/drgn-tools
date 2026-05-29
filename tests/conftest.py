@@ -220,7 +220,8 @@ def pytest_configure(config):
             getattr(drgn, "__version__", "unknown"),
         )
     )
-    extra_debuginfo = _extra_live_debuginfo()
+    kmod = os.environ.get("DRGNTOOLS_TEST_KMOD")
+    extra_debuginfo = [kmod] if kmod else []
     if CTF:
         try:
             from drgn.helpers.linux.ctf import load_ctf
@@ -230,6 +231,12 @@ def pytest_configure(config):
             # is loaded if we don't have a path).
             load_ctf(PROG, path=CTF_FILE)
             PROG.cache["using_ctf"] = True
+            if kmod:
+                import _drgn
+
+                _drgn._linux_helper_load_module_ctf(
+                    PROG, "drgntools_test", kmod
+                )
             # Mark in-tree modules as having debuginfo, so that the module API
             # doesn't attempt to load debuginfo implicitly.
             for module in PROG.modules():
@@ -237,8 +244,6 @@ def pytest_configure(config):
                     module.debug_file_status = ModuleFileStatus.DONT_NEED
         except ModuleNotFoundError:
             raise Exception("CTF is not supported, cannot run CTF test")
-        if extra_debuginfo:
-            PROG.load_debug_info(extra_debuginfo)
     elif DEBUGINFO:
         PROG.load_debug_info(DEBUGINFO + extra_debuginfo)
     else:
