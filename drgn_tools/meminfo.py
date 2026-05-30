@@ -572,8 +572,10 @@ def get_all_meminfo(prog: Program) -> Dict[str, int]:
         stats["FileHugePages"] = -1
         stats["FilePmdMapped"] = -1
 
-    stats["CmaTotal"] = prog["totalcma_pages"].value_()
-    stats["CmaFree"] = global_stats["NR_FREE_CMA_PAGES"]
+    migratetype_names = [n.string_() for n in prog["migratetype_names"]]
+    if b"CMA" in migratetype_names:
+        stats["CmaTotal"] = prog["totalcma_pages"].value_()
+        stats["CmaFree"] = global_stats["NR_FREE_CMA_PAGES"]
     return stats
 
 
@@ -651,8 +653,11 @@ def show_all_meminfo(prog: Program) -> None:
         else:
             print_val_kb(prog, item, stats[item])
 
-    for item in hugepage_meminfo_items + cma_meminfo_items:
+    for item in hugepage_meminfo_items:
         print_val_kb(prog, item, stats[item])
+    for item in cma_meminfo_items:
+        if item in stats:
+            print_val_kb(prog, item, stats[item])
 
     # Report hugepage related meminfo
     show_hugetlb_meminfo(prog)
