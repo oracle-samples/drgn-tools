@@ -58,4 +58,4 @@ jobs:
         env:
           DRGN_TOOLS_ALLOW_MISSING_LATEST: ${{ contains(github.event.pull_request.labels.*.name, 'allow-missing-latest') && '1' || '0' }}
         run: |
-          venv/bin/python -m testing.vm.runner -iv -k ol${{ matrix.ol-version }}-*-x86_64
+          venv/bin/python -m testing.vm.runner --delete-after-test -iv -k ol${{ matrix.ol-version }}-*-x86_64
