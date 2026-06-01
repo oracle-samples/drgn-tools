@@ -25,48 +25,37 @@ jobs:
       - name: Run pre-commit hooks
         run: pre-commit run --all-files --show-diff-on-failure
   test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        # Our minimum supported version of Python is 3.6, used by Oracle Linux 7
-        # & 8. Ideally we would run tests on that, along with Python 3.9 for
-        # Oracle Linux 9, and maybe Python 3.12 for an upcoming Oracle Linux 10.
-        # However, practicality rules here. The binutils provided in Ubuntu
-        # 20.04 is not recent enough for our libctf usage, but 20.04 is the only
-        # remaining Ubuntu image with Python 3.6 available in Github actions.
-        # So we have to eliminate Python 3.6 from our test matrix. Other CI
-        # tests do run on Python 3.6, and there is the "vermin" pre-commit hook
-        # which detects code incompatible with 3.6.
-        python-minor: ["9", "12"]
+        ol-version: [8, 9, 10]
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.${{ matrix.python-minor }}
+          python-version: 3.12
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install qemu-kvm zstd gzip bzip2 cpio busybox-static fio \
-                               autoconf automake check gcc git liblzma-dev \
-                               libelf-dev libdw-dev libtool make pkgconf zlib1g-dev \
-                               binutils-dev rpm2cpio libpcre2-dev
+          sudo apt-get install qemu-kvm qemu-system-common zstd gzip bzip2 cpio \
+                               busybox-static fio rpm2cpio podman
       - name: Setup test environment
-        # Pinned virtualenv and tox are for the last versions which support
-        # detecting Python 3.6 and running tests on it.
+        # We install drgn here to satisfy imports. The version doesn't really
+        # matter, because this is not the version of drgn we actually use for
+        # testing. Instead, we use the latest drgn RPM from Oracle Linux in the
+        # test rootfs..
         run: |
           python -m venv venv
-          venv/bin/pip install -r testing/requirements-litevm.txt
-          venv/bin/pip install setuptools
-      - name: Build and install drgn with CTF support
+          venv/bin/pip install drgn
+      - name: Enable unprivileged user namespace cloning
+        # The test environment depends on unprivileged user namespaces. Ubuntu
+        # 24 introduces AppArmor profiles that get in the way.
         run: |
-          cd ..
-          git clone https://github.com/brenns10/drgn -b ctf_0.1.0
-          cd drgn
-          ../drgn-tools/venv/bin/pip install .
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run tests
         env:
           DRGN_TOOLS_ALLOW_MISSING_LATEST: ${{ contains(github.event.pull_request.labels.*.name, 'allow-missing-latest') && '1' || '0' }}
         run: |
-          venv/bin/python -m testing.litevm.vm --delete-after-test --with-ctf
+          venv/bin/python -m testing.vm.runner -iv -k ol${{ matrix.ol-version }}-*-x86_64
