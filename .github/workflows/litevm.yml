@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install qemu-kvm qemu-system-common zstd gzip bzip2 cpio \
+          sudo apt-get install qemu-kvm virtiofsd zstd gzip bzip2 cpio \
                                busybox-static fio rpm2cpio podman
       - name: Setup test environment
         # We install drgn here to satisfy imports. The version doesn't really
