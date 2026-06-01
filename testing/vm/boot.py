@@ -609,7 +609,7 @@ def run_in_vm(
         if log_path:
             serial_args = ["-serial", "stdio", "-monitor", "none"]
         else:
-            serial_args = ["-serial", "stdio", "-monitor", "none"]
+            serial_args = ["-serial", "mon:stdio"]
 
         kernel_cmdline = "console=ttyS0,115200 panic=-1"
         if not log.verbose:
@@ -618,7 +618,6 @@ def run_in_vm(
         args += [
             # fmt: off
             "-display", "none",
-            "-nodefaults",
             "-no-reboot",
 
             "-kernel", str(vmlinuz),
