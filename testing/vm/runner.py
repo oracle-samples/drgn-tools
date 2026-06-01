@@ -3,6 +3,7 @@
 """New VM test runner orchestration."""
 import argparse
 import fnmatch
+import shutil
 import sys
 from pathlib import Path
 from typing import List
@@ -141,6 +142,11 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--delete-after-test",
+        action="store_true",
+        help="Delete downloaded & extracted RPMs after tests for target",
+    )
+    parser.add_argument(
         "command",
         nargs="*",
         help="Command to run in guest (default: python3 -m pytest tests)",
@@ -250,6 +256,11 @@ def main() -> None:
                         log.fail_test(target.name, mode_name)
                     else:
                         log.pass_test(target.name, mode_name)
+
+            if args.delete_after_test:
+                log.message("Deleting RPM cache and extraction directory")
+                shutil.rmtree(layout.extract_path(kernel.release))
+                shutil.rmtree(layout.yum_cache_dir / kernel.category.slug)
         except BaseException as e:
             failures.append(f"{target.name}: {e}")
             if isinstance(e, (SystemExit, KeyboardInterrupt)):
