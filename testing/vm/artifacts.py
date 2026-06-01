@@ -25,7 +25,7 @@ from testing.vm.config import VmLayout
 from testing.vm.logging import VmLogger
 
 
-UEKNEXT_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/developer/UEKNEXT/{arch}/"
+UEKNEXT_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/developer/UEKnext/{arch}/"
 RHCK_YUM = (
     "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/baseos/latest/{arch}/"
 )
