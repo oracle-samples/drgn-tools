@@ -120,7 +120,7 @@ def _initrd_modules(shared_fs: str) -> List[str]:
 def _host_mount_command(shared_fs: str) -> str:
     _validate_shared_fs(shared_fs)
     if shared_fs == SHARED_FS_VIRTIOFS:
-        return "mount -t virtiofs hostfs /host"
+        return "mount -t virtiofs -o ro hostfs /host"
     return (
         "mount -t 9p "
         "-o ro,trans=virtio,cache=loose,msize=1048576 "
@@ -451,7 +451,6 @@ def _start_virtiofsd(socket_path: Path, shared_dir: Path) -> Iterator[None]:
             str(socket_path),
             "--shared-dir",
             str(shared_dir),
-            "--readonly",
             "--sandbox=none",
             "--cache=auto",
         ],
