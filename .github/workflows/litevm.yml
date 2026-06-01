@@ -49,11 +49,18 @@ jobs:
         run: |
           python -m venv venv
           venv/bin/pip install drgn
-      - name: Enable unprivileged user namespace cloning
+      - name: Configure permissions
         # The test environment depends on unprivileged user namespaces. Ubuntu
         # 24 introduces AppArmor profiles that get in the way.
+        #
+        # Similarly, /dev/kvm needs to be world-read-writable. See also drgn's
+        # test framework.
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          ls -lh /dev/kvm
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /lib/udev/rules.d/99-fix-kvm.rules > /dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger -w /dev/kvm
       - name: Run tests
         env:
           DRGN_TOOLS_ALLOW_MISSING_LATEST: ${{ contains(github.event.pull_request.labels.*.name, 'allow-missing-latest') && '1' || '0' }}
