@@ -94,7 +94,7 @@ def _build_rootfs(
         "run",
         "--rm",
         "--mount",
-        f"type=bind,src={build_dir},dst=/rootfs",
+        f"type=bind,src={build_dir},dst=/rootfs,relabel=private",
         f"oraclelinux:{ol_ver}",
         "bash",
         "-lc",
