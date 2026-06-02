@@ -307,6 +307,7 @@ def ensure_kernel(
     if out_dir.is_dir():
         log.already_done("Fetch & Extract Kernel RPMs", out_dir)
         return out_dir
+    log.working("Fetch & Extract Kernel RPMs", out_dir)
 
     if skip_fetch:
         rpm_paths = _cached_kernel_rpms(kernel, layout)
