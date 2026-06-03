@@ -79,7 +79,7 @@ def combine_junit_xml(
     new: ET.ElementTree,
 ) -> ET.ElementTree:
     """
-    Combine the JUnit XML files created by pytest. While we could use the
+    Combine the JUnit XML files created by the test runner. While we could use the
     "junitxml" PyPI package for this, all we really need to know about JUnit XML
     is that there is a root element named "testsuites", child elements of tag
     type "testsuite", and then children of type "testcase".

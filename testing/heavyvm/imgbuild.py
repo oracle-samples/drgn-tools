@@ -385,7 +385,6 @@ def configure_vm(ctx: Context) -> None:
         run_cmd(
             client, ctx, f"sudo {dnf} install -y " + " ".join(install_packages)
         )
-        run_cmd(client, ctx, "sudo python3 -m pip install 'pytest<7.1'")
 
         # Install kernel-uek from the repo established above:
         run_cmd(client, ctx, f"sudo {dnf} install -y kernel-uek")

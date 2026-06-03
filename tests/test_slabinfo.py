@@ -3,12 +3,13 @@
 from drgn.helpers.linux.slab import find_slab_cache
 
 from drgn_tools import slabinfo
+from tests import DrgnToolsTestCase
 
 
-def test_slabinfo(prog):
-    slabinfo.print_slab_info(prog)
+class TestSlabinfo(DrgnToolsTestCase):
+    def test_slabinfo(self):
+        slabinfo.print_slab_info(self.prog)
 
-
-def test_slabdump(prog):
-    cache = find_slab_cache(prog, "kmalloc-256")
-    slabinfo.dump_slab_objects(cache, limit=10)
+    def test_slabdump(self):
+        cache = find_slab_cache(self.prog, "kmalloc-256")
+        slabinfo.dump_slab_objects(cache, limit=10)

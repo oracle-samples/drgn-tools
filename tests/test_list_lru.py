@@ -16,9 +16,10 @@ from drgn_tools.list_lru import list_lru_for_each_entry
 from drgn_tools.list_lru import list_lru_from_memcg_node_for_each_entry
 from drgn_tools.list_lru import slab_object_to_memcgidx
 from drgn_tools.list_lru import slab_object_to_nodeid
+from tests import DrgnToolsTestCase
 
 
-def test_list_lru(
+def do_test_list_lru(
     prog: Program,
     *,
     dst: Optional[Path] = None,
@@ -149,3 +150,8 @@ def test_list_lru(
                                     f"lru for xfs_buf {hex(bp)} FOUND at memcg idx {memcg} nodeid {n.value_()}"
                                 )
             print(f"{d_cnt} xfs_bufs found")
+
+
+class TestListLru(DrgnToolsTestCase):
+    def test_list_lru(self):
+        do_test_list_lru(self.prog)

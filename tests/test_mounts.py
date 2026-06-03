@@ -2,13 +2,9 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 from operator import itemgetter
 
-import pytest
-
 from drgn_tools import mounts
-
-
-def test_print_mounts(prog):
-    mounts.mountinfo(prog)
+from tests import DrgnToolsTestCase
+from tests import skip_unless_live
 
 
 def get_proc_mounts():
@@ -21,10 +17,14 @@ def get_proc_mounts():
     return proc_mount_table
 
 
-@pytest.mark.skip_vmcore("*")
-def test_show_mounts(prog):
-    prog_table = mounts.get_mountinfo(prog)
-    proc_table = get_proc_mounts()
+class TestMounts(DrgnToolsTestCase):
+    def test_print_mounts(self):
+        mounts.mountinfo(self.prog)
 
-    for row in proc_table:
-        assert row in prog_table
+    @skip_unless_live
+    def test_show_mounts(self):
+        prog_table = mounts.get_mountinfo(self.prog)
+        proc_table = get_proc_mounts()
+
+        for row in proc_table:
+            assert row in prog_table
