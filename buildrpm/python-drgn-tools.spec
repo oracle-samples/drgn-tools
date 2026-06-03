@@ -1,21 +1,73 @@
-# Copyright (c) 2024, Oracle and/or its affiliates.
+# Copyright (c) 2024-2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-%if 0%{?rhel} == 8 || 0%{?rhel} == 9
-%global with_python311 1
-%global with_python312 1
-%else
-%global with_python311 0
-%global with_python312 0
+
+# Build settings by OL version:
+# - with_python3: produce drgn-tools RPM for system python
+# - with_python3xx: produce python3.xx-drgn-tools RPM for python stream
+# - with_alternatives: use alternatives to enable swapping default corelens
+%if 0%{?rhel} == 7
+%global with_python3      1
+%global with_python311    0
+%global with_python312    0
+%global with_python314    0
+%global with_alternatives 0
+%endif
+%if 0%{?rhel} == 8
+%global with_python3      1
+%global with_python311    1
+%global with_python312    1
+%global with_python314    0
+%global with_alternatives 1
+%endif
+%if 0%{?rhel} == 9
+%global with_python3      1
+%global with_python311    1
+%global with_python312    1
+%global with_python314    1
+%global with_alternatives 1
+%endif
+%if 0%{?rhel} == 10
+%global with_python3      1
+%global with_python311    0
+%global with_python312    0
+%global with_python314    1
+%global with_alternatives 1
 %endif
 
+%if %{with_python3}
+%global dt_python3_cmd %{_bindir}/python3-corelens
+%endif
 %if %{with_python311}
 %global __python311 /usr/bin/python3.11
 %global python311_sitelib /usr/lib/python3.11/site-packages
+%global dt_python311_cmd %{_bindir}/python3.11-corelens
 %endif
-
 %if %{with_python312}
 %global __python312 /usr/bin/python3.12
 %global python312_sitelib /usr/lib/python3.12/site-packages
+%global dt_python312_cmd %{_bindir}/python3.12-corelens
+%endif
+%if %{with_python314}
+%global __python314 /usr/bin/python3.14
+%global python314_sitelib /usr/lib/python3.14/site-packages
+%global dt_python314_cmd %{_bindir}/python3.14-corelens
+%endif
+
+%if %{with_alternatives}
+%global dt_alt_name corelens
+%global dt_alt_link %{_bindir}/corelens
+%if %{with_python3}
+%global dt_alt_priority_py3 %(%{__python3} -c 'import sys; print("{}{:02d}".format(*sys.version_info))')
+%endif
+%if %{with_python311}
+%global dt_alt_priority_py311 311
+%endif
+%if %{with_python312}
+%global dt_alt_priority_py312 312
+%endif
+%if %{with_python314}
+%global dt_alt_priority_py314 314
+%endif
 %endif
 
 
@@ -30,10 +82,12 @@ Source0:        drgn-tools-%{version}.tar.bz2
 
 BuildArch:      noarch
 
+%if %{with_python3}
 BuildRequires:  python%{python3_pkgversion}-devel
 BuildRequires:  python%{python3_pkgversion}-setuptools
 BuildRequires:  python%{python3_pkgversion}-pip
 BuildRequires:  python%{python3_pkgversion}-wheel
+%endif
 %if %{with_python311}
 BuildRequires:  python3.11-devel
 BuildRequires:  python3.11-setuptools
@@ -45,6 +99,11 @@ BuildRequires:  python3.12-devel
 BuildRequires:  python3.12-setuptools
 BuildRequires:  python3.12-pip
 BuildRequires:  python3.12-wheel
+%endif
+%if %{with_python314}
+BuildRequires:  python3.14-devel
+BuildRequires:  python3.14-setuptools
+BuildRequires:  python3.14-pip
 %endif
 
 %global platform_python %{__python3}
@@ -59,18 +118,28 @@ a running kernel image (via /proc/kcore).}
 # The drgn dependency can be fulfilled by drgn with, or without, CTF support.
 # However, drgn-tools is tied to specific drgn releases.
 %global drgn_min 0.0.32
-%global drgn_max 0.1.1
+%global drgn_max 0.3.0
 
+%if %{with_python3}
 %package -n     drgn-tools
 Summary:        %{summary}
 Requires:       drgn >= %{drgn_min}, drgn < %{drgn_max}
 %description -n drgn-tools %{_description}
+%if %{with_alternatives}
+Requires(post): %{_sbindir}/alternatives
+Requires(postun): %{_sbindir}/alternatives
+%endif
+%endif
 
 %if %{with_python311}
 %package -n     python3.11-drgn-tools
 Summary:        %{summary}
 Requires:       python3.11-drgn >= %{drgn_min}, python3.11-drgn < %{drgn_max}
 %description -n python3.11-drgn-tools %{_description}
+%if %{with_alternatives}
+Requires(post): %{_sbindir}/alternatives
+Requires(postun): %{_sbindir}/alternatives
+%endif
 %endif
 
 %if %{with_python312}
@@ -78,6 +147,21 @@ Requires:       python3.11-drgn >= %{drgn_min}, python3.11-drgn < %{drgn_max}
 Summary:        %{summary}
 Requires:       python3.12-drgn >= %{drgn_min}, python3.12-drgn < %{drgn_max}
 %description -n python3.12-drgn-tools %{_description}
+%if %{with_alternatives}
+Requires(post): %{_sbindir}/alternatives
+Requires(postun): %{_sbindir}/alternatives
+%endif
+%endif
+
+%if %{with_python314}
+%package -n     python3.14-drgn-tools
+Summary:        %{summary}
+Requires:       python3.14-drgn >= %{drgn_min}, python3.14-drgn < %{drgn_max}
+%description -n python3.14-drgn-tools %{_description}
+%if %{with_alternatives}
+Requires(post): %{_sbindir}/alternatives
+Requires(postun): %{_sbindir}/alternatives
+%endif
 %endif
 
 %prep
@@ -85,46 +169,122 @@ Requires:       python3.12-drgn >= %{drgn_min}, python3.12-drgn < %{drgn_max}
 echo '__version__ = "%{version}+%{release}"' > drgn_tools/_version.py
 
 %build
-%py3_build
-
 
 %install
-# Install alternative Python versions first, so that the corelens script points
-# to the last one which is installed: the platform python.
 %if %{with_python311}
 %global __python3 %{__python311}
+%py3_build
 %py3_install
+mv %{buildroot}/%{_bindir}/corelens %{buildroot}/%{dt_python311_cmd}
 %endif
 %if %{with_python312}
 %global __python3 %{__python312}
+%py3_build
 %py3_install
+mv %{buildroot}/%{_bindir}/corelens %{buildroot}/%{dt_python312_cmd}
+%endif
+%if %{with_python314}
+%global __python3 %{__python314}
+%py3_build
+%py3_install
+mv %{buildroot}/%{_bindir}/corelens %{buildroot}/%{dt_python314_cmd}
 %endif
 %global __python3 %{platform_python}
 
+%if %{with_python3}
+%py3_build
 %py3_install
+# When packaging the main drgn-tools with alternatives, we must rename corelens
+# to "python3-corelens" and provide an empty file to satisfy the ghost
+# directive.
+%if %{with_alternatives}
+mv %{buildroot}/%{_bindir}/corelens %{buildroot}/%{dt_python3_cmd}
+touch %{buildroot}/%{dt_alt_link}
+%endif
 gzip man/corelens.1
 install -m644 -D man/corelens.1.gz %{buildroot}%{_mandir}/man1/corelens.1.gz
 install -m644 -D extras/corelens.py %{buildroot}%{python3_sitelib}/sos/report/plugins/corelens.py
+%endif
 
 # The DRGN script is an interactive CLI which is convenient for developers,
 # but should not be part of general users' PATH. If necessary, it can be invoked
 # manually with "python3 -m drgn_tools.cli"
-rm %{buildroot}/usr/bin/DRGN
+rm -f %{buildroot}/usr/bin/DRGN
 
+%if %{with_alternatives}
+%if %{with_python3}
+# If upgrading from a prior non-alternatives version, the corelens script will
+# be present at /usr/bin/corelens and alternatives will fail to install the
+# symlink:
+#
+#     failed to link /usr/bin/corelens -> /etc/alternatives/corelens /usr/bin/corelens exists and it is not a symlink
+#
+# The responsibility must be for the main drgn-tools RPM to remove the prior
+# script, because it owns the file.
+#
+# Note that as a result, it is possible for a user to install an
+# alternatives-enabled python3.xx-drgn-tools alongside a non-alternatives
+# drgn-tools RPM. This can occur if they fail to upgrade their system (or at
+# least drgn-tools) prior to installing the newest python3.xx-drgn-tools.
+# However, in all cases, this can be resolved by simply upgrading drgn-tools.
+%post -n drgn-tools
+if [ -e "%{dt_alt_link}" ] && [ ! -L "%{dt_alt_link}" ]; then
+    rm -f "%{dt_alt_link}"
+fi
+%{_sbindir}/alternatives --install %{dt_alt_link} %{dt_alt_name} %{dt_python3_cmd} %{dt_alt_priority_py3}
+%postun -n drgn-tools
+if [ $1 -eq 0 ]; then
+    %{_sbindir}/alternatives --remove %{dt_alt_name} %{dt_python3_cmd}
+fi
+%endif
+%if %{with_python311}
+%post -n python3.11-drgn-tools
+%{_sbindir}/alternatives --install %{dt_alt_link} %{dt_alt_name} %{dt_python311_cmd} %{dt_alt_priority_py311}
+%postun -n python3.11-drgn-tools
+if [ $1 -eq 0 ]; then
+    %{_sbindir}/alternatives --remove %{dt_alt_name} %{dt_python311_cmd}
+fi
+%endif
+%if %{with_python312}
+%post -n python3.12-drgn-tools
+%{_sbindir}/alternatives --install %{dt_alt_link} %{dt_alt_name} %{dt_python312_cmd} %{dt_alt_priority_py312}
+%postun -n python3.12-drgn-tools
+if [ $1 -eq 0 ]; then
+    %{_sbindir}/alternatives --remove %{dt_alt_name} %{dt_python312_cmd}
+fi
+%endif
+%if %{with_python314}
+%post -n python3.14-drgn-tools
+%{_sbindir}/alternatives --install %{dt_alt_link} %{dt_alt_name} %{dt_python314_cmd} %{dt_alt_priority_py314}
+%postun -n python3.14-drgn-tools
+if [ $1 -eq 0 ]; then
+    %{_sbindir}/alternatives --remove %{dt_alt_name} %{dt_python314_cmd}
+fi
+%endif
+%endif
+
+%if %{with_python3}
 %files -n drgn-tools
 %license LICENSE.txt
 %{python3_sitelib}/drgn_tools-*.egg-info/
 %{python3_sitelib}/drgn_tools/*
-/usr/bin/corelens
+%if %{with_alternatives}
+%ghost %{dt_alt_link}
+%{dt_python3_cmd}
+%else
+%{_bindir}/corelens
+%endif
 %{_mandir}/man1/corelens.1.gz
 %{python3_sitelib}/sos/report/plugins/corelens.py
 %{python3_sitelib}/sos/report/plugins/__pycache__/corelens.*
+%endif
 
 %if %{with_python311}
 %files -n python3.11-drgn-tools
 %license LICENSE.txt
 %{python311_sitelib}/drgn_tools-*.egg-info/
 %{python311_sitelib}/drgn_tools/*
+%{dt_python311_cmd}
 %endif
 
 %if %{with_python312}
@@ -132,6 +292,15 @@ rm %{buildroot}/usr/bin/DRGN
 %license LICENSE.txt
 %{python312_sitelib}/drgn_tools-*.egg-info/
 %{python312_sitelib}/drgn_tools/*
+%{dt_python312_cmd}
+%endif
+
+%if %{with_python314}
+%files -n python3.14-drgn-tools
+%license LICENSE.txt
+%{python314_sitelib}/drgn_tools-*.egg-info/
+%{python314_sitelib}/drgn_tools/*
+%{dt_python314_cmd}
 %endif
 
 %changelog
