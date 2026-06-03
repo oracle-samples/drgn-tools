@@ -30,16 +30,16 @@ def _select_targets(pattern: str = "*") -> List[KernelCategory]:
 
 
 def _default_command() -> List[str]:
-    return ["python3", "-m", "pytest", "tests"]
+    return ["python3", "-m", "testing.unittest_runner", "tests"]
 
 
-def _is_pytest_command(command: List[str]) -> bool:
+def _is_test_command(command: List[str]) -> bool:
     if not command:
         return False
-    if "pytest" in command:
+    if "testing.unittest_runner" in command:
         return True
     for i, arg in enumerate(command[:-1]):
-        if arg == "-m" and command[i + 1] == "pytest":
+        if arg == "-m" and command[i + 1] == "testing.unittest_runner":
             return True
     return False
 
@@ -49,9 +49,9 @@ def _command_for_mode(
     ctf: bool,
 ) -> List[str]:
     command = list(base_command)
-    is_pytest = _is_pytest_command(command)
+    is_test = _is_test_command(command)
 
-    if not is_pytest:
+    if not is_test:
         return command
 
     if ctf and "--ctf" not in command:
@@ -149,7 +149,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "command",
         nargs="*",
-        help="Command to run in guest (default: python3 -m pytest tests)",
+        help=(
+            "Command to run in guest "
+            "(default: python3 -m testing.unittest_runner tests)"
+        ),
     )
 
     args = parser.parse_args()
@@ -170,14 +173,14 @@ def main() -> None:
     log = VmLogger(args.verbose, args.interactive)
 
     base_command = args.command if args.command else _default_command()
-    is_pytest = _is_pytest_command(base_command)
+    is_test = _is_test_command(base_command)
     targets = _select_targets(args.kernel)
     if not targets:
         raise SystemExit(f"No targets matched --kernel {args.kernel!r}")
 
     repo_root = Path.cwd().absolute()
     modes = []
-    if not is_pytest:
+    if not is_test:
         args.interactive = True
         modes.append(("interactive", False))
     else:

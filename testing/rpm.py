@@ -4,7 +4,7 @@
 Simple test runner for built RPMs
 
 Once the drgn and drgn-tools RPMs are built, these automatic tests can be run.
-Be sure to first install "pytest<7.1 pytest-cov" to the system or user.
+Be sure to first install the drgn-tools test dependencies to the system or user.
 """
 import argparse
 import fnmatch
@@ -58,7 +58,7 @@ def do_test(ident: str, args: List[str], ctf: bool = False) -> str:
     cmd = [
         sys.executable,
         "-m",
-        "pytest",
+        "testing.unittest_runner",
         "tests/",
     ]
     if ctf:

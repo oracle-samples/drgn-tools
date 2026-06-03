@@ -1,3 +1,2 @@
 # Requirements for running the vmcore tests.
 # Used in Gitlab CI.
-pytest

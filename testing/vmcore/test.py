@@ -90,13 +90,11 @@ def test(
             cmd = [
                 sys.executable,
                 "-m",
-                "pytest",
+                "testing.unittest_runner",
                 "tests/",
                 f"--vmcore={core_name}",
                 f"--vmcore-dir={str(CORE_DIR)}",
                 f"--junitxml={xml_run.name}",
-                "-o",
-                "junit_logging=all",
             ]
             if ctf:
                 if not (path / "vmlinux.ctfa").is_file():

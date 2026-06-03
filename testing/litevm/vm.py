@@ -389,9 +389,8 @@ def main():
         cmd = [
             sys.executable,
             "-m",
-            "pytest",
+            "testing.unittest_runner",
             "tests",
-            "-rP",
         ]
     ctf_enabled = [False]
     if args.with_ctf:

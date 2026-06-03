@@ -95,39 +95,42 @@ You can see some example tests in ``tests/test_mm.py``.  Generally, each file in
 ``drgn_tools`` should have a corresponding test file in ``tests``, but prefixed
 with ``test_``.
 
-Test code is written using the `pytest <https://docs.pytest.org/en/7.0.x/>`_
-framework. Each test is a simple function whose name begins with ``test_``.
-Within the test function, normally you call the "unit under test", and then make
-various assertions about the result of the function call. For instance, to test
-the above ``happy_birthday_message()`` function, you might write something like
-this:
+Test code is written using the standard library ``unittest`` framework. Each
+test is a method on :class:`tests.DrgnToolsTestCase` whose name begins with
+``test_``. Within the test method, normally you call the "unit under test", and
+then make various assertions about the result of the function call. For
+instance, to test the above ``happy_birthday_message()`` function, you might
+write something like this:
 
 .. code-block:: python
 
-   def test_happy_birthday() -> None:
-       assert happy_birthday_message("Stephen", 1) == "happy 1st birthday, Stephen!"
-       assert happy_birthday_message("Joe", 2) == "happy 2nd birthday, Joe!"
-       assert happy_birthday_message("Sally", 3) == "happy 3rd birthday, Sally!"
-       assert happy_birthday_message("Ben", 4) == "happy 4th birthday, Sally!"
+   from tests import DrgnToolsTestCase
+
+   class TestBirthday(DrgnToolsTestCase):
+       def test_happy_birthday(self) -> None:
+           assert happy_birthday_message("Stephen", 1) == "happy 1st birthday, Stephen!"
+           assert happy_birthday_message("Joe", 2) == "happy 2nd birthday, Joe!"
+           assert happy_birthday_message("Sally", 3) == "happy 3rd birthday, Sally!"
+           assert happy_birthday_message("Ben", 4) == "happy 4th birthday, Sally!"
 
 The ``assert`` keyword is used to make these test assertion: you can use any
 expression that results in a boolean.
 
 Generally, you'll need some resources to run a test: for example, to test drgn
 helpers, you need a :class:`drgn.Program` which has a linux kernel and debug
-symbols loaded (either live, or vmcore). Rather than writing test code for this
-yourself, you can simply use a pytest `"fixture"
-<https://docs.pytest.org/en/7.0.x/how-to/fixtures.html#how-to-fixtures>`_. To do
-this, you add an argument to your test function, named ``prog``:
+symbols loaded (either live, or vmcore). The shared
+:class:`tests.DrgnToolsTestCase` base class provides this as ``self.prog``:
 
 .. code-block:: python
 
-   def test_some_drgn_thing(prog: drgn.Program) -> None:
-       ...
+   from tests import DrgnToolsTestCase
 
-When your test is run, the pytest framework will look in ``tests/conftest.py``
-to find a fixture named ``prog``, and it will use that code to create a Program
-object. This way, your test can focus on testing functionality.
+   class TestSomething(DrgnToolsTestCase):
+       def test_some_drgn_thing(self) -> None:
+           do_something(self.prog)
+
+The same base class also provides ``self.kver``, ``self.prog_type``, and
+``self.debuginfo_type``.
 
 
 Writing Tests: High Level Goals
@@ -149,33 +152,34 @@ corresponding information out of userspace. For instance, when testing the
 
 .. code-block:: python
 
-    def test_totalram_pages(prog: drgn.Program) -> None:
-        reported_pages = mm.totalram_pages(prog).value_()
+    class TestMm(DrgnToolsTestCase):
+        def test_totalram_pages(self) -> None:
+            reported_pages = mm.totalram_pages(self.prog).value_()
 
-        if prog.flags & drgn.ProgramFlags.IS_LIVE:
-            # We're running live! Let's test it against
-            # the value reported in /proc/meminfo.
-            with open("/proc/meminfo") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        mem_kb = int(line.split()[1])
-                        break
-                else:
-                    assert False, "No memory size found"
-            mem_bytes = mem_kb * 1024
-            mem_pages = mem_bytes / getpagesize()
+            if self.prog.flags & drgn.ProgramFlags.IS_LIVE:
+                # We're running live! Let's test it against
+                # the value reported in /proc/meminfo.
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        if line.startswith("MemTotal:"):
+                            mem_kb = int(line.split()[1])
+                            break
+                    else:
+                        assert False, "No memory size found"
+                mem_bytes = mem_kb * 1024
+                mem_pages = mem_bytes / getpagesize()
 
-            assert mem_pages == reported_pages
-        else:
-            # We cannot directly confirm the memory value.
-            # We've already verified that we can lookup the
-            # value without error, now apply a few "smoke
-            # tests" to verify it's not completely wonky.
+                assert mem_pages == reported_pages
+            else:
+                # We cannot directly confirm the memory value.
+                # We've already verified that we can lookup the
+                # value without error, now apply a few "smoke
+                # tests" to verify it's not completely wonky.
 
-            # At least 512 MiB of memory:
-            assert reported_pages > (512 * 1024 * 1024) / getpagesize()
-            # Less than 4 TiB of memory:
-            assert reported_pages < (4 * 1024 * 1024 * 1024 * 1024) / getpagesize()
+                # At least 512 MiB of memory:
+                assert reported_pages > (512 * 1024 * 1024) / getpagesize()
+                # Less than 4 TiB of memory:
+                assert reported_pages < (4 * 1024 * 1024 * 1024 * 1024) / getpagesize()
 
 When running against a live kernel, the test can read ``/proc/meminfo`` and
 verify the value directly. When running against a core dump, we fall back to a
@@ -209,17 +213,19 @@ skip certain environments, you can annotate your test as follows:
 
 .. code-block:: python
 
-    import pytest
+    from tests import DrgnToolsTestCase
+    from tests import skip_live
 
-    @pytest.mark.skip_live
-    def test_foobar(prog: drgn.Program) -> None:
-       pass
+    class TestFoo(DrgnToolsTestCase):
+       @skip_live
+       def test_foobar(self) -> None:
+          pass
 
-This annotation is called a pytest "Mark". We have three marks for testing. The
-first one, as shown here, is called ``skip_live`` and it ensures that the test
-will not be run on live systems: that is, when ``/proc/kcore`` is being debugged
-on the Gitlab CI. The other two marks allow you to select or skip vmcores that a
-test runs on:
+We have three target-selection decorators for testing. The first one, as shown
+here, is called ``skip_live`` and it ensures that the test will not be run on
+live systems: that is, when ``/proc/kcore`` is being debugged on the Gitlab CI.
+The other two decorators allow you to select or skip vmcores that a test runs
+on:
 
 - ``vmcore("PATTERN")`` tells the test runner that the test should only run on
   vmcores which match PATTERN. The pattern is matched by :func:`fnmatch
@@ -230,21 +236,27 @@ test runs on:
 - ``skip_vmcore("PATTERN")`` tells the test runner that the test should be
   skipped on vmcores which match PATTERN.
 
-So essentially these two marks are inverses: one lets you choose which vmcores
-the test runs on, and the other lets you choose which the test should *not* run
-on.
+So essentially these two decorators are inverses: one lets you choose which
+vmcores the test runs on, and the other lets you choose which the test should
+*not* run on.
 
-It's important to note that the ``vmcore()`` and ``skip_vmcore()`` marks don't
-affect whether the test runs on live systems, the default is still yes, unless
-you also use the mark ``skip_live``. So, if you only wanted to run a test on
+It's important to note that the ``vmcore()`` and ``skip_vmcore()`` decorators
+don't affect whether the test runs on live systems, the default is still yes,
+unless you also use the decorator ``skip_live``. So, if you only wanted to run a
+test on
 exactly one vmcore named "special-vmcore" then you could do this:
 
 .. code-block:: python
 
-   @pytest.mark.skip_live
-   @pytest.mark.vmcore("special-vmcore")
-   def special_test_for_special_vmcore(prog: drgn.Program) -> None:
-       pass
+   from tests import DrgnToolsTestCase
+   from tests import skip_live
+   from tests import vmcore
+
+   class TestSpecial(DrgnToolsTestCase):
+       @skip_live
+       @vmcore("special-vmcore")
+       def test_special_vmcore(self) -> None:
+           pass
 
 Please try to avoid using these annotations where possible. If you can make a
 test support a target, even partially, then it's better. However, in some cases

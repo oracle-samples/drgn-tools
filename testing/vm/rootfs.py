@@ -8,7 +8,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from testing.vm.chroot import run_in_chroot
 from testing.vm.config import KernelCategory
 from testing.vm.config import VmLayout
 from testing.vm.logging import VmLogger
@@ -111,17 +110,6 @@ def _build_rootfs(
             stderr = subprocess.STDOUT
 
         subprocess.run(command, stdout=stdout, stderr=stderr, check=True)
-
-        # Install pytest by running in the newly created chroot:
-        # This can be done in the above step, but OL8's python is symlinked via
-        # an absolute path through /etc/alternatives, which conflicts with the
-        # build container's rootfs. This makes things messier than we'd like.
-        run_in_chroot(
-            build_dir,
-            "python3 -m pip install 'pytest<7'",
-            [],
-            verbose=log.verbose,
-        )
 
 
 def _rmtree_rootfs(path: Path) -> None:

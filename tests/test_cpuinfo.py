@@ -1,21 +1,24 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 from drgn import Architecture
-from drgn import ProgramFlags
 
 from drgn_tools import cpuinfo
+from tests import DrgnToolsTestCase
+from tests import skip_unless_live
 
 
-def test_cpuinfo(prog):
-    cpuinfo.print_cpu_info(prog)
+class TestCpuinfo(DrgnToolsTestCase):
+    def test_cpuinfo_smoke(self):
+        cpuinfo.print_cpu_info(self.prog)
 
-    if not (ProgramFlags.IS_LIVE & prog.flags):
-        return
+    @skip_unless_live
+    def test_cpuinfo(self):
+        if self.prog.platform.arch not in (
+            Architecture.X86_64,
+            Architecture.AARCH64,
+        ):
+            self.skipTest("Architecture not supported")
 
-    if (
-        prog.platform.arch == Architecture.X86_64
-        or prog.platform.arch == Architecture.AARCH64
-    ):
         file = open("/proc/cpuinfo", "r")
         lines = file.readlines()
         file.close()
@@ -28,57 +31,62 @@ def test_cpuinfo(prog):
             except Exception:
                 continue
 
-    if prog.platform.arch == Architecture.X86_64:
-        cpu_data_from_corelens = cpuinfo.x86_get_cpu_info(prog)
+        if self.prog.platform.arch == Architecture.X86_64:
+            cpu_data_from_corelens = cpuinfo.x86_get_cpu_info(self.prog)
 
-        assert (
-            cpu_data_from_corelens["CPU VENDOR"]
-            == cpu_data_from_proc["vendor_id"]
-        )
-        assert (
-            cpu_data_from_corelens["MODEL NAME"]
-            == cpu_data_from_proc["model name"]
-        )
-        assert (
-            str(cpu_data_from_corelens["CPU FAMILY"])
-            == cpu_data_from_proc["cpu family"]
-        )
-        if "microcode" in cpu_data_from_proc:
             assert (
-                str(cpu_data_from_corelens["MICROCODE"])
-                == cpu_data_from_proc["microcode"]
+                cpu_data_from_corelens["CPU VENDOR"]
+                == cpu_data_from_proc["vendor_id"]
             )
-        assert cpu_data_from_corelens["CSTATES"] == prog["max_cstate"]
-        assert (
-            cpu_data_from_corelens["CPU FLAGS"] == cpu_data_from_proc["flags"]
-        )
-        assert (
-            cpu_data_from_corelens["BUG FLAGS"] == cpu_data_from_proc["bugs"]
-        )
+            assert (
+                cpu_data_from_corelens["MODEL NAME"]
+                == cpu_data_from_proc["model name"]
+            )
+            assert (
+                str(cpu_data_from_corelens["CPU FAMILY"])
+                == cpu_data_from_proc["cpu family"]
+            )
+            if "microcode" in cpu_data_from_proc:
+                assert (
+                    str(cpu_data_from_corelens["MICROCODE"])
+                    == cpu_data_from_proc["microcode"]
+                )
+            assert cpu_data_from_corelens["CSTATES"] == self.prog["max_cstate"]
+            assert (
+                cpu_data_from_corelens["CPU FLAGS"]
+                == cpu_data_from_proc["flags"]
+            )
+            assert (
+                cpu_data_from_corelens["BUG FLAGS"]
+                == cpu_data_from_proc["bugs"]
+            )
 
-    if prog.platform.arch == Architecture.AARCH64:
-        cpu_data_from_corelens = cpuinfo.aarch64_get_cpu_info(prog)
-        assert (
-            cpu_data_from_corelens["Features"]
-            == cpu_data_from_proc["Features"]
-        )
-        assert (
-            cpu_data_from_corelens["CPU Implementer"]
-            == cpu_data_from_proc["CPU implementer"]
-        )
-        assert (
-            str(cpu_data_from_corelens["CPU Architecture"])
-            == cpu_data_from_proc["CPU architecture"]
-        )
-        assert (
-            cpu_data_from_corelens["CPU Variant"]
-            == cpu_data_from_proc["CPU variant"]
-        )
-        assert (
-            cpu_data_from_corelens["CPU Part"]
-            == cpu_data_from_proc["CPU part"]
-        )
-        assert (
-            str(cpu_data_from_corelens["CPU Revision"])
-            == cpu_data_from_proc["CPU revision"]
-        )
+        elif self.prog.platform.arch == Architecture.AARCH64:
+            cpu_data_from_corelens = cpuinfo.aarch64_get_cpu_info(self.prog)
+            assert (
+                cpu_data_from_corelens["Features"]
+                == cpu_data_from_proc["Features"]
+            )
+            assert (
+                cpu_data_from_corelens["CPU Implementer"]
+                == cpu_data_from_proc["CPU implementer"]
+            )
+            assert (
+                str(cpu_data_from_corelens["CPU Architecture"])
+                == cpu_data_from_proc["CPU architecture"]
+            )
+            assert (
+                cpu_data_from_corelens["CPU Variant"]
+                == cpu_data_from_proc["CPU variant"]
+            )
+            assert (
+                cpu_data_from_corelens["CPU Part"]
+                == cpu_data_from_proc["CPU part"]
+            )
+            assert (
+                str(cpu_data_from_corelens["CPU Revision"])
+                == cpu_data_from_proc["CPU revision"]
+            )
+
+        else:
+            assert False

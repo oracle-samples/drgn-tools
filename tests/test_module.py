@@ -1,12 +1,10 @@
 # Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-import pytest
-
 from drgn_tools.module import module_exports
+from tests import DrgnToolsTestCase
 
 
-@pytest.fixture
-def common_mod(prog):
+class TestModule(DrgnToolsTestCase):
     COMMON_MODS = [
         "drgntools_test",
         "nf_nat",
@@ -14,14 +12,15 @@ def common_mod(prog):
         "9pnet",
         "libcrc32c",
     ]
-    for name in COMMON_MODS:
-        try:
-            return prog.module(name).object
-        except LookupError:
-            pass
-    pytest.fail("No common kernel module found in program")
 
+    def common_mod(self):
+        for name in self.COMMON_MODS:
+            try:
+                return self.prog.module(name).object
+            except LookupError:
+                pass
+        self.fail("No common kernel module found in program")
 
-def test_module_exports(prog, common_mod):
-    # smoke test
-    assert module_exports(common_mod)
+    def test_module_exports(self):
+        # smoke test
+        assert module_exports(self.common_mod())

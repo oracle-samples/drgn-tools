@@ -331,7 +331,7 @@ def main():
         r.copy_extract_files(args.tarball)
         test_cmd = (
             "cd /root/test && "
-            "python3 -m pytest --junitxml test.xml -o junit_logging=all tests"
+            "python3 -m testing.unittest_runner --junitxml test.xml tests"
         )
         fail_count = 0
         fail_count += r.run_test(test_cmd)
