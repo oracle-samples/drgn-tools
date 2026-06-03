@@ -72,7 +72,7 @@
 
 
 Name:           python-drgn-tools
-Version:        2.2.1
+Version:        2.3.0
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -304,6 +304,30 @@ fi
 %endif
 
 %changelog
+* Fri Jun 26 2026 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.3.0-1
+- Add support for drgn 0.1.0 and drgn 0.2.0 (Stephen Brennan)
+- New corelens module: slabdump (Stephen Brennan)
+- Improve testing frameworks and unit tests (Stephen Brennan)
+- runq: dump task scheduling delay and RT throttling status (Junxiao Bi)
+- blockinfo: Add disk driver (Junxiao Bi)
+- kvm: Fix "not a valid MemSlotFlag" error [Orabug: 39025976] (Siddhi Katage)
+- lock: Add support for completion variables [Orabug: 38803445] (Imran Khan)
+- rds: Add verbose diagnostics and fix connection CPU info on older UEK5/UEK6 kernels (Anand Khoje, Pradyumn Rahar, Stephen Brennan)
+- inflightio: Add NVMe management queue support (Junxiao Bi)
+- scsi: Add "--target" option [Orabug: 39271381] (Rajan Shanmugavelu)
+- scsi: Add verbose host info for qla2xxx LFPC and megraid_sas HBA hosts [Orabug: 39122042] (Rajan Shanmugavelu)
+- slabinfo: fix failures with per-cpu sheaves [Orabug: 39518020] (Imran Khan)
+- smp: fix smp module for uek7 and later kernels [Orabug: 39429804] (Imran Khan)
+- Add corelens command to drgn and crash [Orabug: 39523319] (Stephen Brennan)
+- Fix incorrect CPU count in corelens sys module [Orabug: 38829413] (Stephen Brennan)
+- runq: do not filter curr from output [Orabug: 38933146] (Stephen Brennan)
+- nvme: disambiguate nvme_ns and nvme_ns_head [Orabug: 38995392] (Stephen Brennan)
+- Improve detection of ksplice cold-patches and proprietary modules (Stephen Brennan)
+- corelens: add overrides to specify vmcoreinfo and architecture (Stephen Brennan)
+- Fix FaultError in slab_object_to_memcgidx [Orabug: 39653070] (Stephen Brennan)
+- Add Python 3.14 to RPM packaging (Stephen Brennan)
+- Use alternatives to switch default corelens command (Stephen Brennan)
+
 * Fri Jan 30 2026 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.2.1-1
 - Print number of pending I/O requests for all virtio devices [Orabug: 38665851] (Siddhi Katage)
 - pstack: multiple fixes (Stephen Brennan)
