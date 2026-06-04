@@ -1,4 +1,4 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2023, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import argparse
 import collections
@@ -37,19 +37,13 @@ __all__ = (
 )
 
 
-def func_name(prog: drgn.Program, frame: drgn.StackFrame) -> t.Optional[str]:
-    if frame.name:
-        return frame.name
-    try:
-        sym = frame.symbol().name
-        if ".isra." in sym:
-            return sym[: sym.index(".isra.")]
-        elif ".constprop." in sym:
-            return sym[: sym.index(".constprop.")]
-        else:
-            return sym
-    except LookupError:
-        return None
+def _remove_sym_suffixes(s: str) -> str:
+    if ".isra." in s:
+        return s[: s.index(".isra.")]
+    elif ".constprop." in s:
+        return s[: s.index(".constprop.")]
+    else:
+        return s
 
 
 def frame_name(prog: drgn.Program, frame: drgn.StackFrame) -> str:
@@ -478,9 +472,7 @@ def _index_functions(prog: drgn.Program) -> t.Dict[str, t.Set[int]]:
         try:
             frames = bt_frames(task)
             for frame in frames:
-                name = func_name(prog, frame)
-                if not name:
-                    continue
+                name = _remove_sym_suffixes(frame.name)
                 func_to_pids[name].add(pid)
         except FaultError:
             # FaultError: catch unusual unwinding issues
@@ -505,7 +497,7 @@ def _indexed_bt_has_any(
     for pid in pids:
         task = find_task(prog, pid)
         for frame in bt_frames(task):
-            name = func_name(prog, frame)
+            name = _remove_sym_suffixes(frame.name)
             if name in funcs:
                 result.append((task, frame))
                 if one_per_task:
@@ -548,7 +540,7 @@ def bt_has_any(
         try:
             frames = bt_frames(task)
             for frame in frames:
-                if func_name(prog, frame) in funcs:
+                if _remove_sym_suffixes(frame.name) in funcs:
                     frame_list.append((task, frame))
                     if one_per_task:
                         break

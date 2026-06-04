@@ -1,11 +1,16 @@
 # Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+from contextlib import redirect_stdout
+from io import StringIO
+
 from drgn.helpers.linux import for_each_task
 
 from drgn_tools import lock
 from drgn_tools import locking
-from drgn_tools.bt import func_name
+from drgn_tools.bt import _remove_sym_suffixes
 from tests import DrgnToolsTestCase
+from tests import skip_live
+from tests import skip_unless_have_kmod
 from tests import skip_unless_vmcore
 from tests import skip_vmcore
 
@@ -15,18 +20,44 @@ class TestLock(DrgnToolsTestCase):
     def test_locks(self):
         lock.scan_lock(self.prog, stack=True)
 
-    # the rwsem code does not support UEK4, no reason to add support
-    @skip_unless_vmcore("*lockmod*")
-    def test_with_lockmod(self):
+    def _lockmod_threads(self):
         lockmod_threads = []
         for task in for_each_task(self.prog):
             if task.comm.string_().startswith(b"lockmod"):
                 lockmod_threads.append(task)
 
         if not lockmod_threads:
-            self.skipTest("no lockmod kernel module found")
+            self.fail("no lockmod kthreads found")
+        return lockmod_threads
 
-        for task in lockmod_threads:
+    @skip_unless_have_kmod
+    def test_scan_lock_live_with_kmod(self):
+        self._lockmod_threads()
+        with redirect_stdout(StringIO()) as stdout:
+            lock.scan_lock(self.prog, stack=False)
+
+        output = stdout.getvalue()
+        self.assertIn("Mutex:", output)
+        self.assertIn("Semaphore:", output)
+        self.assertIn("Rwsem:", output)
+        self.assertIn("lockmod-mutex", output)
+        self.assertIn("lockmod-sem", output)
+        self.assertIn("lockmod-rwsem", output)
+
+    # the rwsem code does not support UEK4, no reason to add support
+    @skip_live
+    @skip_unless_vmcore("*lockmod*")
+    def test_locking_with_lockmod_vmcore(self):
+        self._check_locking_with_lockmod()
+
+    @skip_unless_have_kmod
+    def test_locking_live_with_kmod(self):
+        self._check_locking_with_lockmod()
+
+    def _check_locking_with_lockmod(self):
+        seen_kinds = set()
+
+        for task in self._lockmod_threads():
             print(
                 f"PID {task.pid.value_()} COMM {task.comm.string_().decode()}"
             )
@@ -47,13 +78,14 @@ class TestLock(DrgnToolsTestCase):
                 kind = "semaphore"
                 var = "sem"
                 func_substr = "down"
+            seen_kinds.add(kind)
 
             # There can be multiple frames which may contain the lock, we will need
             # to try all of them.
             trace = self.prog.stack_trace(task)
             frames = []
             for frame in trace:
-                fn = func_name(self.prog, frame)
+                fn = _remove_sym_suffixes(frame.name)
                 if fn and func_substr in fn:
                     frames.append(frame)
             if not frames:
@@ -87,3 +119,8 @@ class TestLock(DrgnToolsTestCase):
                     break
             else:
                 self.fail("Could not find lock using fallback method")
+
+        self.assertEqual(
+            {"mutex", "rw_semaphore", "semaphore"},
+            seen_kinds,
+        )

@@ -14,6 +14,7 @@ from typing import Tuple
 import drgn
 from drgn import MainModule
 from drgn import ModuleFileStatus
+from drgn import ProgramFlags
 
 from drgn_tools.debuginfo import has_vmlinux_build_id_mismatch
 from drgn_tools.debuginfo import KernelVersion
@@ -38,6 +39,8 @@ _LIVE_ONLY_ATTR = "_drgntools_live_only"
 _VMCORE_ATTR = "_drgntools_vmcore"
 _SKIP_VMCORE_ATTR = "_drgntools_skip_vmcore"
 _KVER_MIN_ATTR = "_drgntools_kver_min"
+_HAVE_KMOD_ATTR = "_drgntools_have_kmod"
+_TEST_KMOD = "drgntools_test"
 
 
 def _append_marker(obj, attr: str, value):
@@ -84,6 +87,12 @@ def skip_kernel_versions_below(ver: str):
         return _append_marker(obj, _KVER_MIN_ATTR, ver)
 
     return decorator
+
+
+def skip_unless_have_kmod(obj):
+    """Skip a test unless the drgntools_test kernel module is loaded."""
+    setattr(obj, _HAVE_KMOD_ATTR, True)
+    return obj
 
 
 def xfail(func):
@@ -231,6 +240,23 @@ def suite_properties():
     }
 
 
+def _have_test_kmod() -> bool:
+    prog = PROG
+    if prog is None:
+        return False
+    # While it is possible for the drgntools_test kmod to be present in a
+    # vmcore, the whole point of the test kmod is to insert custom logic that
+    # changes over time. So by definition, only live kernels should count as
+    # "having the test kmod".
+    if not (prog.flags & ProgramFlags.IS_LIVE):
+        return False
+    try:
+        prog.module(_TEST_KMOD)
+        return True
+    except LookupError:
+        return False
+
+
 class DrgnToolsTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -288,6 +314,7 @@ class DrgnToolsTestCase(unittest.TestCase):
         live_only_mark = self._has_marker(_LIVE_ONLY_ATTR)
         vmcore_pats = self._collect_marker_values(_VMCORE_ATTR)
         vmcore_skip_pats = self._collect_marker_values(_SKIP_VMCORE_ATTR)
+        have_kmod_mark = self._has_marker(_HAVE_KMOD_ATTR)
         kver_minimum = (0,)
 
         for value in self._collect_marker_values(_KVER_MIN_ATTR):
@@ -319,3 +346,6 @@ class DrgnToolsTestCase(unittest.TestCase):
                     )
         elif skip_live_mark:
             self.skipTest("test marked to skip on live kernels")
+
+        if have_kmod_mark and not _have_test_kmod():
+            self.skipTest(f"{_TEST_KMOD} kernel module is not loaded")
