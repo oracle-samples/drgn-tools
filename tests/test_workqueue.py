@@ -2,6 +2,7 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import drgn
 from drgn.helpers.linux.cpumask import for_each_online_cpu
+from drgn.helpers.linux.kthread import kthread_data
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.percpu import per_cpu_ptr
 from drgn.helpers.linux.pid import for_each_task
@@ -42,15 +43,32 @@ class TestWorkqueue(DrgnToolsTestCase):
         assert cpu0_highprio_pool in all_pools
 
     def test_for_each_worker(self):
+        # for_each_worker() by design does not return rescue workers, which are
+        # included when you scan the task list. So, filter them out here.
         kworker_tasks = [
             task.value_()
             for task in for_each_task(self.prog)
-            if task.comm.string_().decode().startswith("kworker")
+            if (
+                task.flags & wq._PF_WQ_WORKER
+                and not drgn.cast(
+                    "struct worker *", kthread_data(task)
+                ).rescue_wq
+            )
         ]
+        # Since commit 4cb1ef64609f9 ("workqueue: Implement BH workqueues to
+        # eventually replace tasklets") in 6.9, some workers are BH (bottom
+        # half). There's no task associated with these (obviously) so we just
+        # need to skip them.
         kworker_obtained = [
-            worker.task.value_() for worker in wq.for_each_worker(self.prog)
+            worker.task.value_()
+            for worker in wq.for_each_worker(self.prog)
+            if worker.task
         ]
-        assert kworker_tasks.sort() == kworker_obtained.sort()
+
+        # The result is that this test only verifies that for_each_worker
+        # returns the same non-BH, non-rescuer kthreads we would find by
+        # scanning the task list.
+        self.assertEqual(sorted(kworker_tasks), sorted(kworker_obtained))
 
     def test_for_each_pool_worker(self):
         test_pool = per_cpu(self.prog["cpu_worker_pools"], 0)[0].address_
@@ -65,7 +83,7 @@ class TestWorkqueue(DrgnToolsTestCase):
                 per_cpu(self.prog["cpu_worker_pools"], 0)[0].address_of_()
             )
         ]
-        assert kworkers.sort() == pool_kworkers.sort()
+        self.assertEqual(sorted(kworkers), sorted(pool_kworkers))
 
     def test_for_each_cpu_worker_pool(self):
         cpu0_worker_pools = [
@@ -76,17 +94,28 @@ class TestWorkqueue(DrgnToolsTestCase):
             worker_pool.value_()
             for worker_pool in wq.for_each_cpu_worker_pool(self.prog, 0)
         ]
-        assert worker_pools == cpu0_worker_pools
+        self.assertEqual(worker_pools, cpu0_worker_pools)
 
     def test_for_each_pwq(self):
         workq = self.prog["system_wq"]
         pwqs = [pwq.value_() for pwq in wq.for_each_pwq(workq)]
-        cpu_pwqs_attr = "cpu_pwqs" if hasattr(workq, "cpu_pwqs") else "cpu_pwq"
-        cpu_pwqs_list = [
-            per_cpu_ptr(getattr(workq, cpu_pwqs_attr), cpu).value_()
-            for cpu in for_each_online_cpu(self.prog)
-        ]
-        assert pwqs.sort() == cpu_pwqs_list.sort()
+        if hasattr(workq, "cpu_pwq"):
+            # Commit ee1ceef727544 ("workqueue: Rename wq->cpu_pwqs to
+            # wq->cpu_pwq") in v6.6 did the rename, and commit 687a9aa56f811
+            # ("workqueue: Make per-cpu pool_workqueues allocated and released
+            # like unbound ones") changed the semantic to be a double pointer.
+            # These were in the same series, so we'll treat the rename as
+            # evidence that the change should be used.
+            cpu_pwqs_list = [
+                per_cpu_ptr(workq.cpu_pwq, cpu)[0].value_()
+                for cpu in for_each_online_cpu(self.prog)
+            ]
+        else:
+            cpu_pwqs_list = [
+                per_cpu_ptr(workq.cpu_pwqs, cpu).value_()
+                for cpu in for_each_online_cpu(self.prog)
+            ]
+        self.assertEqual(sorted(pwqs), sorted(cpu_pwqs_list))
 
     @skip_live
     def test_for_each_pending_work_on_cpu(self):
