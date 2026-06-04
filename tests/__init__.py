@@ -6,6 +6,7 @@ import unittest
 from fnmatch import fnmatch
 from functools import wraps
 from pathlib import Path
+from typing import cast
 from typing import List
 from typing import Optional
 from typing import Tuple
@@ -238,13 +239,15 @@ class DrgnToolsTestCase(unittest.TestCase):
 
     @property
     def prog(self) -> drgn.Program:
-        assert PROG is not None
-        return PROG
+        prog = PROG
+        self.assertIsNotNone(prog)
+        return cast(drgn.Program, prog)
 
     @property
     def kver(self) -> KernelVersion:
-        assert KVER is not None
-        return KVER
+        kver = KVER
+        self.assertIsNotNone(kver)
+        return cast(KernelVersion, kver)
 
     @property
     def prog_type(self) -> str:
@@ -277,7 +280,9 @@ class DrgnToolsTestCase(unittest.TestCase):
         return bool(getattr(method, attr, False))
 
     def _apply_environment_skips(self):
-        assert KVER is not None
+        kver = KVER
+        self.assertIsNotNone(kver)
+        kver = cast(KernelVersion, kver)
 
         skip_live_mark = self._has_marker(_SKIP_LIVE_ATTR)
         live_only_mark = self._has_marker(_LIVE_ONLY_ATTR)
@@ -294,7 +299,7 @@ class DrgnToolsTestCase(unittest.TestCase):
                 "Can't mark a test both: vmcore() and skip_vmcore()"
             )
 
-        if KVER.version_tuple < kver_minimum:
+        if kver.version_tuple < kver_minimum:
             self.skipTest(
                 f"Skipped test (requires minimum kernel version: {kver_minimum})"
             )

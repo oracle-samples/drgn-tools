@@ -26,11 +26,11 @@ class TestMm(DrgnToolsTestCase):
                         mem_kb = int(line.split()[1])
                         break
                 else:
-                    assert False, "No memory size found"
+                    self.fail("No memory size found")
             mem_bytes = mem_kb * 1024
             mem_pages = mem_bytes / getpagesize()
 
-            assert mem_pages == reported_pages
+            self.assertEqual(mem_pages, reported_pages)
         else:
             # We cannot directly confirm the memory value.
             # We've already verified that we can lookup the
@@ -38,33 +38,41 @@ class TestMm(DrgnToolsTestCase):
             # tests" to verify it's not completely wonky.
 
             # At least 512 MiB of memory:
-            assert reported_pages > (512 * 1024 * 1024) / getpagesize()
+            self.assertGreater(
+                reported_pages, (512 * 1024 * 1024) / getpagesize()
+            )
             # Less than 4 TiB of memory:
-            assert (
-                reported_pages
-                < (4 * 1024 * 1024 * 1024 * 1024) / getpagesize()
+            self.assertLess(
+                reported_pages,
+                (4 * 1024 * 1024 * 1024 * 1024) / getpagesize(),
             )
 
     def test_AddrKind_categorize_text(self):
         # A pretty standard, common function.
         dput = self.prog.symbol("dput").address
-        assert mm.AddrKind.categorize(self.prog, dput) == mm.AddrKind.TEXT
+        self.assertEqual(
+            mm.AddrKind.categorize(self.prog, dput), mm.AddrKind.TEXT
+        )
 
         # An init function.
         start_kernel = self.prog.symbol("start_kernel").address
-        assert (
-            mm.AddrKind.categorize(self.prog, start_kernel)
-            == mm.AddrKind.INITTEXT
+        self.assertEqual(
+            mm.AddrKind.categorize(self.prog, start_kernel),
+            mm.AddrKind.INITTEXT,
         )
 
     def test_AddrKind_categorize_data(self):
         # kernel/panic.c: initialized to -1 (invalid cpu)
         data = self.prog.symbol("panic_cpu").address
-        assert mm.AddrKind.categorize(self.prog, data) == mm.AddrKind.DATA
+        self.assertEqual(
+            mm.AddrKind.categorize(self.prog, data), mm.AddrKind.DATA
+        )
 
         # init/main.c: strings in argv_init are declared const
         rodata = self.prog["envp_init"][0].value_()
-        assert mm.AddrKind.categorize(self.prog, rodata) == mm.AddrKind.RODATA
+        self.assertEqual(
+            mm.AddrKind.categorize(self.prog, rodata), mm.AddrKind.RODATA
+        )
 
         # kernel/panic.c: uninitialized
         try:
@@ -77,27 +85,31 @@ class TestMm(DrgnToolsTestCase):
             # Don't fail the tests just because this variable is not found.
             pass
         else:
-            assert mm.AddrKind.categorize(self.prog, bss) == mm.AddrKind.BSS
+            self.assertEqual(
+                mm.AddrKind.categorize(self.prog, bss), mm.AddrKind.BSS
+            )
 
         # percpu
         pcpu = self.prog.symbol("runqueues").address
-        assert mm.AddrKind.categorize(self.prog, pcpu) == mm.AddrKind.PERCPU
+        self.assertEqual(
+            mm.AddrKind.categorize(self.prog, pcpu), mm.AddrKind.PERCPU
+        )
 
     def test_AddrKind_categorize_mapped(self):
         # Pretty much any allocated kernel object is a DIRECT_MAP because it came
         # from a slab allocator. And of course, slab allocators are themselves
         # allocated via slab (except the first one) so here's a somewhat meta test:
         dm = self.prog["mm_cachep"]  # mm_struct cache
-        assert (
-            mm.AddrKind.categorize(self.prog, dm.value_())
-            == mm.AddrKind.DIRECT_MAP
+        self.assertEqual(
+            mm.AddrKind.categorize(self.prog, dm.value_()),
+            mm.AddrKind.DIRECT_MAP,
         )
 
         # Get the struct page for it, which should be vmemmap
         page = virt_to_page(dm)
-        assert (
-            mm.AddrKind.categorize(self.prog, page.value_())
-            == mm.AddrKind.VMEMMAP
+        self.assertEqual(
+            mm.AddrKind.categorize(self.prog, page.value_()),
+            mm.AddrKind.VMEMMAP,
         )
 
         # Find a module and get a pointer into its data
@@ -114,15 +126,15 @@ class TestMm(DrgnToolsTestCase):
                 continue  # try the next module
 
             # Test we can categorize modules
-            assert (
-                mm.AddrKind.categorize(self.prog, module_base)
-                == mm.AddrKind.MODULE
+            self.assertEqual(
+                mm.AddrKind.categorize(self.prog, module_base),
+                mm.AddrKind.MODULE,
             )
             break
         else:
-            assert (
-                False
-            ), "Cannot AddrKind.categorize() (no kmod or missing addr)!"
+            self.fail(
+                "Cannot AddrKind.categorize() (no kmod or missing addr)!"
+            )
 
     # TODO: get a better accounting of the exact percpu offset start and end,
     # and make this work!
@@ -139,10 +151,10 @@ class TestMm(DrgnToolsTestCase):
                 pcpu_ptr = mod.percpu.value_()
                 break
         else:
-            assert False, "No modules with percpu loaded, cannot test."
+            self.fail("No modules with percpu loaded, cannot test.")
         print(hex(pcpu_ptr))
-        assert (
-            mm.AddrKind.categorize(self.prog, pcpu_ptr) == mm.AddrKind.PERCPU
+        self.assertEqual(
+            mm.AddrKind.categorize(self.prog, pcpu_ptr), mm.AddrKind.PERCPU
         )
 
     @skip_live

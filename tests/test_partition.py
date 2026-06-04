@@ -47,4 +47,4 @@ class TestPartition(DrgnToolsTestCase):
                 )
             )
 
-        assert partitions_sysfs == partitions_drgn
+        self.assertEqual(partitions_sysfs, partitions_drgn)

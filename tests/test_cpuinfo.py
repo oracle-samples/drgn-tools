@@ -34,59 +34,61 @@ class TestCpuinfo(DrgnToolsTestCase):
         if self.prog.platform.arch == Architecture.X86_64:
             cpu_data_from_corelens = cpuinfo.x86_get_cpu_info(self.prog)
 
-            assert (
-                cpu_data_from_corelens["CPU VENDOR"]
-                == cpu_data_from_proc["vendor_id"]
+            self.assertEqual(
+                cpu_data_from_corelens["CPU VENDOR"],
+                cpu_data_from_proc["vendor_id"],
             )
-            assert (
-                cpu_data_from_corelens["MODEL NAME"]
-                == cpu_data_from_proc["model name"]
+            self.assertEqual(
+                cpu_data_from_corelens["MODEL NAME"],
+                cpu_data_from_proc["model name"],
             )
-            assert (
-                str(cpu_data_from_corelens["CPU FAMILY"])
-                == cpu_data_from_proc["cpu family"]
+            self.assertEqual(
+                str(cpu_data_from_corelens["CPU FAMILY"]),
+                cpu_data_from_proc["cpu family"],
             )
             if "microcode" in cpu_data_from_proc:
-                assert (
-                    str(cpu_data_from_corelens["MICROCODE"])
-                    == cpu_data_from_proc["microcode"]
+                self.assertEqual(
+                    str(cpu_data_from_corelens["MICROCODE"]),
+                    cpu_data_from_proc["microcode"],
                 )
-            assert cpu_data_from_corelens["CSTATES"] == self.prog["max_cstate"]
-            assert (
-                cpu_data_from_corelens["CPU FLAGS"]
-                == cpu_data_from_proc["flags"]
+            self.assertEqual(
+                cpu_data_from_corelens["CSTATES"], self.prog["max_cstate"]
             )
-            assert (
-                cpu_data_from_corelens["BUG FLAGS"]
-                == cpu_data_from_proc["bugs"]
+            self.assertEqual(
+                cpu_data_from_corelens["CPU FLAGS"],
+                cpu_data_from_proc["flags"],
+            )
+            self.assertEqual(
+                cpu_data_from_corelens["BUG FLAGS"],
+                cpu_data_from_proc["bugs"],
             )
 
         elif self.prog.platform.arch == Architecture.AARCH64:
             cpu_data_from_corelens = cpuinfo.aarch64_get_cpu_info(self.prog)
-            assert (
-                cpu_data_from_corelens["Features"]
-                == cpu_data_from_proc["Features"]
+            self.assertEqual(
+                cpu_data_from_corelens["Features"],
+                cpu_data_from_proc["Features"],
             )
-            assert (
-                cpu_data_from_corelens["CPU Implementer"]
-                == cpu_data_from_proc["CPU implementer"]
+            self.assertEqual(
+                cpu_data_from_corelens["CPU Implementer"],
+                cpu_data_from_proc["CPU implementer"],
             )
-            assert (
-                str(cpu_data_from_corelens["CPU Architecture"])
-                == cpu_data_from_proc["CPU architecture"]
+            self.assertEqual(
+                str(cpu_data_from_corelens["CPU Architecture"]),
+                cpu_data_from_proc["CPU architecture"],
             )
-            assert (
-                cpu_data_from_corelens["CPU Variant"]
-                == cpu_data_from_proc["CPU variant"]
+            self.assertEqual(
+                cpu_data_from_corelens["CPU Variant"],
+                cpu_data_from_proc["CPU variant"],
             )
-            assert (
-                cpu_data_from_corelens["CPU Part"]
-                == cpu_data_from_proc["CPU part"]
+            self.assertEqual(
+                cpu_data_from_corelens["CPU Part"],
+                cpu_data_from_proc["CPU part"],
             )
-            assert (
-                str(cpu_data_from_corelens["CPU Revision"])
-                == cpu_data_from_proc["CPU revision"]
+            self.assertEqual(
+                str(cpu_data_from_corelens["CPU Revision"]),
+                cpu_data_from_proc["CPU revision"],
             )
 
         else:
-            assert False
+            self.fail("Architecture not supported")

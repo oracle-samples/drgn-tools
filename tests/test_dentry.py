@@ -11,7 +11,7 @@ class TestDentry(DrgnToolsTestCase):
     def test_for_each_dentry_in_hashtable(self):
         it = dentry.for_each_dentry_in_hashtable(self.prog)
         for d in take(LIMIT, it):
-            assert d.type_.type_name() == "struct dentry *"
+            self.assertEqual(d.type_.type_name(), "struct dentry *")
 
     def test_list_dentries_in_hashtable(self):
         dentry.list_dentries_in_hashtable(self.prog, LIMIT)

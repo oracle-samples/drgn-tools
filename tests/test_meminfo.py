@@ -55,12 +55,12 @@ class TestMeminfo(DrgnToolsTestCase):
 
         for item in test_exact_match_mm_stats:
             if item not in proc_mm_stats:
-                assert item not in corelens_mm_stats
+                self.assertNotIn(item, corelens_mm_stats)
             else:
-                assert item in corelens_mm_stats
+                self.assertIn(item, corelens_mm_stats)
 
                 if item in mm_stats_in_kb:
                     val_kb = corelens_mm_stats[item]
                 else:
                     val_kb = corelens_mm_stats[item] << (page_shift - 10)
-                assert val_kb == proc_mm_stats[item]
+                self.assertEqual(val_kb, proc_mm_stats[item])

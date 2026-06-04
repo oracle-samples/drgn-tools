@@ -23,4 +23,4 @@ class TestModule(DrgnToolsTestCase):
 
     def test_module_exports(self):
         # smoke test
-        assert module_exports(self.common_mod())
+        self.assertTrue(module_exports(self.common_mod()))

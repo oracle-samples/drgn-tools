@@ -6,7 +6,7 @@ from drgn_tools.debuginfo import KernelVersion
 from tests import DrgnToolsTestCase
 
 
-def parse_check_fields(name: str, **kwargs: Any):
+def parse_check_fields(test_case, name: str, **kwargs: Any):
     ver = KernelVersion.parse(name)
     defaults = {
         "ol_update": None,
@@ -17,7 +17,7 @@ def parse_check_fields(name: str, **kwargs: Any):
     }
     defaults.update(kwargs)
     for field_name, value in defaults.items():
-        assert getattr(ver, field_name) == value
+        test_case.assertEqual(getattr(ver, field_name), value)
 
     # no rhck for aarch64
 
@@ -26,6 +26,7 @@ class TestDebuginfo(DrgnToolsTestCase):
     def test_luci_versions(self):
         # A standard UEK-next version string
         parse_check_fields(
+            self,
             "6.11.0-0.el9ueknext.x86_64",
             version="6.11.0",
             release="0",
@@ -34,6 +35,7 @@ class TestDebuginfo(DrgnToolsTestCase):
         )
         # The 6.8-era version without the "ueknext" in the extra.
         parse_check_fields(
+            self,
             "6.8.0-2.el9uek.x86_64",
             version="6.8.0",
             release="2",
@@ -43,6 +45,7 @@ class TestDebuginfo(DrgnToolsTestCase):
         # Here's a fun one without a release string, but with an extraversion thrown
         # in.
         parse_check_fields(
+            self,
             "6.11.0-testingspecial.el9uek.rc1.x86_64",
             version="6.11.0",
             release="",
@@ -54,6 +57,7 @@ class TestDebuginfo(DrgnToolsTestCase):
     def test_uek_versions(self):
         # A made-up UEK8 OL10 version to make sure we are ready:
         parse_check_fields(
+            self,
             "6.12.0-2.132.1.el10uek.x86_64",
             version="6.12.0",
             release="2.132.1",
@@ -62,6 +66,7 @@ class TestDebuginfo(DrgnToolsTestCase):
         )
         # UEK7, OL9
         parse_check_fields(
+            self,
             "5.15.0-101.103.2.1.el9uek.x86_64",
             release="101.103.2.1",
             ol_version=9,
@@ -70,6 +75,7 @@ class TestDebuginfo(DrgnToolsTestCase):
 
         # UEK7, OL8
         parse_check_fields(
+            self,
             "5.15.0-101.103.2.1.el8uek.x86_64",
             version="5.15.0",
             release="101.103.2.1",
@@ -79,6 +85,7 @@ class TestDebuginfo(DrgnToolsTestCase):
 
         # UEK6, OL8
         parse_check_fields(
+            self,
             "5.4.17-2136.323.7.el8uek.x86_64",
             version="5.4.17",
             release="2136.323.7",
@@ -88,6 +95,7 @@ class TestDebuginfo(DrgnToolsTestCase):
 
         # UEK6, OL7
         parse_check_fields(
+            self,
             "5.4.17-2136.323.7.el7uek.x86_64",
             version="5.4.17",
             release="2136.323.7",
@@ -97,6 +105,7 @@ class TestDebuginfo(DrgnToolsTestCase):
 
         # An older UEK6
         parse_check_fields(
+            self,
             "5.4.17-2006.5.el8uek.x86_64",
             version="5.4.17",
             release="2006.5",
@@ -106,6 +115,7 @@ class TestDebuginfo(DrgnToolsTestCase):
 
         # UEK5, OL7
         parse_check_fields(
+            self,
             "4.14.35-2047.528.2.1.el7uek.x86_64",
             version="4.14.35",
             release="2047.528.2.1",
@@ -115,6 +125,7 @@ class TestDebuginfo(DrgnToolsTestCase):
 
         # UEK4, OL7
         parse_check_fields(
+            self,
             "4.1.12-124.48.6.el7uek.x86_64",
             version="4.1.12",
             release="124.48.6",
@@ -125,6 +136,7 @@ class TestDebuginfo(DrgnToolsTestCase):
     def test_rhck(self):
         # OL9
         parse_check_fields(
+            self,
             "5.14.0-284.25.1.0.1.el9_2.x86_64",
             version="5.14.0",
             release="284.25.1.0.1",
@@ -135,6 +147,7 @@ class TestDebuginfo(DrgnToolsTestCase):
 
         # OL8 without update?
         parse_check_fields(
+            self,
             "4.18.0-193.el8.x86_64",
             version="4.18.0",
             release="193",
@@ -144,6 +157,7 @@ class TestDebuginfo(DrgnToolsTestCase):
 
         # OL8 with update
         parse_check_fields(
+            self,
             "4.18.0-193.1.2.el8_2.x86_64",
             version="4.18.0",
             release="193.1.2",
@@ -154,6 +168,7 @@ class TestDebuginfo(DrgnToolsTestCase):
 
         # OL7 (never has update)
         parse_check_fields(
+            self,
             "3.10.0-1160.99.1.0.1.el7.x86_64",
             version="3.10.0",
             release="1160.99.1.0.1",
@@ -164,6 +179,7 @@ class TestDebuginfo(DrgnToolsTestCase):
     def test_uek_aarch64(self):
         # A made-up UEK8 OL10 version to make sure we are ready:
         parse_check_fields(
+            self,
             "6.12.0-2.132.1.el10uek.aarch64",
             version="6.12.0",
             release="2.132.1",
@@ -173,6 +189,7 @@ class TestDebuginfo(DrgnToolsTestCase):
         )
         # OL8/9 + UEK7 is the main target
         parse_check_fields(
+            self,
             "5.15.0-104.119.4.2.el9uek.aarch64",
             version="5.15.0",
             release="104.119.4.2",
@@ -181,6 +198,7 @@ class TestDebuginfo(DrgnToolsTestCase):
             arch="aarch64",
         )
         parse_check_fields(
+            self,
             "5.15.0-106.125.1.el8uek.aarch64",
             version="5.15.0",
             release="106.125.1",
