@@ -37,7 +37,6 @@ from drgn import Program
 from drgn import StackFrame
 from drgn.helpers.common import identify_address
 from drgn.helpers.linux.cpumask import for_each_present_cpu
-from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import find_task
 
@@ -414,7 +413,7 @@ def show_completion(
         index = 0
         addr_info = _addr_info(prog, completion_addr)
         print(f"Completion: 0x{completion_addr:x}{addr_info}")
-        if list_empty(completion.wait.task_list.address_of_()):
+        if not any(True for _ in completion_for_each_task(completion)):
             completions_done = completions_done + 1
             continue
 
@@ -503,6 +502,7 @@ def scan_completion(
 
     functions = [
         "__wait_for_common",
+        "wait_for_completion",
     ]
     frame_list = bt_has_any(prog, functions, wtask, one_per_task=True)
     if frame_list:
@@ -524,6 +524,9 @@ def scan_lock(
 
     print("Scanning RWSemaphores...\n")
     scan_rwsem_lock(prog, stack, time, pid)
+
+    print("Scanning Completions...\n")
+    scan_completion(prog, stack, time, pid)
 
 
 def get_deadlock_info(

@@ -40,9 +40,11 @@ class TestLock(DrgnToolsTestCase):
         self.assertIn("Mutex:", output)
         self.assertIn("Semaphore:", output)
         self.assertIn("Rwsem:", output)
+        self.assertIn("Completion:", output)
         self.assertIn("lockmod-mutex", output)
         self.assertIn("lockmod-sem", output)
         self.assertIn("lockmod-rwsem", output)
+        self.assertIn("lockmod-complet", output)
 
     # the rwsem code does not support UEK4, no reason to add support
     @skip_live
@@ -52,9 +54,9 @@ class TestLock(DrgnToolsTestCase):
 
     @skip_unless_have_kmod
     def test_locking_live_with_kmod(self):
-        self._check_locking_with_lockmod()
+        self._check_locking_with_lockmod(have_completions=True)
 
-    def _check_locking_with_lockmod(self):
+    def _check_locking_with_lockmod(self, have_completions=False):
         seen_kinds = set()
 
         for task in self._lockmod_threads():
@@ -74,6 +76,10 @@ class TestLock(DrgnToolsTestCase):
                 kind = "rw_semaphore"
                 var = "sem"
                 func_substr = "rwsem"
+            elif comm == b"lockmod-complet":
+                kind = "completion"
+                var = "x"
+                func_substr = "completion"
             else:
                 kind = "semaphore"
                 var = "sem"
@@ -89,7 +95,7 @@ class TestLock(DrgnToolsTestCase):
                 if fn and func_substr in fn:
                     frames.append(frame)
             if not frames:
-                self.fail("could not find relevant stack frame in lockmod")
+                self.fail(f"could not find relevant stack frame for {comm}")
 
             # Test 1: if DWARF debuginfo is present, then this will try to use the
             # variable name to access the lock. Otherwise, for CTF we will fall back
@@ -120,7 +126,7 @@ class TestLock(DrgnToolsTestCase):
             else:
                 self.fail("Could not find lock using fallback method")
 
-        self.assertEqual(
-            {"mutex", "rw_semaphore", "semaphore"},
-            seen_kinds,
-        )
+        expected_seen = {"mutex", "rw_semaphore", "semaphore"}
+        if have_completions:
+            expected_seen.add("completion")
+        self.assertEqual(expected_seen, seen_kinds)
