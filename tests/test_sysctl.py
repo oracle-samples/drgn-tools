@@ -8,4 +8,4 @@ class TestSysctl(DrgnToolsTestCase):
     def test_get_sysctl_table(self):
         # smoke test
         sysctl_table = sysctl.get_sysctl_table(self.prog)
-        assert len(sysctl_table) > 10
+        self.assertGreater(len(sysctl_table), 10)

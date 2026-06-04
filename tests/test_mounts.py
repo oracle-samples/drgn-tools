@@ -27,4 +27,4 @@ class TestMounts(DrgnToolsTestCase):
         proc_table = get_proc_mounts()
 
         for row in proc_table:
-            assert row in prog_table
+            self.assertIn(row, prog_table)

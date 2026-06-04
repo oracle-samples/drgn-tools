@@ -17,8 +17,8 @@ class TestTask(DrgnToolsTestCase):
 
     def test_user_kernel_threads(self):
         init = find_task(self.prog, 1)
-        assert task.is_user(init)
-        assert task.is_group_leader(init)
+        self.assertTrue(task.is_user(init))
+        self.assertTrue(task.is_group_leader(init))
 
         for worker in for_each_worker(self.prog):
             if worker.task:
@@ -27,9 +27,9 @@ class TestTask(DrgnToolsTestCase):
         else:
             self.fail("no kworker available to test kthread helper")
 
-        assert task.is_kthread(kworker)
-        assert not task.is_user(kworker)
-        assert task.is_group_leader(kworker)
+        self.assertTrue(task.is_kthread(kworker))
+        self.assertFalse(task.is_user(kworker))
+        self.assertTrue(task.is_group_leader(kworker))
 
     def test_count_interruptible_tasks(self):
         task.count_tasks_in_state(self.prog, "TASK_INTERRUPTIBLE")

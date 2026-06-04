@@ -49,15 +49,15 @@ class TestNumastat(DrgnToolsTestCase):
             numastat_mm_stats = numastat_per_node_mm_stats[node_id]
 
             for name, value in sys_fs_mm_stats.items():
-                assert name in numastat_mm_stats
+                self.assertIn(name, numastat_mm_stats)
 
                 # The result in sys fs is in kB.
                 if name == "MemTotal":
                     numastat_value_kb = numastat_mm_stats[name] << (
                         page_shift - 10
                     )
-                    assert value == numastat_value_kb
+                    self.assertEqual(value, numastat_value_kb)
 
                 # The result in sys fs is in number of pages.
                 if name == "HugePages_Total":
-                    assert value == numastat_mm_stats[name]
+                    self.assertEqual(value, numastat_mm_stats[name])

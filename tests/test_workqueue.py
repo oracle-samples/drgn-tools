@@ -29,7 +29,7 @@ class TestWorkqueue(DrgnToolsTestCase):
         wq_names = {
             workq.name.string_() for workq in wq.for_each_workqueue(self.prog)
         }
-        assert wq_names >= system_workqueue_names(self.prog)
+        self.assertGreaterEqual(wq_names, system_workqueue_names(self.prog))
 
     def test_for_each_pool(self):
         cpu0_normal_pool = per_cpu(self.prog["cpu_worker_pools"], 0)[
@@ -39,8 +39,8 @@ class TestWorkqueue(DrgnToolsTestCase):
             1
         ].address_of_()
         all_pools = [pool for pool in wq.for_each_pool(self.prog)]
-        assert cpu0_normal_pool in all_pools
-        assert cpu0_highprio_pool in all_pools
+        self.assertIn(cpu0_normal_pool, all_pools)
+        self.assertIn(cpu0_highprio_pool, all_pools)
 
     def test_for_each_worker(self):
         # for_each_worker() by design does not return rescue workers, which are

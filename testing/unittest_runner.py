@@ -237,11 +237,6 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
 
 
 def main(argv: Optional[List[str]] = None) -> None:
-    if not __debug__:
-        raise SystemExit(
-            "error: drgn-tools tests use assert statements; do not run with -O"
-        )
-
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     tests.configure(
         vmcore=args.vmcore,
