@@ -24,6 +24,7 @@ EXPORT_SYMBOL(drgn_tools_test_object_data);
 
 DEFINE_MUTEX(lockmod_mutex);
 DECLARE_RWSEM(lockmod_rwsem);
+DECLARE_COMPLETION(lockmod_completion);
 
 /*
  * 48380368dec14 ("Change DEFINE_SEMAPHORE() to take a number argument")
@@ -101,6 +102,7 @@ static int lockmod_owner(void *unused)
 	up(&lockmod_sem);
 	mutex_unlock(&lockmod_mutex);
 	module_put(THIS_MODULE);
+	complete(&lockmod_completion);
 	return 0;
 }
 
@@ -237,6 +239,27 @@ SEM_CASES
 RWSEM_CASES
 #undef X
 
+#define COMPLETION_CASES                                                       \
+	X(wait, wait_for_completion(&lockmod_completion))                      \
+	X(wait_io, wait_for_completion_io(&lockmod_completion))                \
+	X(wait_killable, wait_for_completion_killable(&lockmod_completion)) \
+	X(wait_interruptible, wait_for_completion_interruptible(&lockmod_completion)) \
+	X(wait_timeout, wait_for_completion_timeout(&lockmod_completion, 86400 * HZ)) \
+	X(wait_io_timeout, wait_for_completion_io_timeout(&lockmod_completion, 86400 * HZ)) \
+	X(wait_killable_timeout, wait_for_completion_killable_timeout(&lockmod_completion, 86400 * HZ)) \
+	X(wait_interruptible_timeout, wait_for_completion_interruptible_timeout(&lockmod_completion, 86400 * HZ))
+
+#define X(kind, lock_code)                                                     \
+	static int do_completion_##kind(void *unused)                          \
+	{                                                                      \
+		__module_get(THIS_MODULE);                                     \
+		lock_code;                                                     \
+		module_put(THIS_MODULE);                                       \
+		return 0;                                                      \
+	}
+COMPLETION_CASES
+#undef X
+
 #define WARN_ON_BAD_KTHREAD(task, name)                                        \
 	do {                                                                   \
 		if (IS_ERR(task))                                               \
@@ -282,6 +305,14 @@ static int __init drgntools_init(void)
 	WARN_ON_BAD_KTHREAD(task, "lockmod-rwsem_" #kind);
 	RWSEM_CASES
 #undef X
+
+#define X(kind, lock_code)                                                      \
+	task = kthread_run(&do_completion_##kind, NULL,                         \
+			   "lockmod-completion_" #kind);                        \
+	WARN_ON_BAD_KTHREAD(task, "lockmod-completion_" #kind);
+	COMPLETION_CASES
+#undef X
+
 
 	pr_info("[init] module initialized\n");
 	return 0;
