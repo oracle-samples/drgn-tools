@@ -203,7 +203,7 @@ def resolve_kernel(
     conn.close()
 
     allow_missing = bool(
-        int(os.environ.get("DRGN_TOOLS_ALLOW_MISSING_LATEST", 0))
+        int(os.environ.get("DRGN_TOOLS_ALLOW_MISSING_LATEST", 1))
     )
     rows.sort(key=_version_sort_key, reverse=True)
     versions_tried = []
