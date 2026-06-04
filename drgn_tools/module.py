@@ -104,7 +104,7 @@ def _decode_param(kp: Object) -> ParamInfo:
         obj = Object(prog, _MOD_PARAM_TYPES[param_type], address=kp.arg)
         param_type = param_type[len(PREFIX) :]
     elif param_type == "param_get_string":
-        obj = cast("char *", kp.arg)
+        obj = cast("char *", kp.str.string)
         param_type = "string"
     elif param_type == "param_array_get":
         # The "kp.arr.num" is a pointer into the module, at an integer variable

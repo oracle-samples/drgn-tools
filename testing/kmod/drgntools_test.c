@@ -7,6 +7,7 @@
 #include <linux/export.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <linux/proc_fs.h>
 #include <linux/rwsem.h>
@@ -21,6 +22,30 @@ struct drgn_tools_test_object {
 
 struct drgn_tools_test_object drgn_tools_test_object_data = { 5, "foobar" };
 EXPORT_SYMBOL(drgn_tools_test_object_data);
+
+static int lsmod_test_int = -42;
+static unsigned int lsmod_test_uint = 4242;
+static long lsmod_test_long = -420000;
+static unsigned long lsmod_test_ulong = 420000;
+static bool lsmod_test_true = true;
+static bool lsmod_test_false;
+static char *lsmod_test_charp = "drgn \"tools\" \\ lsmod";
+static char *lsmod_test_null_charp;
+static char lsmod_test_string[32] = "fixed string";
+static int lsmod_test_array_num = 3;
+static int lsmod_test_array[4] = { 10, 20, -30, 40 };
+
+module_param(lsmod_test_int, int, 0444);
+module_param(lsmod_test_uint, uint, 0444);
+module_param(lsmod_test_long, long, 0444);
+module_param(lsmod_test_ulong, ulong, 0444);
+module_param(lsmod_test_true, bool, 0444);
+module_param(lsmod_test_false, bool, 0444);
+module_param(lsmod_test_charp, charp, 0444);
+module_param(lsmod_test_null_charp, charp, 0444);
+module_param_string(
+	lsmod_test_string, lsmod_test_string, sizeof(lsmod_test_string), 0444);
+module_param_array(lsmod_test_array, int, &lsmod_test_array_num, 0444);
 
 DEFINE_MUTEX(lockmod_mutex);
 DECLARE_RWSEM(lockmod_rwsem);
