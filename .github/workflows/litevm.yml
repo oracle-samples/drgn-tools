@@ -63,6 +63,6 @@ jobs:
           sudo udevadm trigger -w /dev/kvm
       - name: Run tests
         env:
-          DRGN_TOOLS_ALLOW_MISSING_LATEST: ${{ contains(github.event.pull_request.labels.*.name, 'allow-missing-latest') && '1' || '0' }}
+          DRGN_TOOLS_ALLOW_MISSING_LATEST: ${{ contains(github.event.pull_request.labels.*.name, 'no-missing-latest') && '0' || '1' }}
         run: |
           venv/bin/python -m testing.vm.runner --delete-after-test -v -k ol${{ matrix.ol-version }}-*-x86_64
