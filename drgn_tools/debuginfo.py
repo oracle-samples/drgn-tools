@@ -826,6 +826,9 @@ def drgn_prog_set(prog: Program) -> None:
     if not prog.flags & ProgramFlags.IS_LINUX_KERNEL:
         return
 
+    # Register the corelens commands in the drgn linux kernel / crash CLI
+    import drgn_tools.corelens  # noqa
+
     # It seems possible for plugins to be registered multiple times if there's
     # an issue with the importlib metadata due to the installation. Defensively
     # avoid re-running.
