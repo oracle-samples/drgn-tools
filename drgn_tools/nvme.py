@@ -65,10 +65,15 @@ def nvme_ctrl(prog: Program, disk: Object) -> Object:
 
 
 def nvme_disk_driver(prog: Program, disk: Object) -> str:
-    ctrl = nvme_ctrl(prog, disk)
-    if not ctrl:
+    if is_nvme_disk(disk):
+        ctrl = nvme_ctrl(prog, disk)
+        if not ctrl:
+            return "unknown"
+        return ctrl.ops.module.name.string_().decode()
+    elif is_nvme_head(disk):
+        return prog.module(disk.fops).name
+    else:
         return "unknown"
-    return ctrl.ops.module.name.string_().decode()
 
 
 def for_each_nvme_disk(prog: Program) -> Iterable[Object]:

@@ -1,6 +1,7 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2023, 2026 Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 from pathlib import Path
+from unittest import mock
 
 from drgn.helpers.linux import for_each_partition
 
@@ -15,8 +16,8 @@ class TestPartition(DrgnToolsTestCase):
 
     @skip_unless_live
     def test_block_helpers(self):
-        partitions_sysfs = set()
-        partitions_drgn = set()
+        partitions_sysfs = []
+        partitions_drgn = []
 
         def sysfs_int(p: Path, s: str, default: int = 0) -> int:
             n = p / s
@@ -29,14 +30,21 @@ class TestPartition(DrgnToolsTestCase):
             size = sysfs_int(block_dev_dir, "size")
             ro = bool(sysfs_int(block_dev_dir, "ro"))
             start = sysfs_int(block_dev_dir, "start")
-            dev = (block_dev_dir / "dev").open().read().strip()
-            maj, min = map(int, dev.split(":"))
+            dev_path = block_dev_dir / "dev"
+            # Hidden gendisks, such as NVMe multipath component namespaces,
+            # have class directories but do not publish a sysfs dev number.
+            if dev_path.exists():
+                dev = dev_path.open().read().strip()
+                maj, minor = map(int, dev.split(":"))
+            else:
+                maj = mock.ANY
+                minor = mock.ANY
             name = block_dev_dir.name
-            partitions_sysfs.add((name, size, ro, start, maj, min))
+            partitions_sysfs.append((name, size, ro, start, maj, minor))
 
         for part in for_each_partition(self.prog):
             info = partition.get_partition_info(part)
-            partitions_drgn.add(
+            partitions_drgn.append(
                 (
                     info.name,
                     info.nr_sects,
@@ -47,4 +55,4 @@ class TestPartition(DrgnToolsTestCase):
                 )
             )
 
-        self.assertEqual(partitions_sysfs, partitions_drgn)
+        self.assertCountEqual(partitions_sysfs, partitions_drgn)
