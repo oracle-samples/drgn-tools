@@ -23,10 +23,13 @@ class TestCpuinfo(DrgnToolsTestCase):
         lines = file.readlines()
         file.close()
         cpu_data_from_proc = dict()
+        nr_cpus = 0
         for line in lines:
             try:
                 title, value = line.split(":")
                 title, value = title.strip(), value.strip()
+                if title == "processor":
+                    nr_cpus += 1
                 cpu_data_from_proc[title] = value
             except Exception:
                 continue
@@ -61,6 +64,10 @@ class TestCpuinfo(DrgnToolsTestCase):
             self.assertEqual(
                 cpu_data_from_corelens["BUG FLAGS"],
                 cpu_data_from_proc["bugs"],
+            )
+            self.assertEqual(
+                cpu_data_from_corelens["CPUS"],
+                nr_cpus,
             )
 
         elif self.prog.platform.arch == Architecture.AARCH64:
