@@ -40,8 +40,6 @@ def _print_rt_runq(runqueue: Object) -> None:
             "struct sched_rt_entity", que.address_of_(), "run_list"
         ):
             tsk = container_of(t, "struct task_struct", "rt")
-            if tsk == runqueue.curr:
-                continue
             count += 1
             print(
                 " " * 4,
@@ -65,8 +63,6 @@ def _print_cfs_runq(runqueue: Object) -> None:
     for t in list_for_each_entry(
         "struct task_struct", runq.cfs_tasks.address_of_(), "se.group_node"
     ):
-        if t == runqueue.curr:
-            continue
         count += 1
         print(
             " " * 4,
