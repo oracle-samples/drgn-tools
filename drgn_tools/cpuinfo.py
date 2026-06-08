@@ -15,6 +15,7 @@ from drgn import sizeof
 from drgn import TypeKind
 from drgn.helpers.linux.bitops import for_each_set_bit
 from drgn.helpers.linux.bitops import test_bit
+from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.percpu import per_cpu
 
 from drgn_tools.corelens import CorelensModule
@@ -76,7 +77,7 @@ def x86_get_cpu_info(prog: Program) -> Dict[str, Any]:
 
     :returns: a dictionary of the cpuinfo data
     """
-    cpus = int(prog["nr_cpu_ids"])
+    cpus = sum(1 for _ in for_each_online_cpu(prog))
 
     if "cpu_data" in prog:
         cpuinfo_struct = prog["cpu_data"].read_()
