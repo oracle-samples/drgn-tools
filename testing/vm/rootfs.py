@@ -52,6 +52,10 @@ def _build_rootfs(
         "dwarves",
         "hostname",
         "util-linux",  # needed for "setsid" command
+        # Following commands are not strictly necessary, but make it far easier
+        # to install custom packages into the rootfs ad-hoc.
+        "dnf",
+        f"oraclelinux-release-el{ol_ver}",
         # "e2fsprogs", - not required, busybox provides it in initrd
     ]
     if ol_ver == 8:
