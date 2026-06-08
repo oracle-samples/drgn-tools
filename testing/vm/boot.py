@@ -624,7 +624,7 @@ def run_in_vm(
             "-initrd", str(initrd),
             "-append", kernel_cmdline,
 
-            "-smp", "2",
+            "-smp", "2,maxcpus=4",  # testdata for cpuinfo
             *_qemu_memory_args(shared_fs),
 
             *serial_args,

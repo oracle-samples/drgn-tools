@@ -1,7 +1,7 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import drgn
-from drgn.helpers.linux.cpumask import for_each_online_cpu
+from drgn.helpers.linux.cpumask import for_each_possible_cpu
 from drgn.helpers.linux.kthread import kthread_data
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.percpu import per_cpu_ptr
@@ -108,14 +108,14 @@ class TestWorkqueue(DrgnToolsTestCase):
             # evidence that the change should be used.
             cpu_pwqs_list = [
                 per_cpu_ptr(workq.cpu_pwq, cpu)[0].value_()
-                for cpu in for_each_online_cpu(self.prog)
+                for cpu in for_each_possible_cpu(self.prog)
             ]
         else:
             cpu_pwqs_list = [
                 per_cpu_ptr(workq.cpu_pwqs, cpu).value_()
-                for cpu in for_each_online_cpu(self.prog)
+                for cpu in for_each_possible_cpu(self.prog)
             ]
-        self.assertEqual(sorted(pwqs), sorted(cpu_pwqs_list))
+        self.assertCountEqual(pwqs, cpu_pwqs_list)
 
     @skip_live
     def test_for_each_pending_work_on_cpu(self):
