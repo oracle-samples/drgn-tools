@@ -103,6 +103,52 @@ def _has_struct_slab(prog: Program) -> bool:
     return prog.cache["has_struct_slab"]
 
 
+def _has_cpu_sheaves(prog: Program) -> bool:
+    """
+    True on kernels where SLUB stores per-CPU state as
+    ``struct slub_percpu_sheaves`` (kmem_cache::cpu_sheaves) instead of
+    the legacy ``struct kmem_cache_cpu`` (kmem_cache::cpu_slab).
+    """
+    # Linux kernel commit 2d517aa09bbc ("slab: add opt-in caching layer of
+    # percpu sheaves") (in v6.18) removed per-cpu active and partial slabs,
+    # in favour of per-cpu sheaves of object pointers.
+    if "has_cpu_sheaves" not in prog.cache:
+        try:
+            prog.type("struct slub_percpu_sheaves")
+            prog.cache["has_cpu_sheaves"] = True
+        except LookupError:
+            prog.cache["has_cpu_sheaves"] = False
+    return prog.cache["has_cpu_sheaves"]
+
+
+def _kmem_cache_barn_free_objs(cache: Object) -> int:
+    """
+    Sum ``sheaf->size`` across every node's ``barn->sheaves_full`` list.
+    """
+    prog = cache.prog_
+    try:
+        prog.type("struct slab_sheaf")
+    except LookupError:
+        return 0
+
+    total = 0
+    for nodeid in for_each_online_node(prog):
+        node = cache.node[nodeid]
+        try:
+            barn = node.barn
+        except AttributeError:
+            return 0
+        if not barn:
+            continue
+        for sheaf in list_for_each_entry(
+            "struct slab_sheaf",
+            barn.sheaves_full.address_of_(),
+            "barn_list",
+        ):
+            total += int(sheaf.size)
+    return total
+
+
 def kmem_cache_pernode(
     cache: Object, nodeid: int
 ) -> Tuple[int, int, int, int, int]:
@@ -154,11 +200,18 @@ def kmem_cache_percpu(cache: Object) -> int:
     """
     Count the number of cpu_slab pages for all nodes.
 
-    :param: ``struct kmem_cache`` drgn object
+    On pre-sheaves kernels each CPU owns one active slab; this returns
+    the count of CPUs whose ``cpu_slab->slab`` (or ``->page``) is set.
+
+    On sheaves kernels there is no per-CPU active slab because per-CPU state
+    is a fixed-capacity sheaf of object pointers, so this returns 0 for such
+    kernels.
     """
+    prog = cache.prog_
+    if _has_cpu_sheaves(prog):
+        return 0
 
     cpu_per_node = 0
-    prog = cache.prog_
     use_slab = _has_struct_slab(prog)
 
     for cpuid in for_each_present_cpu(prog):
@@ -275,6 +328,34 @@ def kmem_cache_slub_info(
     :returns: total slabs, free objects, corruption instances
     """
     prog = cache.prog_
+    corrupt: List[FreelistError] = []
+
+    if _has_cpu_sheaves(prog):
+        free_objects = 0
+        if int(cache.sheaf_capacity) == 0:
+            return 0, 0, corrupt
+
+        for cpuid in for_each_present_cpu(prog):
+            pcs = per_cpu_ptr(cache.cpu_sheaves, cpuid)
+            main = pcs.main
+            if main:
+                free_objects += int(main.size)
+            spare = pcs.spare
+            if spare:
+                free_objects += int(spare.size)
+            # pcs.rcu_free is intentionally NOT counted: those objects
+            # have been committed to a deferred kfree_rcu() and are no
+            # longer owned by any caller.
+
+        # Include per-node barn full sheaves. Their objects are marked
+        # in-use by the slab but are actually free from the caller's
+        # point of view, so are counted in free_objs.
+        free_objects += _kmem_cache_barn_free_objs(cache)
+
+        # No per-CPU slab, so total_slabs stays 0.
+        return 0, free_objects, corrupt
+
+    # ----- legacy (pre-sheaves) layout ------------------------------
     use_slab = _has_struct_slab(prog)
 
     total_slabs = objects = free_objects = 0
@@ -286,7 +367,6 @@ def kmem_cache_slub_info(
     # helper. This depends on implementation details: we will improve the helper
     # upstream to avoid this for the future.
     slub_helper = _get_slab_cache_helper(_CpuSlubWrapper(cache))
-    corrupt: List[FreelistError] = []
 
     for cpuid in for_each_present_cpu(prog):
         per_cpu_slab = per_cpu_ptr(cache.cpu_slab, cpuid)
