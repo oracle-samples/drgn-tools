@@ -46,6 +46,7 @@ COMMON_INITRD_MODULES = [
     "virtio_pci",
     "virtio_blk",
     "ext4",
+    "nvme",
 ]
 
 VIRTIOFS_INITRD_MODULES = [
@@ -594,6 +595,7 @@ def run_in_vm(
 
     with contextlib.ExitStack() as stack:
         block_img = stack.enter_context(_create_block_image())
+        nvme_img = stack.enter_context(_create_block_image())
         tempdir = stack.enter_context(tempfile.TemporaryDirectory())
         stdin = None
         if log_path is not None:
@@ -632,6 +634,13 @@ def run_in_vm(
             "-device", "vmcoreinfo",
             *_qemu_host_share_args(shared_fs, shared_dir, sock),
             "-drive", f"file={block_img},if=virtio,format=raw",
+
+            # Emulated NVME multipath disk test data
+            "-device", "nvme-subsys,id=subsys0",
+            "-device", "nvme,id=nvme0,serial=foo,subsys=subsys0",
+            "-device", "nvme,id=nvme1,serial=foo,subsys=subsys0",
+            "-drive", f"file={nvme_img},format=raw,if=none,id=nvm-drive",
+            "-device", "nvme-ns,drive=nvm-drive,bus=nvme0,nsid=1,shared=on",
             # fmt: on
         ]
 
