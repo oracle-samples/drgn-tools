@@ -359,7 +359,7 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
         opts.disable_dwarf = True
     elif args.dwarf:
         opts.enable_ctf = False
-    opts.enable_extract = True
+    opts.enable_extract = args.enable_extract
     opts.enable_download = args.enable_download
     opts.dwarf_dir = args.dwarf_dir
     opts.ctf_file = args.ctf_file
@@ -611,6 +611,13 @@ def _do_main() -> None:
         "--enable-download",
         "-g",
         action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--disable-extract",
+        "-E",
+        action="store_false",
+        dest="enable_extract",
         help=argparse.SUPPRESS,
     )
     grp = parser.add_mutually_exclusive_group()
