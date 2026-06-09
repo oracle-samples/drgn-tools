@@ -35,13 +35,18 @@ __all__ = (
 
 
 def module_is_in_tree(module: Module) -> bool:
-    # Note that this will return True for Ksplice "cold patch" modules. We
-    # cannot reliably detect them, but they do not match the shipped debuginfo,
-    # and drgn rightly rejects their debuginfo.
+    # The OOT_MODULE taint may be spoofed by setting the intree modinfo
+    # attribute. It may not even be malicious, just a symptom of a strange build
+    # environment. Built-in kernel modules should not have a proprietary
+    # license, so we can use this as an additional detection flag.
+    likely_oot = (1 << Taint.OOT_MODULE) | (1 << Taint.PROPRIETARY_MODULE)
+    # Note that this will return True for Ksplice "cold patch" modules built
+    # prior to roughly November 2025.
     return (
         module.prog.flags & ProgramFlags.IS_LINUX_KERNEL
         and isinstance(module, RelocatableModule)
-        and not (module.object.taints & (1 << Taint.OOT_MODULE))
+        and not (module.object.taints & likely_oot)
+        and ".note.ksplice" not in module.section_addresses
     )
 
 
@@ -267,6 +272,7 @@ class ModuleLoadSummary(NamedTuple):
 
     total_mods: int
     ksplice_mods: List[RelocatableModule]
+    ksplice_coldpatch: List[RelocatableModule]
     other_oot: List[RelocatableModule]
     loaded_mods: List[RelocatableModule]
     mismatched_mods: List[RelocatableModule]
@@ -277,6 +283,10 @@ class ModuleLoadSummary(NamedTuple):
         details = []
         if self.ksplice_mods:
             details.append(f"{len(self.ksplice_mods)} are ksplices")
+        if self.ksplice_mods:
+            details.append(
+                f"{len(self.ksplice_coldpatch)} are ksplice cold-patched modules"
+            )
         if self.other_oot:
             details.append(
                 f"{len(self.other_oot)} are other out-of-tree modules"
@@ -315,6 +325,7 @@ class ModuleLoadSummary(NamedTuple):
             "in-tree, mismatched debuginfo (ksplice cold-patch?)",
         )
         add(self.ksplice_mods, "ksplice patches")
+        add(self.ksplice_coldpatch, "ksplice cold-patched modules")
         add(self.other_oot, "other out-of-tree modules")
         return "\n".join(lines)
 
@@ -334,6 +345,7 @@ def get_module_load_summary(prog: Program) -> ModuleLoadSummary:
     """
     total_mods = 0
     ksplice_mods = []
+    ksplice_coldpatch = []
     other_oot = []
     loaded_mods = []
     mismatched_mods = []
@@ -358,6 +370,8 @@ def get_module_load_summary(prog: Program) -> ModuleLoadSummary:
                 mismatched_mods.append(mod)
             else:
                 missing_mods.append(mod)
+        elif ".note.ksplice" in mod.section_addresses:
+            ksplice_coldpatch.append(mod)
         elif mod.name.startswith("ksplice"):
             ksplice_mods.append(mod)
         else:
@@ -365,6 +379,7 @@ def get_module_load_summary(prog: Program) -> ModuleLoadSummary:
     return ModuleLoadSummary(
         total_mods,
         ksplice_mods,
+        ksplice_coldpatch,
         other_oot,
         loaded_mods,
         mismatched_mods,

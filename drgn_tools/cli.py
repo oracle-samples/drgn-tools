@@ -79,7 +79,18 @@ def main() -> None:
         " vmlinux and .ko.debug DWARF debuginfo files)",
     )
     parser.add_argument(
-        "--enable-download", "-g", help="enable downloading debuginfo RPMs"
+        "--enable-download",
+        "-g",
+        action="store_true",
+        help="enable downloading debuginfo RPMs",
+    )
+    parser.add_argument(
+        "--disable-extract",
+        "-E",
+        action="store_false",
+        dest="enable_extract",
+        help="disable extracting local RPMs (use to workaround "
+        "re-extraction issues)",
     )
     args = parser.parse_args()
 
@@ -105,7 +116,7 @@ def main() -> None:
         opts.enable_ctf = False
         opts.disable_dwarf = False
     # This tool has always existed to allow automatic extraction
-    opts.enable_extract = True
+    opts.enable_extract = args.enable_extract
     opts.enable_download = args.enable_download
 
     prog = Program()

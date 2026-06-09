@@ -1,4 +1,4 @@
-# Copyright (c) 2023, Oracle and/or its affiliates.
+# Copyright (c) 2023, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 Run analysis helper code and output to stdout or a directory
@@ -20,10 +20,12 @@ import traceback
 from fnmatch import fnmatch
 from logging.handlers import MemoryHandler
 from pathlib import Path
+from typing import Any
 from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Sequence
 from typing import Tuple
 
 import drgn
@@ -31,6 +33,9 @@ from drgn import Program
 from drgn import ProgramFlags
 from drgn.cli import version_header as drgn_version_header
 
+from drgn_tools.command import crash_custom_command
+from drgn_tools.command import linux_kernel_custom_command
+from drgn_tools.command import parse_shell_command
 from drgn_tools.debuginfo import drgn_prog_set as register_debug_info_finders
 from drgn_tools.debuginfo import get_debuginfo_config
 from drgn_tools.logging import FilterMissingDebugSymbolsMessages
@@ -354,7 +359,7 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
         opts.disable_dwarf = True
     elif args.dwarf:
         opts.enable_ctf = False
-    opts.enable_extract = True
+    opts.enable_extract = args.enable_extract
     opts.enable_download = args.enable_download
     opts.dwarf_dir = args.dwarf_dir
     opts.ctf_file = args.ctf_file
@@ -608,6 +613,13 @@ def _do_main() -> None:
         action="store_true",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--disable-extract",
+        "-E",
+        action="store_false",
+        dest="enable_extract",
+        help=argparse.SUPPRESS,
+    )
     grp = parser.add_mutually_exclusive_group()
     grp.add_argument(
         "-a",
@@ -790,6 +802,61 @@ def run(prog: Program, cl_cmd: str, outfile: Optional[str] = None) -> None:
     module = all_corelens_modules()[module_name]
     try:
         ns = module._parse_args(args, exit_on_error=False)
+    except _CorelensArgparseEscapeException:
+        return
+    to_run, errors, warnings = _check_module_debuginfo([(module, ns)], prog)
+    _report_errors(errors, warnings)
+    if to_run:
+        module.run(prog, ns)
+
+
+@linux_kernel_custom_command(
+    name="cl",
+    parse=parse_shell_command,
+    description="run a Corelens command",
+    usage="**cl** -L | MODULE [args...]",
+    long_description="foobar",
+)
+@linux_kernel_custom_command(
+    name="corelens",
+    parse=parse_shell_command,
+    description="run a Corelens command",
+    usage="**corelens** -L | MODULE [args...]",
+    long_description="foobar",
+)
+@crash_custom_command(
+    name="cl",
+    parse=parse_shell_command,
+    description="run a Corelens command",
+    usage="**cl** -L | MODULE [args...]",
+    long_description="foobar",
+)
+@crash_custom_command(
+    name="corelens",
+    parse=parse_shell_command,
+    description="run a Corelens command",
+    usage="**corelens** -L | MODULE [args...]",
+    long_description="foobar",
+)
+def drgncrash_command_corelens(
+    prog: Program, name: str, args: Sequence[str], **kwargs: Any
+) -> None:
+    if len(args) < 1:
+        print("error: a module, or -L, is required")
+        return
+
+    if args == ["-L"]:
+        _print_module_listing()
+        return
+
+    module_name, module_args = args[0], args[1:]
+    try:
+        module = all_corelens_modules()[module_name]
+    except KeyError:
+        print(f"error: no such corelens module: '{module_name}'")
+        return
+    try:
+        ns = module._parse_args(list(module_args), exit_on_error=False)
     except _CorelensArgparseEscapeException:
         return
     to_run, errors, warnings = _check_module_debuginfo([(module, ns)], prog)

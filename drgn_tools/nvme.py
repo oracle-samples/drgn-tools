@@ -4,6 +4,7 @@ import argparse
 from typing import Any
 from typing import Iterable
 from typing import List
+from typing import Optional
 
 from drgn import cast
 from drgn import container_of
@@ -21,6 +22,38 @@ from drgn_tools.table import print_table
 from drgn_tools.util import enum_name_get
 
 
+def _get_nvme_ops(prog: Program) -> Optional[Object]:
+    # First try from cache
+    try:
+        return prog.cache["drgn_tools.nvme_bdev_ops"]
+    except KeyError:
+        pass
+    # Since v5.11 commit ba4fb3205680a ("nvme: rename bdev operations"):
+    try:
+        ops = prog["nvme_bdev_ops"].address_of_()
+    except LookupError:
+        # Prior kernels:
+        try:
+            ops = prog["nvme_fops"].address_of_()
+        except LookupError:
+            return None
+    prog.cache["drgn_tools.nvme_bdev_ops"] = ops
+    return ops
+
+
+def is_nvme_disk(disk: Object) -> bool:
+    ops = _get_nvme_ops(disk.prog_)
+    return ops is not None and disk.fops == ops
+
+
+def is_nvme_head(disk: Object) -> bool:
+    try:
+        ops = disk.prog_["nvme_ns_head_ops"].address_of_()
+    except LookupError:
+        return False
+    return disk.fops == ops
+
+
 def nvme_ctrl(prog: Program, disk: Object) -> Object:
     diskname = disk.disk_name.string_().decode()
     if not diskname.startswith("nvme"):
@@ -32,10 +65,15 @@ def nvme_ctrl(prog: Program, disk: Object) -> Object:
 
 
 def nvme_disk_driver(prog: Program, disk: Object) -> str:
-    ctrl = nvme_ctrl(prog, disk)
-    if not ctrl:
+    if is_nvme_disk(disk):
+        ctrl = nvme_ctrl(prog, disk)
+        if not ctrl:
+            return "unknown"
+        return ctrl.ops.module.name.string_().decode()
+    elif is_nvme_head(disk):
+        return prog.module(disk.fops).name
+    else:
         return "unknown"
-    return ctrl.ops.module.name.string_().decode()
 
 
 def for_each_nvme_disk(prog: Program) -> Iterable[Object]:
@@ -46,7 +84,7 @@ def for_each_nvme_disk(prog: Program) -> Iterable[Object]:
     :returns: iterable of ``struct nvme_ns *`` in the program
     """
     for disk in for_each_disk(prog):
-        if disk.disk_name.string_().startswith(b"nvme"):
+        if is_nvme_disk(disk):
             yield cast("struct nvme_ns *", disk.private_data)
 
 
