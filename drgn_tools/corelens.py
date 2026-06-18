@@ -29,6 +29,8 @@ from typing import Sequence
 from typing import Tuple
 
 import drgn
+from drgn import Architecture
+from drgn import Platform
 from drgn import Program
 from drgn import ProgramFlags
 from drgn.cli import version_header as drgn_version_header
@@ -364,7 +366,39 @@ def _load_prog_and_debuginfo(args: argparse.Namespace) -> Program:
     opts.dwarf_dir = args.dwarf_dir
     opts.ctf_file = args.ctf_file
 
-    prog = Program()
+    # Normally drgn can auto-detect this just fine, but flags can specify it
+    # where necessary.
+    vmcoreinfo = None
+    platform = None
+    if args.vmcoreinfo:
+        # Manually specified vmcoreinfo, in case it's not easily accessible in
+        # the dump metadata.
+        with open(args.vmcoreinfo, "rt") as f:
+            vmcoreinfo = f.read()
+        osrel_match = re.search(r"^OSRELEASE=(.*)$", vmcoreinfo, re.M)
+        if not osrel_match:
+            raise ValueError("Invalid vmcoreinfo: missing OSRELEASE")
+        # Specify the architecture using the OSRELEASE in vmcoreinfo. Usually if
+        # vmcoreinfo is not present in the core dump metadata, neither is
+        # architecture. If we can't automatically detect, don't fail, because
+        # the user can still provide it manually via --architecture if all else
+        # fails.
+        osrel = osrel_match.group(1)
+        if osrel.endswith(".x86_64"):
+            platform = Platform(Architecture.X86_64)
+        elif osrel.endswith(".aarch64"):
+            platform = Platform(Architecture.AARCH64)
+    if args.architecture:
+        if args.architecture == "x86_64":
+            platform = Platform(Architecture.X86_64)
+        elif args.architecture == "aarch64":
+            platform = Platform(Architecture.AARCH64)
+        else:
+            raise ValueError(
+                "Invalid architecture: choices are: x86_64, aarch64"
+            )
+
+    prog = Program(vmcoreinfo=vmcoreinfo, platform=platform)
     prog.cache["drgn_tools.debuginfo.options"] = opts
     prog.cache["drgn_tools.debuginfo.vmcore_path"] = args.vmcore
     try:
@@ -571,6 +605,15 @@ def _do_main() -> None:
         "vmcore",
         help="vmcore to run against (use /proc/kcore for live)",
         nargs="?",
+    )
+    parser.add_argument(
+        "--vmcoreinfo",
+        help="manually specify vmcoreinfo as text file",
+    )
+    parser.add_argument(
+        "--architecture",
+        help="manually specify architecture",
+        choices=("x86_64", "aarch64"),
     )
     parser.add_argument(
         "--list",
