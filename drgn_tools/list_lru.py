@@ -274,7 +274,10 @@ def slab_object_to_memcgidx(obj: Object) -> IntegerLike:
         if not info.slab.obj_exts & flag:
             return -1
         exts = cast("struct slabobj_ext *", info.slab.obj_exts & ~mask)
-        memcg = exts[slab_object_index].objcg.memcg
+        objcg = exts[slab_object_index].objcg
+        if not objcg:
+            return -1
+        memcg = objcg.memcg
     else:
         raise RuntimeError(
             "Cannot find object memcg info for this kernel version"
