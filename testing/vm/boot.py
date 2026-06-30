@@ -45,6 +45,8 @@ COMMON_INITRD_MODULES = [
     "overlay",
     "virtio_pci",
     "virtio_blk",
+    "virtio_scsi",
+    "sd_mod",
     "ext4",
     "nvme",
 ]
@@ -277,7 +279,8 @@ def _create_guest_command(
         'cleanup() { [ "$?" -eq 0 ] && echo "DRGN_VMTEST: PASS" || echo "DRGN_VMTEST: FAIL" ; sleep 0.1; echo b >/proc/sysrq-trigger; }',
         "trap cleanup EXIT",
         "export PATH=/sbin:/usr/sbin:/bin:/usr/bin",
-        "export DRGNTOOLS_BLOCK_TEST_DIR=/mnt",
+        "export DRGNTOOLS_BLOCK_TEST_DIR=/mnt/virt",
+        "export DRGNTOOLS_SCSI_TEST_DIR=/mnt/scsi",
         f"cd {shlex.quote(repo_guest)}",
     ]
     if kmod_path is not None:
@@ -308,9 +311,13 @@ def _create_pre_chroot_setup(
             f"mount --bind {shlex.quote(dbg_src)} "
             f"/tmp/root/usr/lib/debug/lib/modules/{release}"
         ),
-        "mke2fs -F /dev/vda >/dev/null",
-        "mkdir -p /tmp/root/mnt",
-        "mount /dev/vda /tmp/root/mnt",
+        "i=0; while [ ! -b /dev/vda ] && [ $i -lt 50 ]; do i=$((i + 1)); sleep 0.1; done",
+        "mkdir -p /tmp/root/mnt/virt",
+        "mount /dev/vda /tmp/root/mnt/virt",
+        "i=0; while [ ! -b /dev/sda ] && [ $i -lt 50 ]; do i=$((i + 1)); sleep 0.1; done",
+        "test -b /dev/sda",
+        "mkdir -p /tmp/root/mnt/scsi",
+        "mount /dev/sda /tmp/root/mnt/scsi",
     ]
     if kmod_path is not None:
         kmod_guest = _guest_path(kmod_path, shared_dir)
@@ -439,6 +446,19 @@ def _create_block_image(size_mb: int = 400) -> Iterator[Path]:
         img = Path(tempdir) / "disk.img"
         with img.open("wb") as f:
             f.truncate(size_mb * 1024 * 1024)
+        yield img
+
+
+@contextlib.contextmanager
+def _create_ext4_block_image(size_mb: int = 400) -> Iterator[Path]:
+    _require_tool("mke2fs")
+    with _create_block_image(size_mb) as img:
+        subprocess.run(
+            ["mke2fs", "-F", "-t", "ext4", str(img)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         yield img
 
 
@@ -594,7 +614,8 @@ def run_in_vm(
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
     with contextlib.ExitStack() as stack:
-        block_img = stack.enter_context(_create_block_image())
+        block_img = stack.enter_context(_create_ext4_block_image())
+        scsi_img = stack.enter_context(_create_ext4_block_image())
         nvme_img = stack.enter_context(_create_block_image())
         tempdir = stack.enter_context(tempfile.TemporaryDirectory())
         stdin = None
@@ -634,6 +655,18 @@ def run_in_vm(
             "-device", "vmcoreinfo",
             *_qemu_host_share_args(shared_fs, shared_dir, sock),
             "-drive", f"file={block_img},if=virtio,format=raw",
+
+            # Emulated SCSI disk test data. Throttling makes in-flight I/O
+            # observable while the SCSI tests run.
+            "-device", "virtio-scsi-pci,id=scsi0,num_queues=2",
+            "-drive", (
+                f"file={scsi_img},format=raw,if=none,id=scsi-drive,"
+                "throttling.iops-write=10"
+            ),
+            "-device", (
+                "scsi-hd,drive=scsi-drive,bus=scsi0.0,"
+                "serial=drgntools-scsi"
+            ),
 
             # Emulated NVME multipath disk test data
             "-device", "nvme-subsys,id=subsys0",
