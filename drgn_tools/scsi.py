@@ -193,8 +193,25 @@ def for_each_scsi_cmd_sq(prog: Program, dev: Object) -> Iterator[Object]:
     :returns: an iterator of ``struct scsi_cmnd *``
     """
     q = dev.request_queue
+    # Commit e9c787e65c0c3 ("scsi: allocate scsi_cmnd structures as part of
+    # struct request") in v4.12 eliminates the "free_list" field of Scsi_Host,
+    # and it migrates the Scsi_Cmd objects so they are directly after the struct
+    # request. Prior to this commit, they were allocated separately and pointed
+    # to in rq.special. Use the presence of "free_list" to detect the legacy
+    # UEK4 path, which means we need to use rq.special to locate the command.
+    legacy_cmd_allocation = has_member(dev.host, "free_list")
+
     for rq in for_each_sq_pending_request(q):
-        yield rq_to_scmnd(prog, rq)
+        # On UEK5 and later, rq.special is still used to indicate whether the
+        # command is initialized. So unconditionally skip requests when
+        # rq.special is NULL.
+        if not rq.special.value_():
+            continue
+
+        if legacy_cmd_allocation:
+            yield cast("struct scsi_cmnd *", rq.special)
+        else:
+            yield rq_to_scmnd(prog, rq)
 
 
 def for_each_scsi_cmd_mq(prog: Program, dev: Object) -> Iterator[Object]:
