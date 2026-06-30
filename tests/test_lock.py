@@ -12,11 +12,9 @@ from tests import DrgnToolsTestCase
 from tests import skip_live
 from tests import skip_unless_have_kmod
 from tests import skip_unless_vmcore
-from tests import skip_vmcore
 
 
 class TestLock(DrgnToolsTestCase):
-    @skip_vmcore("*uek4*")
     def test_locks(self):
         lock.scan_lock(self.prog, stack=True)
 
