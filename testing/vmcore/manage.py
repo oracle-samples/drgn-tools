@@ -90,6 +90,12 @@ def upload_all(client: ParClient, core: str, verbose: bool = False) -> None:
             client.put_object(key, f)
 
 
+def upload_all_cores(client: ParClient, verbose: bool = False) -> None:
+    for subdir in CORE_DIR.iterdir():
+        if (subdir / "vmcore").is_file():
+            upload_all(client, subdir.name, verbose=verbose)
+
+
 def main():
     global CORE_DIR, CORE_PFX
     parser = argparse.ArgumentParser(
@@ -104,6 +110,11 @@ def main():
         "--upload-core",
         type=str,
         help="choose name of the vmcore to upload",
+    )
+    parser.add_argument(
+        "--upload-all",
+        action="store_true",
+        help="upload all cores in the core dir",
     )
     parser.add_argument(
         "--core-directory",
@@ -145,9 +156,15 @@ def main():
         if args.delete_orphan:
             delete_orphans(client, verbose=args.verbose)
     elif args.action == "upload":
-        if not args.upload_core:
-            sys.exit("error: --upload-core is required for upload operation")
-        upload_all(client, args.upload_core, verbose=args.verbose)
+        if args.upload_all:
+            upload_all_cores(client, verbose=args.verbose)
+        elif args.upload_core:
+            upload_all(client, args.upload_core, verbose=args.verbose)
+        else:
+            sys.exit(
+                "error: one of --upload-core or --upload-all is required "
+                "for upload operation"
+            )
 
 
 if __name__ == "__main__":
