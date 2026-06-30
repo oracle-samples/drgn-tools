@@ -2,14 +2,9 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import argparse
 import gzip
-import sys
-import time
-from contextlib import contextmanager
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
-from subprocess import PIPE
-from subprocess import Popen
 from tempfile import TemporaryDirectory
 
 from drgn import Architecture
@@ -22,27 +17,7 @@ from tests import DrgnToolsTestCase
 from tests import skip_kernel_versions_below
 from tests import skip_live
 from tests import skip_unless_live
-
-
-@contextmanager
-def sleeping_proc():
-    proc = Popen(
-        [sys.executable, "-c", "input('ready')"],
-        stdout=PIPE,
-        stdin=PIPE,
-    )
-    # Wait until it has printed the prompt, indicating it's likely sleeping
-    # waiting for input, and so the stack should be stable.
-    data = bytearray()
-    while b"ready" not in data:
-        data.extend(proc.stdout.read(1))
-    try:
-        # Give it some time to settle.
-        time.sleep(0.1)
-        yield proc
-    finally:
-        proc.terminate()
-        proc.wait()
+from tests import sleeping_proc
 
 
 def do_test_task_running_pt_regs(test_case, prog, task):

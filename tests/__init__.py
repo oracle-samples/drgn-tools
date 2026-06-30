@@ -2,10 +2,14 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import os
 import sys
+import time
 import unittest
+from contextlib import contextmanager
 from fnmatch import fnmatch
 from functools import wraps
 from pathlib import Path
+from subprocess import PIPE
+from subprocess import Popen
 from typing import cast
 from typing import List
 from typing import Optional
@@ -349,3 +353,24 @@ class DrgnToolsTestCase(unittest.TestCase):
 
         if have_kmod_mark and not _have_test_kmod():
             self.skipTest(f"{_TEST_KMOD} kernel module is not loaded")
+
+
+@contextmanager
+def sleeping_proc():
+    proc = Popen(
+        [sys.executable, "-c", "input('ready')"],
+        stdout=PIPE,
+        stdin=PIPE,
+    )
+    # Wait until it has printed the prompt, indicating it's likely sleeping
+    # waiting for input, and so the stack should be stable.
+    data = bytearray()
+    while b"ready" not in data:
+        data.extend(proc.stdout.read(1))
+    try:
+        # Give it some time to settle.
+        time.sleep(0.1)
+        yield proc
+    finally:
+        proc.terminate()
+        proc.wait()

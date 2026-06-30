@@ -5,12 +5,19 @@ from drgn.helpers.linux import cpu_curr
 
 from drgn_tools import bt
 from tests import DrgnToolsTestCase
+from tests import sleeping_proc
 
 
 class TestBt(DrgnToolsTestCase):
     def test_bt_smoke(self):
         if self.prog.flags & drgn.ProgramFlags.IS_LIVE:
-            thread = self.prog.thread(1)
+            with sleeping_proc() as proc:
+                thread = self.prog.thread(proc.pid)
+                print("===== STACK TRACE [show_vars=False] =====")
+                bt.bt(thread, show_vars=False)
+                print("===== STACK TRACE [show_vars=True] =====")
+                bt.bt(thread, show_vars=True)
+            return
         else:
             try:
                 thread = self.prog.crashed_thread()
