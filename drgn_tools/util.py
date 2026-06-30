@@ -22,6 +22,7 @@ from drgn import PlatformFlags
 from drgn import Program
 from drgn import sizeof
 from drgn import Type
+from drgn import TypeKind
 from drgn.helpers.common.format import decode_enum_type_flags
 from drgn.helpers.common.memory import identify_address
 from drgn.helpers.linux.cpumask import for_each_cpu
@@ -761,3 +762,11 @@ def hexdump_mem(
         endian=endian,
         cache=cache,
     )
+
+
+def is_pointer(obj: Object) -> bool:
+    """Return true if the object's underlying type is a pointer"""
+    tp = obj.type_
+    while tp.kind == TypeKind.TYPEDEF:
+        tp = tp.type
+    return tp.kind == TypeKind.POINTER
