@@ -16,6 +16,7 @@ from testing.vm.logging import VmLogger
 def _validate_rootfs(path: Path) -> None:
     expected = [
         "bin/bash",
+        "usr/bin/fio",
         "usr/bin/python3",
         "usr/bin/make",
         "usr/bin/gcc",
@@ -46,6 +47,7 @@ def _build_rootfs(
         "bash",
         "coreutils",
         "findutils",
+        "fio",
         "gcc",
         "make",
         "binutils-devel",
@@ -56,7 +58,6 @@ def _build_rootfs(
         # to install custom packages into the rootfs ad-hoc.
         "dnf",
         f"oraclelinux-release-el{ol_ver}",
-        # "e2fsprogs", - not required, busybox provides it in initrd
     ]
     if ol_ver == 8:
         rpm_list.extend(
@@ -76,6 +77,8 @@ def _build_rootfs(
                 "gcc-toolset-14-binutils-devel",
             ]
         )
+    if ol_ver >= 9:
+        rpm_list.append("fio-engine-libaio")
     rpms = " ".join(rpm_list)
     install_cmd = inspect.cleandoc(
         f"""
