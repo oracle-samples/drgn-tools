@@ -286,7 +286,8 @@ def task_dsos(mm: Object) -> List[Tuple[str, int, int, int]]:
         if not vma.vm_file:
             continue
         path = os.fsdecode(d_path(vma.vm_file.f_path))
-        if vma.vm_pgoff == 0:
+        # We choose the *first* mapping with pgoff == 0.
+        if vma.vm_pgoff == 0 and path not in file_range:
             file_range[path] = (
                 vma.vm_start.value_(),
                 (vma.vm_start + vma.vm_file.f_inode.i_size).value_(),
