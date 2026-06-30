@@ -14,6 +14,7 @@ from drgn import FaultError
 from drgn import Object
 from drgn import Program
 from drgn import sizeof
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.block import for_each_disk
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
@@ -30,6 +31,7 @@ from drgn_tools.table import print_dictionary
 from drgn_tools.table import print_table
 from drgn_tools.table import Table
 from drgn_tools.util import has_member
+from drgn_tools.util import is_pointer
 from drgn_tools.util import timestamp_str
 
 
@@ -40,6 +42,22 @@ class Opcode(enum.Enum):
     INQUIRY = 0x12
     READ_10 = 0x28
     WRITE_10 = 0x2A
+
+
+def sdev_vendor(sdev: Object) -> str:
+    """
+    Return the vendor information of a ``struct scsi_device *``
+    This is always 8-bytes and is not necessarily NUL terminated, so using
+    .string_() will produce incorrect results.
+    """
+    prog = sdev.prog_
+    if is_pointer(sdev.vendor):
+        return escape_ascii_string(prog.read(sdev.vendor, 8))
+    else:
+        # In commit 20fd1648f3539 ("scsi: core: Convert INQUIRY information")
+        # slated for v7.2, the vendor becomes an NUL-terminated array embedded
+        # within the struct. For this, it is safe to use ".string_()".
+        return escape_ascii_string(sdev.vendor.string_())
 
 
 def for_each_scsi_host(prog: Program) -> Iterator[Object]:
@@ -558,7 +576,6 @@ def print_shost_devs(prog: Program) -> None:
         ]
 
         for scsi_dev in for_each_scsi_host_device(shost):
-            vendor = scsi_dev.vendor.string_().decode()
             devstate = str(scsi_dev.sdev_state.format_(type_name=False))
 
             output.append(
@@ -566,7 +583,7 @@ def print_shost_devs(prog: Program) -> None:
                     scsi_device_name(scsi_dev),
                     scsi_id(scsi_dev),
                     hex(scsi_dev),
-                    str(vendor),
+                    sdev_vendor(scsi_dev),
                     devstate,
                     f"{scsi_dev.iorequest_cnt.counter.value_():>7}",
                     f"{scsi_dev.iodone_cnt.counter.value_():>7}",
@@ -601,7 +618,7 @@ def print_inflight_scsi_cmnds(prog: Program) -> None:
 
             for scsi_cmnd in for_each_scsi_cmnd(prog, scsi_dev):
                 if counter == 0:
-                    vendor = scsi_dev.vendor.string_().decode()
+                    vendor = sdev_vendor(scsi_dev)
                     devstate = str(
                         scsi_dev.sdev_state.format_(type_name=False)
                     )
