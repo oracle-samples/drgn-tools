@@ -734,11 +734,20 @@ def completion_for_each_task_careful(completion: Object) -> Iterable[Object]:
             seen.add(addr)
             yield entry.task
     else:
-        for entry in validate_list_for_each_entry(
-            prog.type("struct wait_queue_entry"),
-            wait.head.address_of_(),
-            "entry",
-        ):
+        try:
+            entry_t = prog.type("wait_queue_entry_t")
+            field = "entry"
+            list = wait.head.address_of_()
+        except LookupError:
+            # Commit ac6424b981bce ("sched/wait: Rename wait_queue_t =>
+            # wait_queue_entry_t") in v4.13.
+            entry_t = prog.type("wait_queue_t")
+            # Commit 2055da97389a6 ("sched/wait: Disambiguate
+            # wq_entry->task_list and wq_head->task_list naming"), also in
+            # v4.13, probably from the same series so let's handle it together.
+            field = "task_list"
+            list = wait.task_list.address_of_()
+        for entry in validate_list_for_each_entry(entry_t, list, field):
             addr = entry.value_()
             if addr in seen:
                 raise ValidationError("circular list")
