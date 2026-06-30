@@ -14,6 +14,7 @@ from drgn import FaultError
 from drgn import Object
 from drgn import Program
 from drgn import sizeof
+from drgn.helpers.linux.block import for_each_disk
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 
@@ -191,7 +192,14 @@ def for_each_scsi_cmd_mq(prog: Program, dev: Object) -> Iterator[Object]:
         BLK_MQ_F_TAG_SHARED = prog.constant("BLK_MQ_F_TAG_QUEUE_SHARED")
 
     q = dev.request_queue
-    disk = dev.request_queue.disk
+    if has_member(q, "disk"):
+        disk = q.disk
+    else:
+        disk = next(
+            disk
+            for disk in for_each_disk(prog)
+            if disk.queue.value_() == q.value_()
+        )
     for hwq, rq in for_each_mq_pending_request(q):
         if (hwq.flags & BLK_MQ_F_TAG_SHARED) != 0 and request_target(
             rq
