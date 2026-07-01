@@ -40,9 +40,8 @@ def _test_job(
     return (core_name, res.returncode == 0, run_data)
 
 
-def _skip_ctf(ctf: bool, uname: str) -> bool:
+def _skip_ctf(ctf: bool, uname: str, host_ol: int) -> bool:
     if ctf:
-        host_ol = 9  # OL8 or 9 work here, tests aren't supported for OL7
         kver = KernelVersion.parse(uname)
         compat = CtfCompatibility.get(kver, host_ol)
         # Skip test when CTF is fully unsupported, or when it would require a
@@ -52,6 +51,24 @@ def _skip_ctf(ctf: bool, uname: str) -> bool:
             CtfCompatibility.LIMITED_PROC,
         )
     return False  # don't skip when non-CTF
+
+
+def host_ol_ver() -> int:
+    rel = {}
+    with open("/etc/os-release") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                key, qval = line.split("=", 1)
+                # Remove double quotes. Doesn't handle escape sequences, oh well.
+                rel[key] = qval[1:-1]
+    if "VERSION" in rel and "Oracle" in rel.get("NAME", ""):
+        ol_ver = int(rel["VERSION"].split(".", 1)[0])
+        print(f"Detected host OL version: {ol_ver}")
+    else:
+        ol_ver = 9
+        print("Assuming OL 9")
+    return ol_ver
 
 
 def test(
@@ -71,6 +88,7 @@ def test(
     passed = []
     skipped = []
     xml = None
+    ol_ver = host_ol_ver()
 
     with ExitStack() as es:
         pool = es.enter_context(ThreadPoolExecutor(max_workers=parallel))
@@ -80,7 +98,7 @@ def test(
             if not should_run_vmcore(core_name):
                 continue
             uname = (path / "UTS_RELEASE").read_text().strip()
-            if _skip_ctf(ctf, uname):
+            if _skip_ctf(ctf, uname, ol_ver):
                 skipped.append(core_name)
                 continue
             xml_run = es.enter_context(
