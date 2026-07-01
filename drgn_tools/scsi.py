@@ -14,13 +14,13 @@ from drgn import FaultError
 from drgn import Object
 from drgn import Program
 from drgn import sizeof
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.block import for_each_mq_pending_request
 from drgn_tools.block import for_each_sq_pending_request
 from drgn_tools.block import is_mq
-from drgn_tools.block import request_target
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.device import class_to_subsys
 from drgn_tools.module import ensure_debuginfo
@@ -29,6 +29,7 @@ from drgn_tools.table import print_dictionary
 from drgn_tools.table import print_table
 from drgn_tools.table import Table
 from drgn_tools.util import has_member
+from drgn_tools.util import is_pointer
 from drgn_tools.util import timestamp_str
 
 
@@ -39,6 +40,22 @@ class Opcode(enum.Enum):
     INQUIRY = 0x12
     READ_10 = 0x28
     WRITE_10 = 0x2A
+
+
+def sdev_vendor(sdev: Object) -> str:
+    """
+    Return the vendor information of a ``struct scsi_device *``
+    This is always 8-bytes and is not necessarily NUL terminated, so using
+    .string_() will produce incorrect results.
+    """
+    prog = sdev.prog_
+    if is_pointer(sdev.vendor):
+        return escape_ascii_string(prog.read(sdev.vendor, 8))
+    else:
+        # In commit 20fd1648f3539 ("scsi: core: Convert INQUIRY information")
+        # slated for v7.2, the vendor becomes an NUL-terminated array embedded
+        # within the struct. For this, it is safe to use ".string_()".
+        return escape_ascii_string(sdev.vendor.string_())
 
 
 def for_each_scsi_host(prog: Program) -> Iterator[Object]:
@@ -174,28 +191,42 @@ def for_each_scsi_cmd_sq(prog: Program, dev: Object) -> Iterator[Object]:
     :returns: an iterator of ``struct scsi_cmnd *``
     """
     q = dev.request_queue
+    # Commit e9c787e65c0c3 ("scsi: allocate scsi_cmnd structures as part of
+    # struct request") in v4.12 eliminates the "free_list" field of Scsi_Host,
+    # and it migrates the Scsi_Cmd objects so they are directly after the struct
+    # request. Prior to this commit, they were allocated separately and pointed
+    # to in rq.special. Use the presence of "free_list" to detect the legacy
+    # UEK4 path, which means we need to use rq.special to locate the command.
+    legacy_cmd_allocation = has_member(dev.host, "free_list")
+
     for rq in for_each_sq_pending_request(q):
-        yield rq_to_scmnd(prog, rq)
+        # On UEK5 and later, rq.special is still used to indicate whether the
+        # command is initialized. So unconditionally skip requests when
+        # rq.special is NULL.
+        if not rq.special.value_():
+            continue
+
+        if legacy_cmd_allocation:
+            yield cast("struct scsi_cmnd *", rq.special)
+        else:
+            yield rq_to_scmnd(prog, rq)
 
 
 def for_each_scsi_cmd_mq(prog: Program, dev: Object) -> Iterator[Object]:
     """
     Iterates thru all SCSI commands in all multi hardware queue.
 
-    :param dev: ``strcut scsi_device *``
+    :param dev: ``struct scsi_device *``
     :returns: an iterator of ``struct scsi_cmnd *``
     """
     try:
-        BLK_MQ_F_TAG_SHARED = prog.constant("BLK_MQ_F_TAG_SHARED")
+        shared_flag = prog.constant("BLK_MQ_F_TAG_QUEUE_SHARED")
     except LookupError:
-        BLK_MQ_F_TAG_SHARED = prog.constant("BLK_MQ_F_TAG_QUEUE_SHARED")
+        shared_flag = prog.constant("BLK_MQ_F_TAG_SHARED")
 
     q = dev.request_queue
-    disk = dev.request_queue.disk
     for hwq, rq in for_each_mq_pending_request(q):
-        if (hwq.flags & BLK_MQ_F_TAG_SHARED) != 0 and request_target(
-            rq
-        ).value_() != disk.value_():
+        if (hwq.flags & shared_flag) != 0 and rq.q.value_() != q.value_():
             continue
         yield rq_to_scmnd(prog, rq)
 
@@ -550,7 +581,6 @@ def print_shost_devs(prog: Program) -> None:
         ]
 
         for scsi_dev in for_each_scsi_host_device(shost):
-            vendor = scsi_dev.vendor.string_().decode()
             devstate = str(scsi_dev.sdev_state.format_(type_name=False))
 
             output.append(
@@ -558,7 +588,7 @@ def print_shost_devs(prog: Program) -> None:
                     scsi_device_name(scsi_dev),
                     scsi_id(scsi_dev),
                     hex(scsi_dev),
-                    str(vendor),
+                    sdev_vendor(scsi_dev),
                     devstate,
                     f"{scsi_dev.iorequest_cnt.counter.value_():>7}",
                     f"{scsi_dev.iodone_cnt.counter.value_():>7}",
@@ -593,7 +623,7 @@ def print_inflight_scsi_cmnds(prog: Program) -> None:
 
             for scsi_cmnd in for_each_scsi_cmnd(prog, scsi_dev):
                 if counter == 0:
-                    vendor = scsi_dev.vendor.string_().decode()
+                    vendor = sdev_vendor(scsi_dev)
                     devstate = str(
                         scsi_dev.sdev_state.format_(type_name=False)
                     )

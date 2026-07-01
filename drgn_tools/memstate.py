@@ -13,6 +13,7 @@ from typing import List
 from typing import Tuple
 
 from drgn import Program
+from drgn import Type
 from drgn.helpers.linux.cpumask import for_each_present_cpu
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import for_each_task
@@ -566,6 +567,46 @@ def check_fragmentation_status(prog: Program):
             )
 
 
+def vm_event_start(enum: Type) -> int:
+    """
+    Return the index into "vmstat_text" where items from ``enum vm_event_item``
+    begin.
+    """
+    prog = enum.prog
+    KEY = "drgn_tools.memstate.vm_event_start"
+    if KEY not in prog.cache:
+        # Since UEK4 (well, even UEK2) we know PGPGIN is the first element of this
+        # enum. But iterating the elements is cheap, and we might as well do
+        # this correctly. Should the enum change, we can substitute a new known
+        # value here.
+        KNOWN = "PGPGIN"
+        LABEL = b"pgpgin"
+        for elem in enum.enumerators:
+            if elem.name == KNOWN:
+                known = elem.value
+                break
+        else:
+            raise ValueError(f"Could not find {KNOWN} in enum vm_event_item")
+
+        # vmstat_text is a nice big array of labels whose indices change
+        # depending on kernel version and configuration. The vm_event_item
+        # indices have labels in here, buried at some offset. We can directly
+        # compute the offset, but we could just observe it for the cost of
+        # iterating this list exactly once. We're doing that here for
+        vmstat_text = prog["vmstat_text"]
+        for i in range(256):
+            if vmstat_text[i].string_() == LABEL:
+                start = i
+                break
+        else:
+            raise ValueError(f"Could not find {KNOWN} in vmstat_text")
+
+        # Record the offset which must be added to members of enum vm_stat_item
+        # in order to obtain their index in vmstat_text.
+        prog.cache[KEY] = start - known
+    return prog.cache[KEY]
+
+
 def get_vm_event_total(prog: Program) -> Dict:
     """
     Return the total value of interesting vm_event_item counters by summing all per-CPU values.
@@ -583,25 +624,7 @@ def get_vm_event_total(prog: Program) -> Dict:
     )
     vm_event_enum = prog.type("enum vm_event_item")
     vm_event_map = {n: v for n, v in vm_event_enum.enumerators}
-    vm_event_start_index = (
-        prog.constant("NR_VM_ZONE_STAT_ITEMS").value_()
-        + prog.constant("NR_VM_NODE_STAT_ITEMS").value_()
-    )
-    try:
-        # v5.14: f19298b9516c1 ("mm/vmstat: convert NUMA statistics to basic
-        # NUMA counters")
-        vm_event_start_index += prog.constant(
-            "NR_VM_NUMA_EVENT_ITEMS"
-        ).value_()
-    except LookupError:
-        vm_event_start_index += prog.constant("NR_VM_NUMA_STAT_ITEMS").value_()
-    try:
-        # v6.11: f4cb78af91e3b ("mm: add system wide stats items category")
-        vm_event_start_index += prog.constant("NR_VM_STAT_ITEMS").value_()
-    except LookupError:
-        vm_event_start_index += prog.constant(
-            "NR_VM_WRITEBACK_STAT_ITEMS"
-        ).value_()
+    vm_event_start_index = vm_event_start(vm_event_enum)
     vmstat_text = prog["vmstat_text"]
     for event_name, event_index in vm_event_map.items():
         if event_name.startswith("NR_"):
