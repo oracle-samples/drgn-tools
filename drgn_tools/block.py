@@ -494,6 +494,30 @@ def for_each_sq_pending_request(q: Object) -> Iterable[Object]:
         yield rq
 
 
+def queue_to_disk(q: Object) -> Object:
+    """
+    Get the disk associated with a queue.
+
+    :param q: ``struct request_queue *``
+    :returns: ``struct gendisk *``
+    """
+    prog = q.prog_
+    if has_member(q, "disk") and q.disk.value_():
+        return q.disk
+    cache = prog.cache.setdefault("drgn_tools.block.queue_to_disk", {})
+    qaddr = q.value_()
+    if qaddr not in cache:
+        for disk in for_each_disk(prog):
+            if disk.queue.value_() == qaddr:
+                cache[qaddr] = disk
+                break
+        else:
+            raise ValueError(
+                f"cannot find disk for (struct request_queue *){qaddr:x}"
+            )
+    return cache[qaddr]
+
+
 def request_target(rq: Object) -> Object:
     """
     Get the target disk of io request
@@ -501,17 +525,12 @@ def request_target(rq: Object) -> Object:
     :param rq: ``struct request *``
     :returns: ``struct gendisk *``
     """
-    if has_member(rq, "rq_disk"):
+    if has_member(rq, "rq_disk") and rq.rq_disk.value_():
         return rq.rq_disk
-    else:
-        # rq.part not null only when doing IO statistics.
-        if rq.part.value_():
-            return rq.part.bd_disk
-        else:
-            for _ in for_each_disk(rq.prog_):
-                if _.queue.value_() == rq.q.value_():
-                    return _.queue
-            return None
+    if rq.part.value_():
+        # rq.part is non-null only when doing IO statistics.
+        return rq.part.bd_disk
+    return queue_to_disk(rq.q)
 
 
 def show_rq_issued_cpu(rq: Object) -> str:
