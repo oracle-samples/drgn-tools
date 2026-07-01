@@ -15,14 +15,12 @@ from drgn import Object
 from drgn import Program
 from drgn import sizeof
 from drgn.helpers.common.format import escape_ascii_string
-from drgn.helpers.linux.block import for_each_disk
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 
 from drgn_tools.block import for_each_mq_pending_request
 from drgn_tools.block import for_each_sq_pending_request
 from drgn_tools.block import is_mq
-from drgn_tools.block import request_target
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.device import class_to_subsys
 from drgn_tools.module import ensure_debuginfo
@@ -218,27 +216,17 @@ def for_each_scsi_cmd_mq(prog: Program, dev: Object) -> Iterator[Object]:
     """
     Iterates thru all SCSI commands in all multi hardware queue.
 
-    :param dev: ``strcut scsi_device *``
+    :param dev: ``struct scsi_device *``
     :returns: an iterator of ``struct scsi_cmnd *``
     """
     try:
-        BLK_MQ_F_TAG_SHARED = prog.constant("BLK_MQ_F_TAG_SHARED")
+        shared_flag = prog.constant("BLK_MQ_F_TAG_QUEUE_SHARED")
     except LookupError:
-        BLK_MQ_F_TAG_SHARED = prog.constant("BLK_MQ_F_TAG_QUEUE_SHARED")
+        shared_flag = prog.constant("BLK_MQ_F_TAG_SHARED")
 
     q = dev.request_queue
-    if has_member(q, "disk"):
-        disk = q.disk
-    else:
-        disk = next(
-            disk
-            for disk in for_each_disk(prog)
-            if disk.queue.value_() == q.value_()
-        )
     for hwq, rq in for_each_mq_pending_request(q):
-        if (hwq.flags & BLK_MQ_F_TAG_SHARED) != 0 and request_target(
-            rq
-        ).value_() != disk.value_():
+        if (hwq.flags & shared_flag) != 0 and rq.q.value_() != q.value_():
             continue
         yield rq_to_scmnd(prog, rq)
 
