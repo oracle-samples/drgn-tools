@@ -201,6 +201,14 @@ drgn\_tools.module module
    :undoc-members:
    :show-inheritance:
 
+drgn\_tools.mlx5 module
+-----------------------
+
+.. automodule:: drgn_tools.mlx5
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 drgn\_tools.mounts module
 -------------------------
 

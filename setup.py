@@ -10,7 +10,7 @@ from setuptools import setup
 long_description = "drgn helper script repository"
 
 RELEASE_VERSION = "2.3.0"
-PACKAGES = ["drgn_tools"]
+PACKAGES = ["drgn_tools", "drgn_tools.mlx5_support"]
 
 
 def get_version():
