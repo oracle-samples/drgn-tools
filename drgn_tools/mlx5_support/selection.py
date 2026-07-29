@@ -21,22 +21,12 @@ from .format import _short_struct
 DEFAULT_REPORT_MODE = "full"
 
 _EQ_AUTO_DUMP_ROLE_RANK = {"completion": 0, "async": 1, "cmd": 2, "pages": 3}
-_EXPLICIT_SECTION_FLAGS = (
-    "queues",
-    "summary",
-    "full",
-    "cqs",
-    "ib_cqs",
-    "eth_cqs",
-    "eqs",
-    "qps",
-    "dump_cqe",
-    "dump_eqe",
-    "dump_wqe",
-)
+_EXPLICIT_SECTION_FLAGS = """
+queues summary full cqs ib_cqs eth_cqs eqs qps dump_cqe dump_eqe dump_wqe
+""".split()
 # SQN and RQN select queues only with --dump-wqe, so they do not select a
 # report section by themselves.
-_EXPLICIT_SELECTORS = ("cqn", "eqn", "qpn")
+_EXPLICIT_SELECTORS = "cqn eqn qpn".split()
 
 
 def _resolve_report_sections(args: argparse.Namespace) -> None:
@@ -66,15 +56,7 @@ def _resolve_report_sections(args: argparse.Namespace) -> None:
         # Full reports leave table counts uncapped unless --max* is set.
         # Descriptor entries remain limited by --maxcqe, --maxeqe, and
         # --maxwqe.
-        for name in (
-            "queues",
-            "cqs",
-            "eqs",
-            "qps",
-            "dump_cqe",
-            "dump_eqe",
-            "dump_wqe",
-        ):
+        for name in "queues cqs eqs qps dump_cqe dump_eqe dump_wqe".split():
             setattr(args, name, True)
         args._auto_select_cqs = not explicit_dump_cqe
         return

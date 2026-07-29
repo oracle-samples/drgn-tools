@@ -13,15 +13,12 @@ from typing import Tuple
 from drgn import container_of
 from drgn import FaultError
 from drgn import Object
+from drgn import ObjectAbsentError
+from drgn import OutOfBoundsError
 from drgn import Program
 from drgn import sizeof
 from drgn import TypeKind
-
-try:
-    from drgn import ObjectAbsentError, OutOfBoundsError
-except ImportError:  # pragma: no cover - older drgn compatibility
-    ObjectAbsentError = FaultError  # type: ignore
-    OutOfBoundsError = FaultError  # type: ignore
+from drgn.helpers.linux.list import list_for_each_entry
 
 
 def _optional_helper(module: str, name: str) -> Any:
@@ -33,21 +30,8 @@ def _optional_helper(module: str, name: str) -> Any:
 
 for_each_netdev = _optional_helper("drgn.helpers.linux.net", "for_each_netdev")
 netdev_name = _optional_helper("drgn.helpers.linux.net", "netdev_name")
-netdev_priv = _optional_helper("drgn.helpers.linux.net", "netdev_priv")
-list_for_each_entry = _optional_helper(
-    "drgn.helpers.linux.list", "list_for_each_entry"
-)
-idr_for_each = _optional_helper("drgn.helpers.linux.idr", "idr_for_each")
 irq_to_desc = _optional_helper("drgn.helpers.linux.irq", "irq_to_desc")
-cpumask_to_cpulist = _optional_helper(
-    "drgn.helpers.linux.cpumask", "cpumask_to_cpulist"
-)
-radix_tree_for_each = _optional_helper(
-    "drgn.helpers.linux.radixtree", "radix_tree_for_each"
-)
-xa_for_each = _optional_helper("drgn.helpers.linux.xarray", "xa_for_each")
 
-_HELPER_DEFAULT = object()
 _MEMBER_ERRORS = (
     LookupError,
     FaultError,
@@ -72,24 +56,14 @@ def _safe_iter(
         warn("failed while {}: {}".format(what, err))
 
 
-def _for_each_netdev_compat(
-    prog: Program,
-    for_each_netdev_helper: Any = _HELPER_DEFAULT,
-    list_for_each_entry_helper: Any = _HELPER_DEFAULT,
-) -> Iterable[Object]:
-    if for_each_netdev_helper is _HELPER_DEFAULT:
-        for_each_netdev_helper = for_each_netdev
-    if list_for_each_entry_helper is _HELPER_DEFAULT:
-        list_for_each_entry_helper = list_for_each_entry
-    if for_each_netdev_helper is not None:
-        return for_each_netdev_helper(prog)
-    if list_for_each_entry_helper is None:
-        raise RuntimeError("list_for_each_entry is unavailable")
+def _for_each_netdev_compat(prog: Program) -> Iterable[Object]:
+    if for_each_netdev is not None:
+        return for_each_netdev(prog)
     net = prog["init_net"]
     head = _safe_member(net, "dev_base_head")
     if head is None:
         raise RuntimeError("init_net.dev_base_head is unavailable")
-    return list_for_each_entry_helper(
+    return list_for_each_entry(
         "struct net_device", head.address_of_(), "dev_list"
     )
 
@@ -174,15 +148,6 @@ def _safe_index(obj: Optional[Object], index: int) -> Optional[Object]:
             except Exception:
                 return value
         return value
-    except Exception:
-        return None
-
-
-def _safe_array_int(obj: Optional[Object], index: int) -> Optional[int]:
-    if obj is None:
-        return None
-    try:
-        return _safe_int(obj[index])
     except Exception:
         return None
 
