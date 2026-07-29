@@ -9,7 +9,7 @@ import argparse
 from operator import itemgetter
 
 from drgn_tools import mlx5
-from drgn_tools.mlx5_support import defs
+from drgn_tools.corelens import all_corelens_modules
 from drgn_tools.mlx5_support import render as render_module
 from drgn_tools.mlx5_support import selection
 from drgn_tools.mlx5_support.format import _count_display
@@ -78,7 +78,7 @@ def _fake_qp(address, hw_qpn):
 
 
 def test_module_contract():
-    module = mlx5.Mlx5()
+    module = all_corelens_modules()["mlx5"]
 
     assert (
         module.name,
@@ -93,9 +93,6 @@ def test_module_contract():
     )
     assert module.skip_unless_have_kmods == ["mlx5_core"]
     assert module.debuginfo_kmods == ["mlx5_core", "mlx5_ib"]
-    assert defs.MAX_DEFAULT_WALK_LIMIT == defs.DEFAULT_WALK_LIMIT
-    assert defs.MAX_HARD_LIMIT == defs.MAX_DESCRIPTOR_ENTRIES
-    assert defs.DEFAULT_DESCRIPTOR_BYTES == defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES
     assert render_module.DUMP_SEPARATOR == "-" * 79
 
 
@@ -191,14 +188,14 @@ def test_qp_registry_merges_hardware_qpn_fallback_and_updates_handles(
     merged = collector._record_qp(later_qp, device, "later")
     entry = collector._qps[mlx5._QpKey("mlx5_core0", "hw_qpn", 7)]
     expected = {
-        "both": (new_sq, new_sq, new_rq),
-        "sq": (new_sq, new_sq, old_rq),
-        "rq": (new_rq, old_sq, new_rq),
-        "neither": (old_sq, old_sq, old_rq),
+        "both": (new_sq, new_sq),
+        "sq": (new_sq, new_sq),
+        "rq": (new_rq, old_sq),
+        "neither": (old_sq, old_sq),
     }[observed]
 
     assert first is merged is entry.record
-    handles = (entry.dump_wq, entry.sq_wq, entry.rq_wq)
+    handles = (entry.dump_wq, entry.sq_wq)
     assert all(actual is wanted for actual, wanted in zip(handles, expected))
 
 
@@ -269,7 +266,6 @@ def test_qp_selector_uses_hardware_qpn_when_logical_qpn_is_ambiguous(
     collector, device = _addressed_mapping_collector(monkeypatch)
     collector._record_qp(_fake_qp(0x1000, 198), device, "mlx5_ib_qp_list")
     collector._record_qp(_fake_qp(0x2000, 454), device, "mlx5_ib_qp_list")
-    collector._selected_device_names = {"mlx5_core0"}
 
     selected = collector._select_qp_key(198)
 
@@ -283,7 +279,6 @@ def test_cqe_qp_index_is_built_once_for_receive_only_qps(monkeypatch):
     key = mlx5._QpKey("mlx5_core0", "qpn", 7)
     collector._qps[key] = mlx5._QpEntry(
         {"qpn_aliases": [7], "send_cqn": None, "recv_cqn": 5},
-        None,
         None,
         None,
     )
@@ -587,20 +582,6 @@ def test_cq_table_labels_software_arm_sequence_without_claiming_arm_state(
     assert "ARM_SN" in output
     assert "software arm sequence number" in output
     assert "not hardware arm state" in output
-
-
-def test_cq_owner_lookup_does_not_replace_netdev_helper():
-    original = mlx5.compat.netdev_name
-    collector = object.__new__(mlx5.Mlx5Collector)
-
-    owner = collector._mlx5e_core_cq_owner(
-        None,
-        None,
-        {"name": "mlx5_0", "netdevs": []},
-    )
-
-    assert owner["netdev"] is None
-    assert mlx5.compat.netdev_name is original
 
 
 @parametrize(

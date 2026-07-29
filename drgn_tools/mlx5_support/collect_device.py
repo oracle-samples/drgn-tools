@@ -15,6 +15,9 @@ from typing import Tuple
 from drgn import cast
 from drgn import Object
 from drgn import Program
+from drgn.helpers.linux.list import list_for_each_entry
+from drgn.helpers.linux.net import netdev_priv
+from drgn.helpers.linux.xarray import xa_for_each
 
 from . import defs
 from . import selection
@@ -33,10 +36,7 @@ from .compat import _safe_member_path
 from .compat import _safe_pointer
 from .compat import _sizeof_type
 from .compat import _struct_type_name
-from .compat import list_for_each_entry
 from .compat import netdev_name
-from .compat import netdev_priv
-from .compat import xa_for_each
 from .defs import _MLX5_CMDIF_STATE
 from .defs import _MLX5_COREDEV_TYPE
 from .defs import _MLX5_DEVICE_STATE
@@ -177,11 +177,6 @@ class DeviceCollectorMixin:
                 head = self.prog[symbol]
             except Exception:
                 continue
-            if list_for_each_entry is None:
-                self._warn(
-                    f"{symbol} present but list_for_each_entry helper is unavailable"
-                )
-                continue
             for mdev in self._iter_limited(
                 _safe_iter(
                     lambda h=head: list_for_each_entry(  # type: ignore[misc]
@@ -219,8 +214,6 @@ class DeviceCollectorMixin:
     def _iter_rdmacg_mlx5_devices(
         self, walk_context: str, truncation_scope: str
     ) -> Iterator[Tuple[Object, Optional[str]]]:
-        if list_for_each_entry is None:
-            return
         try:
             rdmacg_head = self.prog["rdmacg_devices"]
         except Exception:
@@ -471,8 +464,6 @@ class DeviceCollectorMixin:
         return ibdev if is_mlx5 else None
 
     def _iter_mlx5_ib_devices_from_ib_core_xarray(self) -> Iterator[Object]:
-        if xa_for_each is None:
-            return
         for devices, source in self._ib_core_devices_xarrays():
             for _index, entry in self._iter_limited(
                 _safe_iter(
@@ -509,26 +500,25 @@ class DeviceCollectorMixin:
         seen: Set[int] = set()
         collected: List[Object] = []
         sources: List[Iterable[Object]] = []
-        if list_for_each_entry is not None:
-            try:
-                head = self.prog["mlx5_ib_dev_list"]
-            except Exception:
-                head = None
-            if head is not None:
-                sources.append(
-                    self._iter_limited(
-                        _safe_iter(
-                            lambda h=head: list_for_each_entry(  # type: ignore[misc]
-                                "struct mlx5_ib_dev",
-                                h.address_of_(),
-                                "ib_dev_list",
-                            ),
-                            self._warn,
-                            "walking mlx5_ib_dev_list",
+        try:
+            head = self.prog["mlx5_ib_dev_list"]
+        except Exception:
+            head = None
+        if head is not None:
+            sources.append(
+                self._iter_limited(
+                    _safe_iter(
+                        lambda h=head: list_for_each_entry(  # type: ignore[misc]
+                            "struct mlx5_ib_dev",
+                            h.address_of_(),
+                            "ib_dev_list",
                         ),
-                        "mlx5_ib_dev_list discovery",
-                    )
+                        self._warn,
+                        "walking mlx5_ib_dev_list",
+                    ),
+                    "mlx5_ib_dev_list discovery",
                 )
+            )
         sources.append(self._iter_mlx5_ib_devices_from_ib_core_xarray())
         if rdmacg_devices is None:
             rdmacg_devices = self._iter_rdmacg_mlx5_devices(
@@ -798,11 +788,10 @@ def _netdev_name(netdev: Object) -> str:
 
 
 def _mlx5e_priv_from_netdev(netdev: Object) -> Optional[Object]:
-    if netdev_priv is not None:
-        try:
-            return netdev_priv(netdev, "struct mlx5e_priv")
-        except Exception:
-            pass
+    try:
+        return netdev_priv(netdev, "struct mlx5e_priv")
+    except Exception:
+        pass
     netdev_addr = _addr(netdev)
     netdev_size = _sizeof_type(netdev.prog_, "struct net_device")
     if netdev_addr is not None and netdev_size is not None:
