@@ -97,6 +97,7 @@ def _build_rootfs(
 
     command = [
         "podman",
+        "--runtime=runc",
         "run",
         "--rm",
         "--mount",
