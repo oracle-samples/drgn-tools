@@ -10,10 +10,7 @@ from typing import Tuple
 def _hex(value: Optional[int]) -> Optional[str]:
     if value is None:
         return None
-    try:
-        return hex(int(value))
-    except Exception:
-        return None
+    return hex(int(value))
 
 
 def _enum_name(mapping: Dict[int, str], value: Optional[int]) -> str:
@@ -28,10 +25,6 @@ def _display(value: Any) -> str:
     if isinstance(value, list):
         return ",".join(_display(v) for v in value)
     return str(value)
-
-
-def _count_display(value: Any) -> Any:
-    return "-" if value is None else value
 
 
 def _short_struct(value: Any) -> str:

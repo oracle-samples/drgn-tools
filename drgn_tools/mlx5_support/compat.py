@@ -1,7 +1,6 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """drgn and kernel-version compatibility helpers for mlx5 reports."""
-from importlib import import_module
 from typing import Any
 from typing import Callable
 from typing import Iterable
@@ -18,54 +17,30 @@ from drgn import OutOfBoundsError
 from drgn import Program
 from drgn import sizeof
 from drgn import TypeKind
-from drgn.helpers.linux.list import list_for_each_entry
 
-
-def _optional_helper(module: str, name: str) -> Any:
-    try:
-        return getattr(import_module(module), name)
-    except (ImportError, AttributeError):
-        return None
-
-
-for_each_netdev = _optional_helper("drgn.helpers.linux.net", "for_each_netdev")
-netdev_name = _optional_helper("drgn.helpers.linux.net", "netdev_name")
-irq_to_desc = _optional_helper("drgn.helpers.linux.irq", "irq_to_desc")
+try:
+    from drgn.helpers.linux.irq import irq_to_desc
+except ImportError:  # drgn 0.0.32 does not provide the IRQ helpers.
+    irq_to_desc = None  # type: ignore
 
 _MEMBER_ERRORS = (
     LookupError,
     FaultError,
     ObjectAbsentError,
-    OutOfBoundsError,
-    AttributeError,
     TypeError,
-    ValueError,
 )
+_VALUE_ERRORS = (FaultError, ObjectAbsentError, TypeError, ValueError)
 
 
 def _safe_iter(
     factory: Callable[[], Iterable[Any]],
     warn: Callable[[str], None],
-    what: str,
+    context: str,
 ) -> Iterator[Any]:
     try:
         yield from factory()
     except (FaultError, ObjectAbsentError, OutOfBoundsError) as err:
-        warn("fault while {}: {}".format(what, err))
-    except Exception as err:  # pylint: disable=broad-except
-        warn("failed while {}: {}".format(what, err))
-
-
-def _for_each_netdev_compat(prog: Program) -> Iterable[Object]:
-    if for_each_netdev is not None:
-        return for_each_netdev(prog)
-    net = prog["init_net"]
-    head = _safe_member(net, "dev_base_head")
-    if head is None:
-        raise RuntimeError("init_net.dev_base_head is unavailable")
-    return list_for_each_entry(
-        "struct net_device", head.address_of_(), "dev_list"
-    )
+        warn("fault while {}: {}".format(context, err))
 
 
 def _safe_member(obj: Optional[Object], name: str) -> Optional[Object]:
@@ -84,16 +59,24 @@ def _safe_pointer(
         return None
     try:
         return Object(prog, type_name, value=address)
-    except Exception:
+    except (LookupError, TypeError, ValueError):
         return None
 
 
 def _safe_container_of(
     obj: Optional[Object], type_name: str, member: str
 ) -> Optional[Object]:
+    if obj is None:
+        return None
     try:
         return container_of(obj, type_name, member)
-    except Exception:
+    except (
+        FaultError,
+        ObjectAbsentError,
+        LookupError,
+        TypeError,
+        ValueError,
+    ):
         return None
 
 
@@ -103,8 +86,6 @@ def _safe_member_path(
     cur = obj
     for member in path:
         cur = _safe_member(cur, member)
-        if cur is None:
-            return None
     return cur
 
 
@@ -140,29 +121,31 @@ def _safe_index(obj: Optional[Object], index: int) -> Optional[Object]:
         return None
     try:
         value = obj[index]
-        if _is_pointer_object(value):
+        if isinstance(value, Object) and value.type_.kind == TypeKind.POINTER:
             if _is_null(value):
                 return None
             try:
                 return value.read_()
-            except Exception:
+            except (FaultError, ObjectAbsentError):
                 return value
         return value
-    except Exception:
+    except (FaultError, ObjectAbsentError, OutOfBoundsError, TypeError):
         return None
 
 
-def _safe_index_or_self(obj: Optional[Object], index: int) -> Optional[Object]:
-    if obj is None:
+def _safe_index_or_single_sq(
+    array_or_sq: Optional[Object], index: int
+) -> Optional[Object]:
+    if array_or_sq is None:
         return None
     # Index 0 may refer to a single struct rather than an array.
     if (
         index == 0
-        and _addr(obj) is not None
-        and _safe_int(_safe_member(obj, "sqn")) is not None
+        and _addr(array_or_sq) is not None
+        and _safe_int(_safe_member(array_or_sq, "sqn")) is not None
     ):
-        return obj
-    return _safe_index(obj, index)
+        return array_or_sq
+    return _safe_index(array_or_sq, index)
 
 
 def _safe_int(obj: Any) -> Optional[int]:
@@ -171,21 +154,12 @@ def _safe_int(obj: Any) -> Optional[int]:
     try:
         if isinstance(obj, int):
             return obj
-        if hasattr(obj, "value_"):
-            return int(obj.value_())
         return int(obj)
-    except (
-        FaultError,
-        ObjectAbsentError,
-        OutOfBoundsError,
-        AttributeError,
-        TypeError,
-        ValueError,
-    ):
+    except _VALUE_ERRORS:
         return None
 
 
-def _bounded(
+def _bounded_count(
     value: int, requested_limit: Optional[int], hard_limit: int
 ) -> int:
     limits = [int(value), int(hard_limit)]
@@ -197,7 +171,7 @@ def _bounded(
 def _sizeof_type(prog: Program, type_name: str) -> Optional[int]:
     try:
         return int(sizeof(prog.type(type_name)))
-    except Exception:
+    except (LookupError, TypeError, ValueError):
         return None
 
 
@@ -219,17 +193,12 @@ def _first_int_path_with_source(
 def _safe_cstr(obj: Any) -> Optional[str]:
     if obj is None:
         return None
+    if isinstance(obj, (bytes, bytearray)):
+        return bytes(obj).split(b"\x00", 1)[0].decode("utf-8", "replace")
     try:
-        if hasattr(obj, "string_"):
-            return obj.string_().decode("utf-8", "replace").rstrip("\x00")
-    except Exception:
-        pass
-    try:
-        if isinstance(obj, (bytes, bytearray)):
-            return bytes(obj).split(b"\x00", 1)[0].decode("utf-8", "replace")
-    except Exception:
-        pass
-    return None
+        return obj.string_().decode("utf-8", "replace").rstrip("\x00")
+    except (FaultError, ObjectAbsentError, TypeError):
+        return None
 
 
 def _addr(obj: Any) -> Optional[int]:
@@ -238,11 +207,7 @@ def _addr(obj: Any) -> Optional[int]:
     value = _safe_int(obj)
     if value is not None:
         return value
-    try:
-        addr = getattr(obj, "address_", None)
-        return _safe_int(addr() if callable(addr) else addr)
-    except Exception:
-        return None
+    return _safe_int(getattr(obj, "address_", None))
 
 
 def _nonzero_addr(obj: Any) -> Optional[int]:
@@ -254,34 +219,15 @@ def _is_null(obj: Optional[Object]) -> bool:
 
 
 def _object_type_name(obj: Any) -> Optional[str]:
-    try:
-        return obj.type_.type_name()
-    except Exception:
-        return None
-
-
-def _is_pointer_object(obj: Any) -> bool:
-    try:
-        return obj.type_.kind == TypeKind.POINTER
-    except Exception:
-        type_name = _object_type_name(obj)
-        return bool(type_name and type_name.rstrip().endswith("*"))
+    return obj.type_.type_name() if isinstance(obj, Object) else None
 
 
 def _type_name(obj: Optional[Object]) -> Optional[str]:
-    if obj is None:
-        return None
-    try:
-        return str(obj.type_)
-    except Exception:
-        try:
-            return str(obj.type_())
-        except Exception:
-            return None
+    return str(obj.type_) if obj is not None else None
 
 
 def _struct_type_name(obj: Optional[Object]) -> Optional[str]:
-    type_name = _object_type_name(obj) or _type_name(obj)
+    type_name = _object_type_name(obj)
     if type_name is None:
         return None
     type_name = str(type_name).strip()
@@ -295,5 +241,5 @@ def _struct_type_name(obj: Optional[Object]) -> Optional[str]:
 def _read_memory(prog: Program, addr: int, length: int) -> Optional[bytes]:
     try:
         return prog.read(addr, length)
-    except Exception:
+    except (FaultError, ValueError):
         return None

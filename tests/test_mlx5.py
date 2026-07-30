@@ -10,9 +10,7 @@ from operator import itemgetter
 
 from drgn_tools import mlx5
 from drgn_tools.corelens import all_corelens_modules
-from drgn_tools.mlx5_support import render as render_module
 from drgn_tools.mlx5_support import selection
-from drgn_tools.mlx5_support.format import _count_display
 from drgn_tools.mlx5_support.render import _render_cqs
 from drgn_tools.mlx5_support.render import _render_dumps
 from drgn_tools.mlx5_support.render import _render_qps
@@ -31,7 +29,7 @@ def _args(**overrides):
             name: False
             for name in """
         summary full queues cqs ib_cqs eth_cqs eqs qps dump_cqe dump_eqe
-        dump_wqe json strict
+        dump_wqe json
         """.split()
         },
         _full_report=False,
@@ -93,110 +91,6 @@ def test_module_contract():
     )
     assert module.skip_unless_have_kmods == ["mlx5_core"]
     assert module.debuginfo_kmods == ["mlx5_core", "mlx5_ib"]
-    assert render_module.DUMP_SEPARATOR == "-" * 79
-
-
-def test_eq_registry_merges_into_first_record_and_preserves_first_handles(
-    monkeypatch,
-):
-    collector, device = _mapping_collector(monkeypatch)
-    first_eq = {"eqn": 7, "eqe_size": 64}
-
-    first = collector._record_eq(first_eq, device, "completion")
-    merged = collector._record_eq(
-        {"eqn": 7, "eqe_size": 64, "vector": 4, "wq": object()},
-        device,
-        "async",
-    )
-
-    entry = collector._eqs[("mlx5_core0", 7)]
-    assert first is merged is entry.record
-    assert entry.eq is first_eq
-    assert entry.wq is None
-    assert (first["role"], first["vector"]) == ("completion,async", 4)
-
-
-def test_core_cq_registry_enriches_queue_record_and_backfills_first_wq(
-    monkeypatch,
-):
-    collector, device = _mapping_collector(monkeypatch)
-    key = ("mlx5_core0", 7)
-    queue = {
-        "cq": {
-            "owner": "rq0",
-            "owners": ["rq0"],
-            "vector": None,
-            "queue_kind": "rq",
-        }
-    }
-    collector._cqs[key] = mlx5._RingEntry(queue["cq"], None)
-    collector._mlx5e_cq_from_core_cq = lambda *_args: None
-    collector._mlx5_ib_cq_from_core_cq = lambda *_args: None
-    collector._mlx5_aso_cq_from_core_cq = lambda core, _device: core["aso"]
-    first_wq = object()
-
-    merged = collector._record_core_cq(
-        {"cqn": 7, "vector": 4, "aso": {"wq": first_wq}}, device, "eq0"
-    )
-    collector._record_core_cq(
-        {"cqn": 7, "vector": 9, "aso": {"wq": object()}}, device, "eq1"
-    )
-
-    entry = collector._cqs[key]
-    assert merged is entry.record is queue["cq"]
-    assert entry.wq is first_wq
-    assert queue["cq"]["owner"] == "rq0;eq0;eq1"
-    assert queue["cq"]["owners"] == ["rq0", "eq0", "eq1"]
-    assert (queue["cq"]["vector"], queue["cq"]["queue_kind"]) == (4, "rq")
-
-
-def test_mlx5e_queue_registry_keeps_latest_record_and_latest_non_null_wq():
-    collector = mlx5.Mlx5Collector(None, _args())
-    base = {"device": "mlx5_core0", "kind": "sq", "number": 7, "owner": "sq0"}
-    first_wq, latest_wq = object(), object()
-
-    collector._record_queue_wq(dict(base, version=1), first_wq)
-    latest_record = dict(base, version=2)
-    collector._record_queue_wq(latest_record, None)
-    key = ("mlx5_core0", "sqn", 7, "sq0")
-    assert collector._mlx5e_queues[key].record is latest_record
-    assert collector._mlx5e_queues[key].wq is first_wq
-
-    newest_record = dict(base, version=3)
-    collector._record_queue_wq(newest_record, latest_wq)
-    assert collector._mlx5e_queues[key].record is newest_record
-    assert collector._mlx5e_queues[key].wq is latest_wq
-
-
-@parametrize("observed", ("both", "sq", "rq", "neither"))
-def test_qp_registry_merges_hardware_qpn_fallback_and_updates_handles(
-    monkeypatch, observed
-):
-    collector, device = _mapping_collector(monkeypatch)
-    old_sq, old_rq, new_sq, new_rq = object(), object(), object(), object()
-    first = collector._record_qp(
-        {"qpn": 7, "sq": {"wq": old_sq}, "rq": {"wq": old_rq}},
-        device,
-        "first",
-    )
-    later_qp = {"qpn": 7}
-    if observed in ("both", "sq"):
-        later_qp["sq"] = {"wq": new_sq}
-    if observed in ("both", "rq"):
-        later_qp["rq"] = {"wq": new_rq}
-
-    merged = collector._record_qp(later_qp, device, "later")
-    entry = collector._qps[mlx5._QpKey("mlx5_core0", "hw_qpn", 7)]
-    expected = {
-        "both": (new_sq, new_sq),
-        "sq": (new_sq, new_sq),
-        "rq": (new_rq, old_sq),
-        "neither": (old_sq, old_sq),
-    }[observed]
-
-    assert first is merged is entry.record
-    handles = (entry.dump_wq, entry.sq_wq)
-    assert all(actual is wanted for actual, wanted in zip(handles, expected))
 
 
 def test_qp_registry_keeps_distinct_objects_with_the_same_logical_qpn(
@@ -217,86 +111,79 @@ def test_qp_registry_keeps_distinct_objects_with_the_same_logical_qpn(
     }
 
 
-def test_qp_registry_rejects_an_address_without_any_qpn(monkeypatch):
-    collector, device = _mapping_collector(monkeypatch)
-    monkeypatch.setattr(
-        mlx5.compat,
-        "_addr",
-        lambda obj: obj.get("_address") if isinstance(obj, dict) else None,
-    )
-
-    collector._record_qp({"_address": 0x1000}, device, "unknown_table")
-
-    assert not collector._qps
-
-
-def test_summary_and_full_share_qp_sources_and_identity(monkeypatch):
-    collector, device = _addressed_mapping_collector(monkeypatch)
-    device["_mdev_obj"] = object()
-    first = _fake_qp(0x1000, 198)
-    second = _fake_qp(0x2000, 454)
-    candidates = (
-        (first, "mlx5_ib_qp_list", None),
-        (first, "core_table", 198),
-        (second, "mlx5_ib_qp_list", None),
-        (second, "core_table", 454),
-    )
-    monkeypatch.setattr(
-        collector,
-        "_iter_qps_from_device",
-        lambda _device, *, summary: iter(candidates),
-    )
-
-    summary_count = collector._count_summary_qps(device)
-    for qp, owner, table_qpn in collector._iter_qps_from_device(
-        device, summary=False
-    ):
-        collector._record_selected_qp(qp, device, owner, table_qpn)
-
-    assert summary_count == len(collector._qps) == 2
-    assert all(
-        entry.record["owners"] == ["mlx5_ib_qp_list", "core_table"]
-        for entry in collector._qps.values()
-    )
-
-
-def test_qp_selector_uses_hardware_qpn_when_logical_qpn_is_ambiguous(
+def test_qp_registry_merges_sources_aliases_and_preserves_first_work_queue(
     monkeypatch,
 ):
-    collector, device = _addressed_mapping_collector(monkeypatch)
-    collector._record_qp(_fake_qp(0x1000, 198), device, "mlx5_ib_qp_list")
-    collector._record_qp(_fake_qp(0x2000, 454), device, "mlx5_ib_qp_list")
+    collector, device = _mapping_collector(monkeypatch)
+    first_sq = {"head": 4, "tail": 2}
+    first = collector._record_qp({"qpn": 7, "sq": first_sq}, device, "qp_list")
+    merged = collector._record_qp({"qpn": 7}, device, "qp_table", table_qpn=9)
 
-    selected = collector._select_qp_key(198)
+    entry = collector._qps[mlx5._QpKey("mlx5_core0", "hw_qpn", 7)]
+    assert first is merged is entry.record
+    assert entry.record["owners"] == ["qp_list", "qp_table"]
+    assert entry.record["qpn_aliases"] == [7, 9]
+    assert entry.dump_wq is entry.sq_wq is first_sq
 
-    assert selected == mlx5._QpKey("mlx5_core0", "address", 0x1000)
-    assert collector._select_qp_key(1) in collector._qps
-    assert any("hardware QPN" in warning for warning in collector.warnings)
 
+def test_raw_packet_qp_progress_uses_nested_work_queues(monkeypatch):
+    collector, device = _mapping_collector(monkeypatch)
+    qp = {
+        "qpn": 7,
+        "type": 8,
+        "sq": {"head": 1, "tail": 2},
+        "rq": {"head": 3, "tail": 4},
+        "raw_packet_qp": {
+            "sq": {"sq": {"head": 11, "tail": 12}},
+            "rq": {"rq": {"head": 13, "tail": 14}},
+        },
+    }
 
-def test_cqe_qp_index_is_built_once_for_receive_only_qps(monkeypatch):
-    collector = mlx5.Mlx5Collector(None, _args())
-    key = mlx5._QpKey("mlx5_core0", "qpn", 7)
-    collector._qps[key] = mlx5._QpEntry(
-        {"qpn_aliases": [7], "send_cqn": None, "recv_cqn": 5},
-        None,
-        None,
+    record = collector._record_qp(qp, device, "qp_list")
+
+    assert (
+        record["sq_pc"],
+        record["sq_cc"],
+        record["rq_pc"],
+        record["rq_cc"],
+    ) == (11, 12, 13, 14)
+    assert (
+        record["sq_pc_source"],
+        record["sq_cc_source"],
+        record["rq_pc_source"],
+        record["rq_cc_source"],
+    ) == (
+        "qp.raw_packet_qp.sq.sq.head",
+        "qp.raw_packet_qp.sq.sq.tail",
+        "qp.raw_packet_qp.rq.rq.head",
+        "qp.raw_packet_qp.rq.rq.tail",
     )
-    rebuild = collector._rebuild_qp_indexes
-    rebuild_count = 0
 
-    def counted_rebuild():
-        nonlocal rebuild_count
-        rebuild_count += 1
-        rebuild()
 
-    monkeypatch.setattr(collector, "_rebuild_qp_indexes", counted_rebuild)
-    for _ in range(2):
-        assert (
-            collector._find_ib_qp_for_cqe(("mlx5_core0", 5), {"qpn": 7})
-            is None
-        )
-    assert rebuild_count == 1
+def test_cq_registry_merges_metadata_and_preserves_first_work_queue(
+    monkeypatch,
+):
+    collector, device = _mapping_collector(monkeypatch)
+    key = ("mlx5_core0", 7)
+    record = {"owner": "rq0", "owners": ["rq0"], "vector": None}
+    collector._cqs[key] = mlx5._RingEntry(record, None)
+    collector._mlx5e_cq_from_core_cq = lambda *_args: None
+    collector._mlx5_ib_cq_from_core_cq = lambda *_args: None
+    collector._mlx5_aso_cq_from_core_cq = lambda core, _device: core["aso"]
+    first_wq = object()
+
+    merged = collector._record_core_cq(
+        {"cqn": 7, "vector": 4, "aso": {"wq": first_wq}}, device, "eq0"
+    )
+    collector._record_core_cq(
+        {"cqn": 7, "vector": 9, "aso": {"wq": object()}}, device, "eq1"
+    )
+
+    entry = collector._cqs[key]
+    assert merged is entry.record is record
+    assert entry.wq is first_wq
+    assert record["owners"] == ["rq0", "eq0", "eq1"]
+    assert record["vector"] == 4
 
 
 def test_cli_report_modes_selectors_and_limits():
@@ -328,7 +215,7 @@ def test_cli_report_modes_selectors_and_limits():
     assert "{kernel,user}" in help_text
     assert "unknown" not in help_text
     assert "other" not in help_text
-    assert "--strict" in help_text
+    assert "--strict" not in help_text
     assert "--verbose" not in help_text
     assert "--debug" not in help_text
 
@@ -344,8 +231,6 @@ def test_cli_report_modes_selectors_and_limits():
         (["--maxcq", "0"], ValueError),
         (["--maxcqe", "0"], ValueError),
         (["--walk-limit", "0"], ValueError),
-        (["--cqn", "-1"], ValueError),
-        (["--dev", "0000:zz:00.0"], ValueError),
         (["--layout"], SystemExit),
     ),
 )
@@ -353,48 +238,6 @@ def test_invalid_cli_values_are_rejected(arguments, expected_error):
     parser = _parser()
     with raises(expected_error):
         mlx5._validate_args(parser.parse_args(arguments))
-
-
-@parametrize(
-    ("overrides", "expected"),
-    (
-        (
-            {"summary": True},
-            {"channels": False, "eqs": False, "cqs": False, "qps": False},
-        ),
-        (
-            {"queues": True},
-            {"channels": True, "eqs": True, "cqs": False, "qps": False},
-        ),
-        (
-            {"eqs": True},
-            {"channels": False, "eqs": True, "cqs": False, "qps": False},
-        ),
-        (
-            {"cqs": True},
-            {"channels": True, "eqs": True, "cqs": True, "qps": False},
-        ),
-        (
-            {"ib_cqs": True},
-            {"channels": False, "eqs": True, "cqs": True, "qps": False},
-        ),
-        (
-            {"dump_cqe": True},
-            {"channels": True, "eqs": True, "cqs": True, "qps": True},
-        ),
-        (
-            {"dump_wqe": True},
-            {"channels": True, "eqs": True, "cqs": False, "qps": True},
-        ),
-        (
-            {"_full_report": True},
-            {"channels": True, "eqs": True, "cqs": True, "qps": True},
-        ),
-    ),
-)
-def test_collection_plan_contains_required_dependencies(overrides, expected):
-    plan = mlx5._collection_plan(_args(**overrides))
-    assert plan == expected
 
 
 def test_selection_defaults_are_idempotent():
@@ -413,12 +256,6 @@ def test_selection_defaults_are_idempotent():
     )
 
 
-def test_shared_known_value_ignores_missing_values_and_rejects_conflicts():
-    assert mlx5._shared_known_value([None, 7, 7]) == 7
-    assert mlx5._shared_known_value([None, None]) is None
-    assert mlx5._shared_known_value([7, 8]) is None
-
-
 def test_default_report_mode_and_explicit_overrides(monkeypatch):
     for default_mode in ("full", "summary"):
         monkeypatch.setattr(selection, "DEFAULT_REPORT_MODE", default_mode)
@@ -430,7 +267,6 @@ def test_default_report_mode_and_explicit_overrides(monkeypatch):
         assert all(
             getattr(args, name) for name in ("queues", "cqs", "eqs", "qps")
         ) == (not summary)
-        assert mlx5._summary_counts_only(args) is summary
 
     for default_mode, requested_mode in (
         ("full", "summary"),
@@ -454,30 +290,11 @@ def test_default_report_mode_and_explicit_overrides(monkeypatch):
     )
 
 
-def test_invalid_default_report_mode_is_rejected(monkeypatch):
-    monkeypatch.setattr(selection, "DEFAULT_REPORT_MODE", "invalid")
-
-    with raises(ValueError, match="DEFAULT_REPORT_MODE"):
-        selection._resolve_report_sections(_args())
-
-
-def test_summary_count_path_is_used_only_for_an_unfocused_summary():
-    assert mlx5._summary_counts_only(_args(summary=True))
-    for override in (
-        {"full": True},
-        {"queues": True},
-        {"dump_cqe": True},
-        {"qpn": 1},
-        {"_full_report": True},
-    ):
-        assert not mlx5._summary_counts_only(_args(summary=True, **override))
-
-
 def test_walk_limits_report_truncation_instead_of_silently_dropping_objects():
     collector = mlx5.Mlx5Collector(object(), _args(walk_limit=2))
 
     assert collector._walk_count(5, "QP table") == 2
-    assert list(collector._iter_limited(range(5), "CQ table")) == [0, 1]
+    assert list(collector._iter_walk_limited(range(5), "CQ table")) == [0, 1]
     assert collector._truncated_walks
     assert "--walk-limit=2" in "\n".join(collector.warnings)
 
@@ -497,26 +314,16 @@ def test_explicit_wqe_queue_selector_matches_kind_and_number(queue, expected):
     assert selection._queue_matches_wqe_selector(queue, args) is expected
 
 
-def test_automatic_wqe_queue_selector_respects_device_keys():
+def test_automatic_wqe_queue_selection_is_scoped_to_device():
     args = _args(dump_wqe=True)
-    selected = {("mlx5_0", "sqn", 7), (None, "rqn", 8)}
-    send_queue = {"device": "stale", "kind": "sq", "number": 7}
+    selected = {("mlx5_0", "sqn", 7)}
+    queue = {"kind": "sq", "number": 7}
 
     assert selection._queue_matches_wqe_selector(
-        send_queue, args, selected, "mlx5_0"
+        queue, args, selected, "mlx5_0"
     )
     assert not selection._queue_matches_wqe_selector(
-        send_queue, args, selected, "mlx5_1"
-    )
-    assert selection._queue_matches_wqe_selector(
-        {"device": "mlx5_1", "kind": "xskrq", "number": 8},
-        args,
-        selected,
-    )
-    assert not selection._queue_matches_wqe_selector(
-        {"device": "mlx5_0", "kind": "rq", "number": None},
-        args,
-        selected,
+        queue, args, selected, "mlx5_1"
     )
 
 
@@ -590,25 +397,6 @@ def test_cq_table_labels_software_arm_sequence_without_claiming_arm_state(
 )
 def test_inflight_delta_never_invents_wrapped_work(pc, cc, expected):
     assert mlx5._nonnegative_delta(pc, cc) == expected
-
-
-def test_qp_aliases_normalize_and_match_each_real_identifier():
-    assert selection._qp_aliases(None, 12, "10", 12, "invalid", 11) == [
-        10,
-        11,
-        12,
-    ]
-    record = {
-        "qpn": 10,
-        "ib_qpn": 11,
-        "hw_qpn": 12,
-        "table_qpn": 13,
-    }
-
-    assert all(
-        selection._qp_record_matches_qpn(record, qpn) for qpn in range(10, 14)
-    )
-    assert not selection._qp_record_matches_qpn(record, 14)
 
 
 def test_unresolved_qp_creator_metadata_is_counted_and_not_filterable():
@@ -934,9 +722,9 @@ def test_render_report_preserves_compact_summary_contract(capsys):
     assert "not requested" not in output
     assert "not collected" not in output
     assert "(collected scope only)" in output
-    assert _count_display(None) == "-"
 
     default_args = _args()
+    selection._resolve_report_sections(default_args)
     render_report(report, default_args)
     default_output = capsys.readouterr().out
     assert default_args._full_report

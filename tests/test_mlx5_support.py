@@ -72,14 +72,14 @@ def test_member_paths_use_the_first_readable_value_and_report_its_source():
 
 
 @parametrize(
-    ("wq", "entry_bytes", "expected"),
+    ("wq", "expected"),
     (
-        (Struct(sz_m1=7, fbc=Struct(log_sz=5), wqe_cnt=40), 64, 8),
-        (Struct(fbc=Struct(log_sz=5)), 64, 32),
-        (Struct(wqe_cnt=40), 64, 40),
-        (Struct(size=4096), 64, 64),
-        (Struct(frag_buf=Struct(size=2048)), 64, 32),
-        (Struct(), 64, None),
+        (Struct(sz_m1=7, fbc=Struct(log_sz=5), wqe_cnt=40), 8),
+        (Struct(fbc=Struct(log_sz=5)), 32),
+        (Struct(wqe_cnt=40), 40),
+        (Struct(size=4096), 64),
+        (Struct(frag_buf=Struct(size=2048)), 32),
+        (Struct(), None),
     ),
     ids=(
         "sz-m1",
@@ -90,10 +90,8 @@ def test_member_paths_use_the_first_readable_value_and_report_its_source():
         "unknown",
     ),
 )
-def test_ring_size_uses_kernel_layout_fallbacks_in_order(
-    wq, entry_bytes, expected
-):
-    assert dumps._ring_size(wq, entry_bytes) == expected
+def test_ring_size_uses_kernel_layout_fallbacks_in_order(wq, expected):
+    assert dumps._ring_size(wq) == expected
 
 
 @parametrize(
@@ -169,7 +167,11 @@ def test_dump_ring_reads_a_consumer_centered_window_through_shared_layout_helper
     collector = mlx5.Mlx5Collector(
         MemoryProgram(blocks),
         argparse.Namespace(
-            _full_report=False, summary=False, full=False, walk_limit=None
+            **{
+                name: False
+                for name in "cqs qps dump_wqe dump_cqe queues eth_cqs ib_cqs eqs summary full".split()
+            },
+            walk_limit=None,
         ),
     )
     wq = Struct(sz_m1=3, log_stride=6, buf=0x1000)
@@ -180,7 +182,7 @@ def test_dump_ring_reads_a_consumer_centered_window_through_shared_layout_helper
         default_len=64,
         decode=lambda raw: {"decoded_index": raw[0]},
         known_consumer_index=2,
-        owner_mode="eqe",
+        descriptor_kind="eqe",
         around_consumer=True,
     )
 

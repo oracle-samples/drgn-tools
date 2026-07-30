@@ -8,7 +8,7 @@ from typing import Optional
 from drgn import Object
 
 from .compat import _addr
-from .compat import _bounded
+from .compat import _bounded_count
 from .compat import _first_int_path
 from .compat import _first_member_path
 from .compat import _nonzero_addr
@@ -21,7 +21,7 @@ from .defs import MAX_DESCRIPTOR_ENTRIES
 from .defs import MAX_PLAUSIBLE_RING_ENTRIES
 from .format import _hex
 
-_BENIGN_DESCRIPTOR_STATUSES = {"ok", "ready", "not-ready", "invalid"}
+_BENIGN_DESCRIPTOR_STATUSES = {"ok", "ready", "not-ready"}
 _DIRECT_BUFFER_PATHS = (
     ["buf"],
     ["frag_buf", "buf"],
@@ -33,7 +33,7 @@ _DIRECT_BUFFER_PATHS = (
 def _dump_window_summary(
     max_entries: int, ring_size: Optional[Any] = None
 ) -> Dict[str, int]:
-    count = _bounded(max_entries, None, MAX_DESCRIPTOR_ENTRIES)
+    count = _bounded_count(max_entries, None, MAX_DESCRIPTOR_ENTRIES)
     size = _safe_int(ring_size)
     if size is not None and size > 0:
         count = min(count, size)
@@ -45,7 +45,7 @@ def _annotate_owner_status(
     decoded: Dict[str, Any],
     absolute_index: int,
     ring_size: Optional[int],
-    owner_mode: str,
+    descriptor_kind: str,
     consumer_index: Optional[int] = None,
 ) -> None:
     owner = _safe_int(decoded.get("owner_bit"))
@@ -59,11 +59,7 @@ def _annotate_owner_status(
     # whether the CQE can be polled.
     decoded["owner_ready"] = owner_match
 
-    if owner_mode == "cqe" and decoded.get("status") in (
-        "ok",
-        "ready",
-        "not-ready",
-    ):
+    if descriptor_kind == "cqe" and decoded.get("status") == "ok":
         if consumer_index is not None and absolute_index < consumer_index:
             decoded["status"] = "not-ready"
             decoded["not_ready_reason"] = "consumed"
@@ -80,10 +76,8 @@ def _annotate_owner_status(
             decoded.pop("not_ready_reason", None)
         return
 
-    if not owner_match and decoded.get("status") in ("ok", "ready"):
-        decoded["status"] = "not-ready"
-    elif owner_match and decoded.get("status") == "ok":
-        decoded["status"] = "ready"
+    if decoded.get("status") == "ok":
+        decoded["status"] = "ready" if owner_match else "not-ready"
 
 
 def _wq_layout_summary(wq: Optional[Object]) -> Dict[str, Any]:
@@ -231,13 +225,13 @@ def _ring_entry_address(
             return _plain_frag_buf_entry_address(wq, index, entry_len)
         return base + (index << log_stride) + cqe_offset
 
-    ix = index + strides_offset
-    frag_index = ix >> log_frag_strides
+    adjusted_index = index + strides_offset
+    frag_index = adjusted_index >> log_frag_strides
     frag = _safe_index(frags, frag_index)
     base = _nonzero_addr(_safe_member(frag, "buf"))
     if base is None:
         return _plain_frag_buf_entry_address(wq, index, entry_len)
-    return base + ((frag_sz_m1 & ix) << log_stride) + cqe_offset
+    return base + ((frag_sz_m1 & adjusted_index) << log_stride) + cqe_offset
 
 
 def _plain_frag_buf_entry_address(
