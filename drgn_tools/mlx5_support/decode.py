@@ -31,7 +31,6 @@ def _byte(raw: bytes, offset: int) -> Optional[int]:
 def _hex_label(value: Optional[int], names: Dict[int, str]) -> Optional[str]:
     if value is None:
         return None
-    value = int(value)
     name = names.get(value)
     rendered = _hex(value)
     return f"{name}({rendered})" if name else rendered
@@ -42,7 +41,6 @@ def _enum_table_label(
 ) -> Optional[str]:
     if value is None:
         return None
-    value = int(value)
     return names.get(value) or f"unknown({value})"
 
 

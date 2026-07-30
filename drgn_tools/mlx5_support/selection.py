@@ -30,12 +30,6 @@ _EXPLICIT_SELECTORS = "cqn eqn qpn".split()
 
 
 def _resolve_report_sections(args: argparse.Namespace) -> None:
-    if getattr(args, "_report_sections_resolved", False):
-        return
-    if DEFAULT_REPORT_MODE not in {"full", "summary"}:
-        raise ValueError("DEFAULT_REPORT_MODE must be 'full' or 'summary'")
-    args._report_sections_resolved = True
-
     explicit_dump_cqe = bool(getattr(args, "dump_cqe", False))
     explicit_dump_eqe = bool(getattr(args, "dump_eqe", False))
     explicit_dump_wqe = bool(getattr(args, "dump_wqe", False))
@@ -86,7 +80,7 @@ def _wqe_queue_context_keys(
     if not args.dump_wqe or args.sqn is not None or args.rqn is not None:
         return set()
     keys: Set[Tuple[Optional[str], str, int]] = set()
-    for dump in report.get("dumps", []) or []:
+    for dump in report.get("dumps", []):
         if dump.get("kind") != "wqe" or dump.get("source") != "queue":
             continue
         selector_name = dump.get("selector_name")
@@ -112,21 +106,16 @@ def _queue_matches_wqe_selector(
 ) -> bool:
     if not args.dump_wqe:
         return True
-    selectors = [
-        (name, getattr(args, name))
-        for name in ("sqn", "rqn")
-        if getattr(args, name) is not None
-    ]
-    if not selectors and not selected_dump_keys:
-        return True
     queue_selector = (
         "rqn" if queue.get("kind") in ("rq", "xskrq", "ptp_rq") else "sqn"
     )
     queue_number = _safe_int(queue.get("number"))
-    if not selectors:
-        if queue_number is None:
-            return False
-        assert selected_dump_keys is not None
+    if args.sqn is not None or args.rqn is not None:
+        requested = getattr(args, queue_selector)
+        return requested is not None and queue_number == _safe_int(requested)
+    if not selected_dump_keys:
+        return True
+    if queue_number is not None:
         device = (
             device_name if device_name is not None else queue.get("device")
         )
@@ -140,10 +129,7 @@ def _queue_matches_wqe_selector(
             queue_selector,
             queue_number,
         ) in selected_dump_keys
-    return any(
-        queue_selector == selector and queue_number == _safe_int(number)
-        for selector, number in selectors
-    )
+    return False
 
 
 def _cq_filter_structs(args: argparse.Namespace) -> List[str]:
@@ -169,7 +155,7 @@ def _cq_balance_bucket(cq: Dict[str, Any]) -> Tuple[str, str, str]:
 
 
 def _qp_matches_filter(qp: Dict[str, Any], args: argparse.Namespace) -> bool:
-    wanted = getattr(args, "qp_creators", []) or []
+    wanted = args.qp_creators
     return not wanted or qp.get("creator_type") in wanted
 
 
@@ -189,7 +175,8 @@ def _eq_item_auto_dump_key(
     item: Tuple[Tuple[str, int], Dict[str, Any]]
 ) -> Tuple[int, str, int]:
     key, eq = item
-    return (_eq_auto_dump_role_rank(eq), key[0], key[1])
+    role_rank, _device, _eqn = _eq_record_auto_dump_key(eq)
+    return (role_rank, key[0], key[1])
 
 
 def _eq_record_auto_dump_key(eq: Dict[str, Any]) -> Tuple[int, str, int]:
@@ -212,7 +199,7 @@ def _queue_balance_bucket(queue: Dict[str, Any]) -> Tuple[str, str]:
     )
 
 
-def _first_present(*values: Any) -> Any:
+def _first_not_none(*values: Any) -> Any:
     for value in values:
         if value is not None:
             return value
@@ -254,13 +241,13 @@ def _limit_items(
 def _limit_balanced(
     items: Sequence[Any],
     max_items: Optional[int],
-    bucket: Callable[[Any], Any],
+    bucket_key: Callable[[Any], Any],
 ) -> List[Any]:
     if max_items is None:
         return list(items)
     buckets: "OrderedDict[Any, Deque[Any]]" = OrderedDict()
     for item in items:
-        buckets.setdefault(bucket(item), deque()).append(item)
+        buckets.setdefault(bucket_key(item), deque()).append(item)
 
     selected: List[Any] = []
     while buckets and len(selected) < max_items:
@@ -273,9 +260,9 @@ def _limit_balanced(
     return selected
 
 
-def _channel_queues(ch: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
-    rq = ch.get("rx_rq")
+def _channel_queues(channel: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+    rq = channel.get("rx_rq")
     if rq:
         yield rq
     for key in ("xsk_rqs", "tx_sqs", "xdp_sqs", "icosqs"):
-        yield from ch.get(key, [])
+        yield from channel.get(key, [])

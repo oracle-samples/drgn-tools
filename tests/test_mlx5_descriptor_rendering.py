@@ -8,22 +8,6 @@ from tests.unittest_helpers import load_test_functions
 from tests.unittest_helpers import parametrize
 
 
-def _cqe(owner, opcode, absolute_index=0, consumer_index=0, ring_size=64):
-    decoded = {
-        "owner_bit": owner,
-        "opcode_value": opcode,
-        "status": "ok",
-    }
-    _annotate_owner_status(
-        decoded,
-        absolute_index,
-        ring_size,
-        "cqe",
-        consumer_index=consumer_index,
-    )
-    return decoded
-
-
 @parametrize(
     ("owner", "opcode", "absolute", "consumer", "status", "match", "reason"),
     (
@@ -37,7 +21,18 @@ def _cqe(owner, opcode, absolute_index=0, consumer_index=0, ring_size=64):
 def test_cqe_pollability(
     owner, opcode, absolute, consumer, status, match, reason
 ):
-    decoded = _cqe(owner, opcode, absolute, consumer)
+    decoded = {
+        "owner_bit": owner,
+        "opcode_value": opcode,
+        "status": "ok",
+    }
+    _annotate_owner_status(
+        decoded,
+        absolute,
+        64,
+        "cqe",
+        consumer_index=consumer,
+    )
 
     assert decoded["status"] == status
     assert decoded["owner_match"] is match
@@ -54,7 +49,7 @@ def test_eqe_owner_status_is_unchanged():
         decoded,
         absolute_index=0,
         ring_size=64,
-        owner_mode="eqe",
+        descriptor_kind="eqe",
         consumer_index=1,
     )
 
@@ -108,37 +103,30 @@ def test_rqn_dumps_use_only_receive_wqe_legend_and_columns(capsys):
     assert "off_in_bbs" not in header
 
 
-@parametrize("value", (0, False, "0", "0x0", "decoded(0)", "decoded(0x0)"))
-def test_zero_descriptor_values_do_not_add_optional_columns(capsys, value):
-    dump = {
-        "kind": "cqe",
-        "entries": [{"wqe_id": value}],
-    }
-
-    _render_descriptor_entries(dump, dump["entries"])
-
-    assert "WQE_ID" not in capsys.readouterr().out
-
-
-@parametrize("value", (1, True, "1", "0x1", "", "decoded(1)"))
-def test_nonzero_descriptor_values_add_optional_columns(capsys, value):
-    dump = {
-        "kind": "cqe",
-        "entries": [{"wqe_id": value}],
-    }
-
-    _render_descriptor_entries(dump, dump["entries"])
-
-    assert "WQE_ID" in capsys.readouterr().out
-
-
-def test_cqe_path_displays_completion_interrupt_linkage():
-    text = _cqe_path_display(
-        {
+@parametrize(
+    ("values", "visible"),
+    (
+        ((0, False, "0", "0x0", "decoded(0)", "decoded(0x0)"), False),
+        ((1, True, "1", "0x1", "", "decoded(1)"), True),
+    ),
+)
+def test_optional_descriptor_columns_require_nonzero_values(
+    capsys, values, visible
+):
+    for value in values:
+        dump = {
             "kind": "cqe",
-            "selector_name": "cqn",
-            "selector": 3255,
-            "cq": {
+            "entries": [{"wqe_id": value}],
+        }
+        _render_descriptor_entries(dump, dump["entries"])
+        assert ("WQE_ID" in capsys.readouterr().out) is visible
+
+
+@parametrize(
+    ("cq", "selector", "expected"),
+    (
+        (
+            {
                 "cqn": 3255,
                 "eqn": 7,
                 "eq_role": "completion",
@@ -146,23 +134,25 @@ def test_cqe_path_displays_completion_interrupt_linkage():
                 "eq_irqn": 48,
                 "eq_irq_cpu": "1",
             },
-        }
-    )
-
-    assert text == "CQN=3255 EQN=7 IRQN=48 CPU=1"
-
-
-def test_cqe_path_marks_unavailable_linkage():
+            3255,
+            "CQN=3255 EQN=7 IRQN=48 CPU=1",
+        ),
+        ({}, 42, "CQN=42 EQN=- IRQN=- CPU=-"),
+    ),
+)
+def test_cqe_path_displays_completion_interrupt_linkage(
+    cq, selector, expected
+):
     text = _cqe_path_display(
         {
             "kind": "cqe",
             "selector_name": "cqn",
-            "selector": 42,
-            "cq": {},
+            "selector": selector,
+            "cq": cq,
         }
     )
 
-    assert text == "CQN=42 EQN=- IRQN=- CPU=-"
+    assert text == expected
 
 
 def load_tests(loader, standard_tests, pattern):
