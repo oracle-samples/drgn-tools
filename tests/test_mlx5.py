@@ -1,23 +1,63 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-"""Unit tests for logic that does not require real kernel mlx5 objects.
-
-Kernel member paths, container conversions, and version compatibility are
-tested against the mlx5 vmcore library.
-"""
+"""Tests for the mlx5 Corelens module."""
 import argparse
 from operator import itemgetter
+
+from drgn import cast
+from drgn import container_of
+from drgn.helpers.linux.net import netdev_priv
 
 from drgn_tools import mlx5
 from drgn_tools.corelens import all_corelens_modules
 from drgn_tools.mlx5_support import selection
+from drgn_tools.mlx5_support.collect_device import for_each_mlx5_core_dev
+from drgn_tools.mlx5_support.collect_device import mlx5_core_ib_device
+from drgn_tools.mlx5_support.collect_device import mlx5_netdev
 from drgn_tools.mlx5_support.render import _render_cqs
 from drgn_tools.mlx5_support.render import _render_dumps
 from drgn_tools.mlx5_support.render import _render_qps
 from drgn_tools.mlx5_support.render import render_report
+from tests import DrgnToolsTestCase
 from tests.unittest_helpers import load_test_functions
 from tests.unittest_helpers import parametrize
 from tests.unittest_helpers import raises
+
+
+class TestMlx5DeviceDiscovery(DrgnToolsTestCase):
+    def test_driver_device_relationships(self):
+        try:
+            self.prog["mlx5_core_driver"]
+        except LookupError:
+            self.skipTest("mlx5_core is not loaded")
+
+        mdevs = list(for_each_mlx5_core_dev(self.prog))
+        if not mdevs:
+            self.skipTest("no devices are bound to mlx5_core")
+
+        sf_type = int(self.prog.constant("MLX5_COREDEV_SF"))
+        for mdev in mdevs:
+            self.assertTrue(mdev)
+            if int(mdev.coredev_type) == sf_type:
+                adev = container_of(
+                    cast("struct device *", mdev.device),
+                    "struct auxiliary_device",
+                    "dev",
+                )
+                sf_dev = container_of(adev, "struct mlx5_sf_dev", "adev")
+                self.assertEqual(int(sf_dev.mdev), int(mdev))
+            else:
+                self.assertEqual(int(mdev.pdev.dev.driver_data), int(mdev))
+
+            netdev = mlx5_netdev(mdev)
+            if netdev:
+                priv = netdev_priv(netdev, "struct mlx5e_priv")
+                self.assertEqual(int(priv.mdev), int(mdev))
+
+            ib_device = mlx5_core_ib_device(mdev)
+            if ib_device:
+                ibdev = container_of(ib_device, "struct mlx5_ib_dev", "ib_dev")
+                self.assertEqual(int(ibdev.mdev), int(mdev))
 
 
 def _args(**overrides):
