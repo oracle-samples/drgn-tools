@@ -1802,8 +1802,6 @@ class Mlx5Collector(collect_device.DeviceCollectorMixin):
     # RDMA queue pairs
 
     def _count_summary_qps(self, device: Dict[str, Any]) -> Optional[int]:
-        if device.get("_mdev_obj") is None:
-            return None
         keys = set()
         for qp, _owner, table_qpn in self._iter_qps_from_device(
             device, summary=True
