@@ -11,6 +11,7 @@ from drgn.helpers.linux.net import netdev_priv
 from drgn_tools import mlx5
 from drgn_tools.corelens import all_corelens_modules
 from drgn_tools.mlx5_support import selection
+from drgn_tools.mlx5_support.collect_device import DeviceRecord
 from drgn_tools.mlx5_support.collect_device import for_each_mlx5_core_dev
 from drgn_tools.mlx5_support.collect_device import mlx5_core_ib_device
 from drgn_tools.mlx5_support.collect_device import mlx5_netdev
@@ -95,7 +96,9 @@ def _mapping_collector(monkeypatch):
         "_safe_member",
         lambda obj, name: obj.get(name) if isinstance(obj, dict) else None,
     )
-    return mlx5.Mlx5Collector(None, _args()), {"name": "mlx5_core0"}
+    device = DeviceRecord(0, 1)
+    device.name = "mlx5_core0"
+    return mlx5.Mlx5Collector(None, _args()), device
 
 
 def _addressed_mapping_collector(monkeypatch):
@@ -574,36 +577,33 @@ def test_findings_are_classified_from_collected_values():
     collector = mlx5.Mlx5Collector(object(), _args())
     cq = {"device": "mlx5_0", "cqn": 7, "eqn": None, "irqn": 42}
     collector._cqs = {("mlx5_0", 7): mlx5._RingEntry(cq, None)}
-    devices = [
+    device = DeviceRecord(0, 1)
+    device.summary = {"device_state": "INTERNAL_ERROR"}
+    device.health = {"fatal_error": 1, "miss_counter": 2}
+    device.netdevs = [
         {
-            "name": "mlx5_0",
-            "summary": {"device_state": "INTERNAL_ERROR"},
-            "health": {"fatal_error": 1, "miss_counter": 2},
-            "netdevs": [
+            "name": "eth0",
+            "summary": {
+                "carrier": "down",
+                "stats": {"rx_errors": 3, "tx_errors": 0},
+            },
+            "channels": [
                 {
-                    "name": "eth0",
-                    "summary": {
-                        "carrier": "down",
-                        "stats": {"rx_errors": 3, "tx_errors": 0},
-                    },
-                    "channels": [
-                        {
-                            "rx_rq": {
-                                "kind": "rq",
-                                "number": 8,
-                                "enabled": False,
-                                "recovering": True,
-                                "pc": 2,
-                                "cc": 3,
-                                "inflight": 8,
-                                "wq": {"size": 8},
-                            }
-                        }
-                    ],
+                    "rx_rq": {
+                        "kind": "rq",
+                        "number": 8,
+                        "enabled": False,
+                        "recovering": True,
+                        "pc": 2,
+                        "cc": 3,
+                        "inflight": 8,
+                        "wq": {"size": 8},
+                    }
                 }
             ],
         }
     ]
+    devices = [device]
     dumps = [
         {
             "kind": "cqe",
