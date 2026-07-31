@@ -54,6 +54,8 @@ from .mlx5_support import format as formatting
 from .mlx5_support import render
 from .mlx5_support import selection
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.irq import irq_to_desc
+from drgn_tools.util import has_member
 
 
 # Short aliases used throughout this module.
@@ -1792,18 +1794,7 @@ class Mlx5Collector(collect_device.DeviceCollectorMixin):
                         if channel.get(field) is None and value is not None:
                             channel[field] = value
                     if channel.get("irq_desc") is None and irqn is not None:
-                        try:
-                            desc = (
-                                compat.irq_to_desc(self.prog, irqn)
-                                if compat.irq_to_desc is not None
-                                else None
-                            )
-                        except (
-                            compat.FaultError,
-                            compat.ObjectAbsentError,
-                            compat.OutOfBoundsError,
-                        ):
-                            desc = None
+                        desc = irq_to_desc(self.prog, irqn)
                         channel["irq_desc"] = formatting._hex(
                             compat._addr(desc)
                         )
@@ -3156,30 +3147,18 @@ def _cq_arm_sn(raw: Optional[int]) -> Optional[int]:
 
 
 def _irq_affinity_cpus(prog: Program, irqn: Optional[int]) -> Optional[str]:
-    if irqn is None or compat.irq_to_desc is None:
+    if irqn is None:
         return None
-    try:
-        desc = compat.irq_to_desc(prog, irqn)
-    except (FaultError, ObjectAbsentError, OutOfBoundsError, LookupError):
+    desc = irq_to_desc(prog, irqn)
+    if not desc:
         return None
-    if desc is None or compat._is_null(desc):
-        return None
-    for path in (
-        ("irq_common_data", "effective_affinity"),
-        ("irq_common_data", "affinity"),
-        ("affinity_hint",),
-        ("percpu_affinity",),
-    ):
-        mask = compat._safe_member_path(desc, path)
-        if mask is None or compat._is_null(mask):
-            continue
-        try:
-            cpus = cpumask_to_cpulist(mask)
-        except (FaultError, ObjectAbsentError, OutOfBoundsError, LookupError):
-            continue
-        if cpus:
-            return cpus
-    return None
+    irq_data = desc.irq_common_data
+    mask = (
+        irq_data.effective_affinity
+        if has_member(irq_data, "effective_affinity")
+        else irq_data.affinity
+    )
+    return cpumask_to_cpulist(mask) or None
 
 
 def _shared_known_value(values: Iterable[Optional[int]]) -> Optional[int]:

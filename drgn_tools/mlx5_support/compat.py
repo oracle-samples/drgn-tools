@@ -18,11 +18,6 @@ from drgn import Program
 from drgn import sizeof
 from drgn import TypeKind
 
-try:
-    from drgn.helpers.linux.irq import irq_to_desc
-except ImportError:  # drgn 0.0.32 does not provide the IRQ helpers.
-    irq_to_desc = None  # type: ignore
-
 _MEMBER_ERRORS = (
     LookupError,
     FaultError,
