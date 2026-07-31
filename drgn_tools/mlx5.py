@@ -33,24 +33,20 @@ from typing import Tuple
 from typing import TypeVar
 from typing import Union
 
-from drgn import FaultError
+from drgn import cast
 from drgn import container_of
 from drgn import Object
-from drgn import ObjectAbsentError
-from drgn import OutOfBoundsError
 from drgn import Program
 from drgn import ProgramFlags
 from drgn import TypeKind
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import cpumask_to_cpulist
-from drgn.helpers.linux.idr import idr_for_each
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.net import netdev_priv
 from drgn.helpers.linux.radixtree import radix_tree_for_each
 from drgn.helpers.linux.xarray import xa_for_each
 
 from .mlx5_support import collect_device
-from .mlx5_support import compat
 from .mlx5_support import decode
 from .mlx5_support import defs
 from .mlx5_support import dumps
@@ -261,16 +257,14 @@ def _new_channel_record(
     napi = channel.napi
     return {
         "index": index,
-        "address": formatting._hex(compat._addr(channel)),
+        "address": formatting._hex(int(channel)),
         "cpu": cpu,
-        "napi": formatting._hex(compat._addr(napi)),
+        "napi": formatting._hex(int(napi.address_of_())),
         "napi_id": int(napi.napi_id),
         "napi_state": formatting._hex(int(napi.state)),
         "napi_weight": int(napi.weight),
-        "napi_poll_owner": compat._safe_int(
-            compat._safe_member(napi, "poll_owner")
-        ),
-        "irq_desc": formatting._hex(compat._addr(irq_desc)),
+        "napi_poll_owner": int(napi.poll_owner),
+        "irq_desc": formatting._hex(int(irq_desc) if irq_desc else None),
         "irqn": irqn,
         "eqn": None,
         "vector": vector,
@@ -320,6 +314,15 @@ class _QpIdentity(NamedTuple):
     ib_qpn: Optional[int]
     hw_qpn: Optional[int]
     aliases: Tuple[int, ...]
+
+
+def _core_eq(eq: Object) -> Object:
+    type_name = eq.type_.type_name()
+    if type_name == "struct mlx5_eq":
+        return eq
+    if type_name == "struct mlx5_eq_async":
+        return eq.core
+    raise TypeError(f"unsupported mlx5 event queue type: {type_name}")
 
 
 class Mlx5Collector:
@@ -1219,7 +1222,7 @@ class Mlx5Collector:
             "device": device_name,
             "netdev": netdev_name,
             "channel": channel_index,
-            "address": formatting._hex(compat._addr(queue_obj)),
+            "address": formatting._hex(int(queue_obj.address_of_())),
             "number": qn,
             "number_source": (
                 "queue.rqn"
@@ -1239,7 +1242,7 @@ class Mlx5Collector:
                 state,
                 int(self.prog.constant(state_prefix + "RECOVERING")),
             ),
-            "txq": formatting._hex(compat._addr(txq)),
+            "txq": formatting._hex(int(txq) if txq else None),
             "txq_state": formatting._hex(txq_state),
             "txq_state_flags": formatting._enum_flags(
                 txq_state, txq_state_type, "__QUEUE_STATE_"
@@ -1271,106 +1274,71 @@ class Mlx5Collector:
     def _collect_wq_summary(self, wq: Optional[Object]) -> Dict[str, Any]:
         if wq is None:
             return {"status": "unavailable"}
-        fbc = compat._safe_member(wq, "fbc")
-        log_sz, log_sz_source = compat._first_int_path_with_source(
-            wq,
-            (
-                ("wq.fbc.log_sz", ["fbc", "log_sz"]),
-                ("wq.log_sz", ["log_sz"]),
-            ),
-        )
-        log_stride, log_stride_source = compat._first_int_path_with_source(
-            wq,
-            (
-                ("wq.log_stride", ["log_stride"]),
-                ("wq.fbc.log_stride", ["fbc", "log_stride"]),
-            ),
-        )
-        sz_m1, sz_m1_source = compat._first_int_path_with_source(
-            wq,
-            (
-                ("wq.sz_m1", ["sz_m1"]),
-                ("wq.fbc.sz_m1", ["fbc", "sz_m1"]),
-                ("wq.wq.sz_m1", ["wq", "sz_m1"]),
-            ),
-        )
-        size = dumps._ring_size(wq)
-        if sz_m1 is not None:
-            size_source = sz_m1_source
-        elif log_sz is not None and 0 <= log_sz < 32:
-            size_source = log_sz_source
-        else:
-            entry_count, size_source = compat._first_int_path_with_source(
-                wq,
-                (
-                    ("wq.sz", ["sz"]),
-                    ("wq.wqe_cnt", ["wqe_cnt"]),
-                    ("wq.nentries", ["nentries"]),
-                    ("wq.num_entries", ["num_entries"]),
-                ),
-            )
-            if entry_count is None or entry_count <= 0:
-                size_bytes, size_source = compat._first_int_path_with_source(
-                    wq,
-                    (
-                        ("wq.size", ["size"]),
-                        ("wq.frag_buf.size", ["frag_buf", "size"]),
-                    ),
-                )
-                if size_bytes is None or size_bytes <= 0:
-                    size_source = None
-        if size is None:
-            size_source = None
+        type_name = wq.type_.type_name()
+        supported_types = {
+            "struct mlx5_cqwq",
+            "struct mlx5_frag_buf_ctrl",
+            "struct mlx5_ib_wq",
+            "struct mlx5_wq_cyc",
+            "struct mlx5_wq_ll",
+        }
+        if type_name not in supported_types:
+            raise TypeError(f"unsupported mlx5 work queue type: {type_name}")
 
-        stride_bytes = dumps._ring_stride_bytes(wq)
-        if log_stride is not None and 0 <= log_stride < 32:
-            stride_source = log_stride_source
-        else:
-            stride, stride_source = compat._first_int_path_with_source(
-                wq,
-                (
-                    ("wq.stride", ["stride"]),
-                    ("wq.stride_bytes", ["stride_bytes"]),
-                ),
-            )
-            if stride is None or stride <= 0:
-                stride_source = None
-        if stride_bytes is None:
-            stride_source = None
+        direct_fbc = type_name == "struct mlx5_frag_buf_ctrl"
+        fbc = wq if direct_fbc else wq.fbc
+        field_source = "wq" if direct_fbc else "wq.fbc"
+        sz_m1 = int(fbc.sz_m1)
+        log_sz = int(fbc.log_sz)
+        log_stride = int(fbc.log_stride)
         summary = {
-            "address": formatting._hex(compat._addr(wq)),
-            "size": size,
-            "size_source": size_source,
+            "address": formatting._hex(int(wq.address_)),
+            "size": None if direct_fbc else sz_m1 + 1,
+            "size_source": (
+                None if direct_fbc else f"{field_source}.sz_m1"
+            ),
             "sz_m1": sz_m1,
             "log_sz": log_sz,
             "log_stride": log_stride,
-            "stride_bytes": stride_bytes,
-            "stride_source": stride_source,
-            "pc": compat._safe_int(compat._safe_member(wq, "pc")),
-            "cc": compat._safe_int(compat._safe_member(wq, "cc")),
-            "head": compat._safe_int(compat._safe_member(wq, "head")),
-            "wqe_counter": compat._safe_int(
-                compat._safe_member(wq, "wqe_ctr")
+            "stride_bytes": 1 << log_stride,
+            "stride_source": f"{field_source}.log_stride",
+            "pc": None,
+            "cc": None,
+            "head": None,
+            "wqe_counter": None,
+            "cur_size": None,
+            "db": None,
+            "fbc": formatting._hex(
+                None if direct_fbc else int(fbc.address_)
             ),
-            "cur_size": compat._safe_int(compat._safe_member(wq, "cur_sz")),
-            "db": formatting._hex(compat._addr(compat._safe_member(wq, "db"))),
-            "fbc": formatting._hex(compat._addr(fbc)),
         }
-        for key, member in (
-            ("tail", "tail"),
-            ("wqe_count", "wqe_cnt"),
-            ("cur_post", "cur_post"),
-            ("max_post", "max_post"),
-            ("last_poll", "last_poll"),
-            ("offset", "offset"),
-            ("wqe_shift", "wqe_shift"),
+        if type_name in (
+            "struct mlx5_cqwq",
+            "struct mlx5_wq_cyc",
+            "struct mlx5_wq_ll",
         ):
-            value = compat._safe_int(compat._safe_member(wq, member))
-            if value is not None:
-                summary[key] = value
-        cur_edge = compat._safe_member(wq, "cur_edge")
-        if cur_edge is not None:
-            summary["cur_edge"] = formatting._hex(compat._addr(cur_edge))
+            summary["db"] = formatting._hex(int(wq.db))
+        if type_name == "struct mlx5_cqwq":
+            summary["cc"] = int(wq.cc)
+        elif type_name in ("struct mlx5_wq_cyc", "struct mlx5_wq_ll"):
+            summary["wqe_counter"] = int(wq.wqe_ctr)
+            summary["cur_size"] = int(wq.cur_sz)
+            if type_name == "struct mlx5_wq_ll":
+                summary["head"] = int(wq.head)
+        elif type_name == "struct mlx5_ib_wq":
+            summary.update(
+                {
+                    "head": int(wq.head),
+                    "tail": int(wq.tail),
+                    "wqe_count": int(wq.wqe_cnt),
+                    "cur_post": int(wq.cur_post),
+                    "max_post": int(wq.max_post),
+                    "last_poll": int(wq.last_poll),
+                    "offset": int(wq.offset),
+                    "wqe_shift": int(wq.wqe_shift),
+                    "cur_edge": formatting._hex(int(wq.cur_edge)),
+                }
+            )
         return summary
 
     def _collect_mlx5e_cq(
@@ -1383,13 +1351,13 @@ class Mlx5Collector:
         consumer_index, consumer_source, core_cons_index = _cq_consumer_index(
             "struct mlx5e_cq", wq_summary, mcq
         )
-        arm_sn_raw = compat._safe_int(compat._safe_member(mcq, "arm_sn"))
+        arm_sn_raw = int(mcq.arm_sn)
         owner_name = _owner_string(owner)
         record = {
             "cqn": cqn,
-            "address": formatting._hex(compat._addr(cq)),
+            "address": formatting._hex(int(cq.address_of_())),
             "address_struct": "struct mlx5e_cq",
-            "core_cq": formatting._hex(compat._addr(mcq)),
+            "core_cq": formatting._hex(int(mcq.address_of_())),
             "core_cq_struct": "struct mlx5_core_cq",
             "core_cq_source": "struct mlx5e_cq.mcq",
             "owner": owner_name,
@@ -1432,271 +1400,106 @@ class Mlx5Collector:
         device: DeviceRecord,
         queue_cqns: Set[int],
     ) -> Tuple[Optional[int], Optional[int]]:
-        eq_table = compat._safe_member_path(
-            device.mdev, ["priv", "eq_table"]
-        )
-        if eq_table is None or compat._is_null(eq_table):
-            return None, None
         eqs: Dict[Tuple[str, int], Object] = {}
         for eq, _role, _meta, _vector, _source in self._iter_eq_candidates(
             device, summary=True
         ):
-            core = compat._safe_member(eq, "core")
-            core_or_eq = core if core is not None else eq
-            eqn = compat._first_int_path(eq, (["eqn"], ["core", "eqn"]))
-            address = compat._addr(core_or_eq)
-            if eqn is not None:
-                key = ("eqn", eqn)
-            elif address is not None:
-                key = ("addr", address)
-            else:
-                continue
-            eqs.setdefault(key, core_or_eq)
+            core = _core_eq(eq)
+            eqs.setdefault(("eqn", int(core.eqn)), core)
 
         cqns = set(queue_cqns)
         cq_table_seen = False
         for eq in eqs.values():
-            tree = compat._safe_member_path(eq, ["cq_table", "tree"])
-            if tree is None:
-                continue
             cq_table_seen = True
-            for cq_key, cq in self._iter_walk_limited(
-                self._walk_index_table(tree, ["eq", "cq_table", "tree"]),
+            for cq_key, _cq in self._iter_walk_limited(
+                radix_tree_for_each(eq.cq_table.tree.address_of_()),
                 f"{device.name}: summary CQ count",
             ):
-                cqn = compat._safe_int(cq_key)
-                if cqn is None:
-                    cqn = compat._safe_int(compat._safe_member(cq, "cqn"))
-                if cqn is not None:
-                    cqns.add(cqn)
+                cqns.add(int(cq_key))
         return len(eqs), (len(cqns) if cq_table_seen or cqns else None)
 
     def _iter_eq_candidates(
         self, device: DeviceRecord, summary: bool = False
     ) -> Iterator[Tuple[Object, str, Optional[Object], Optional[int], str]]:
-        eq_table = compat._safe_member_path(
-            device.mdev, ["priv", "eq_table"]
-        )
-        if eq_table is None or compat._is_null(eq_table):
-            return
+        eq_table = device.mdev.priv.eq_table
         name = device.name
         for field, role in (
             ("cmd_eq", "cmd"),
             ("async_eq", "async"),
             ("pages_eq", "pages"),
-            ("pcie_core_clock_eq", "pcie_core_clock"),
-            ("general_event_eq", "general_event"),
         ):
-            eq = compat._safe_member(eq_table, field)
-            if eq is not None and not compat._is_null(eq):
-                yield eq, role, None, None, "direct"
+            yield getattr(eq_table, field), role, None, None, "direct"
 
-        comp_eqs = compat._safe_member(eq_table, "comp_eqs")
-        if comp_eqs is not None and (
-            compat._safe_member(comp_eqs, "xa_head") is not None
-            or compat._safe_member(comp_eqs, "rnode") is not None
-        ):
-            completion_eq_found = False
-            try:
-                scope = (
-                    f"{name} summary comp_eq count"
-                    if summary
-                    else f"{name} comp_eqs xarray"
-                )
-                for vector, eq_comp in self._iter_walk_limited(
-                    xa_for_each(comp_eqs), f"{scope}: iterator walk"
-                ):
-                    eq_comp = self._coerce_eq_comp(eq_comp)
-                    if eq_comp is None:
-                        continue
-                    completion_eq_found = True
-                    core = compat._safe_member(eq_comp, "core")
-                    yield (
-                        core if core is not None else eq_comp,
-                        "completion",
-                        eq_comp,
-                        compat._safe_int(vector),
-                        "xarray",
-                    )
-            except (
-                FaultError,
-                ObjectAbsentError,
-                OutOfBoundsError,
-                TypeError,
-                ValueError,
-            ) as err:
-                self._warn(f"fault while walking {name} comp_eqs: {err}")
-            else:
-                if completion_eq_found:
-                    return
-
-        comp_count, _source = compat._first_int_path_with_source(
-            eq_table, defs._MLX5_EQ_TABLE_COMP_ARRAY_COUNT_PATHS
-        )
-        if comp_eqs is not None and comp_count is not None:
-            completion_eq_found = False
+        if has_member(eq_table, "comp_eqs"):
             scope = (
-                f"{name} summary comp_eq array count"
+                f"{name} summary comp_eq count"
                 if summary
-                else f"{name} comp_eqs array"
+                else f"{name} comp_eqs xarray"
             )
-            count = self._walk_count(
-                comp_count, scope, hard_limit=defs.MAX_EQS
-            )
-            for vector in range(count):
-                eq_comp = self._coerce_eq_comp(
-                    compat._safe_index(comp_eqs, vector)
-                )
-                if eq_comp is None:
-                    continue
-                completion_eq_found = True
-                core = compat._safe_member(eq_comp, "core")
+            for vector, entry in self._iter_walk_limited(
+                xa_for_each(eq_table.comp_eqs), f"{scope}: iterator walk"
+            ):
+                eq_comp = cast("struct mlx5_eq_comp *", entry)
                 yield (
-                    core if core is not None else eq_comp,
+                    eq_comp.core,
                     "completion",
                     eq_comp,
-                    vector,
-                    "array",
+                    int(vector),
+                    "xarray",
                 )
-            if completion_eq_found:
-                return
+            return
 
-        for field, type_name, member in (
-            ("comp_eqs_list", "struct mlx5_eq_comp", "list"),
-            ("eqs_list", "struct mlx5_eq", "list"),
+        scope = (
+            f"{name} summary comp_eqs_list count"
+            if summary
+            else f"{name} comp_eqs_list"
+        )
+        objects = list_for_each_entry(
+            "struct mlx5_eq_comp",
+            eq_table.comp_eqs_list.address_of_(),
+            "list",
+        )
+        for eq_comp in self._iter_walk_limited(
+            objects, f"{scope}: iterator walk"
         ):
-            head = compat._safe_member(eq_table, field)
-            if head is None:
-                continue
-            context = f"walking {name} {field}" + (
-                " for summary counts" if summary else ""
-            )
-            scope = (
-                f"{name} summary {field} count"
-                if summary
-                else f"{name} {field}"
-            )
-            completion_eq_found = False
-            try:
-                objects = list_for_each_entry(
-                    type_name, head.address_of_(), member
-                )
-                for obj in self._iter_walk_limited(
-                    objects, f"{scope}: iterator walk"
-                ):
-                    completion_eq_found = True
-                    core = compat._safe_member(obj, "core")
-                    yield (
-                        core if core is not None else obj,
-                        "completion",
-                        obj,
-                        None,
-                        "list",
-                    )
-            except (
-                FaultError,
-                ObjectAbsentError,
-                OutOfBoundsError,
-                TypeError,
-                ValueError,
-            ) as err:
-                self._warn(f"fault while {context}: {err}")
-            if completion_eq_found:
-                return
+            yield eq_comp.core, "completion", eq_comp, None, "list"
 
     def _collect_eqs_from_device(self, device: DeviceRecord) -> None:
         for eq, role, meta, vector, source in self._iter_eq_candidates(device):
-            record = self._record_eq(eq, device, role, eq_meta=meta)
+            record = self._record_eq(eq, device, role)
             if source == "xarray":
                 record["vector"] = vector
-                record["comp_eq"] = formatting._hex(compat._addr(meta))
-            elif source == "array" and record.get("vector") is None:
-                record["vector"] = vector
-
-    def _coerce_eq_comp(self, obj: Object) -> Optional[Object]:
-        if obj is None or compat._is_null(obj):
-            return None
-        if (
-            compat._safe_member(obj, "core") is not None
-            or compat._safe_member(obj, "eqn") is not None
-        ):
-            return obj
-        addr = compat._addr(obj)
-        if addr is None:
-            return None
-        for type_name in ("struct mlx5_eq_comp *", "struct mlx5_eq *"):
-            candidate = compat._safe_pointer(self.prog, type_name, addr)
-            if candidate is not None and (
-                compat._safe_member(candidate, "core") is not None
-                or compat._safe_member(candidate, "eqn") is not None
-            ):
-                return candidate
-        return None
+                record["comp_eq"] = formatting._hex(
+                    int(meta) if meta else None
+                )
 
     def _record_eq(
         self,
         eq: Object,
         device: DeviceRecord,
         role: str,
-        eq_meta: Optional[Object] = None,
     ) -> Dict[str, Any]:
-        core = compat._safe_member(eq, "core")
-        core_or_eq = core if core is not None else eq
-        eq_fields = eq_meta if eq_meta is not None else eq
-        eqn = compat._first_int_path(eq, (["eqn"], ["core", "eqn"]))
-
-        wq = compat._first_member_path(
-            eq, (["wq"], ["core", "wq"], ["buf"], ["frag_buf"])
-        )
-        if wq is None and (
-            compat._safe_member(core_or_eq, "fbc") is not None
-            or compat._safe_member(core_or_eq, "frag_buf") is not None
-        ):
-            wq = core_or_eq
-
-        size = compat._first_int_path(
-            eq, (["nent"], ["core", "nent"], ["eqe_cnt"])
-        )
-        if size is None:
-            sz_m1 = compat._first_int_path(
-                core_or_eq, (["fbc", "sz_m1"], ["sz_m1"])
-            )
-            if sz_m1 is not None:
-                size = sz_m1 + 1
-
-        eqe_size = compat._first_int_path(
-            eq, (["eqe_size"], ["core", "eqe_size"])
-        )
-        if eqe_size is None:
-            eqe_size = compat._sizeof_type(self.prog, "struct mlx5_eqe")
-
-        irqn = compat._first_int_path(
-            eq, (["irqn"], ["core", "irqn"], ["irq", "irqn"])
-        )
+        core = _core_eq(eq)
+        eqn = int(core.eqn)
+        irqn = int(core.irqn)
         record = {
             "eqn": eqn,
-            "address": formatting._hex(compat._addr(eq)),
-            "address_struct": compat._struct_type_name(eq),
-            "core_eq": formatting._hex(compat._addr(core_or_eq)),
-            "core_eq_struct": compat._struct_type_name(core_or_eq),
+            "address": formatting._hex(int(eq.address_)),
+            "address_struct": eq.type_.type_name(),
+            "core_eq": formatting._hex(int(core.address_)),
+            "core_eq_struct": core.type_.type_name(),
             "device": device.name,
             "role": role,
             "irqn": irqn,
             "irq_cpu": _irq_affinity_cpus(self.prog, irqn),
-            "vector": compat._first_int_path(
-                eq, (["vecidx"], ["vector"], ["comp_vec"], ["core", "vecidx"])
-            ),
-            "consumer_index": compat._first_int_path(
-                eq, (["cons_index"], ["core", "cons_index"])
-            ),
-            "size": size,
-            "cq_count": compat._first_int_path(
-                eq_fields, (["cq_count"], ["core", "cq_count"])
-            ),
-            "eqe_size": eqe_size,
-            "mask": formatting._hex(
-                compat._first_int_path(eq, (["mask"], ["core", "mask"]))
-            ),
+            "vector": int(core.vecidx),
+            "consumer_index": int(core.cons_index),
+            "size": int(core.fbc.sz_m1) + 1,
+            "cq_count": int(core.cq_count)
+            if has_member(core, "cq_count")
+            else None,
+            "eqe_size": self.prog.type("struct mlx5_eqe").size,
+            "mask": None,
         }
 
         key = _record_key(device.name, eqn)
@@ -1704,7 +1507,7 @@ class Mlx5Collector:
             return record
         entry = self._eqs.get(key)
         if entry is None:
-            self._eqs[key] = _EqEntry(record, eq, wq)
+            self._eqs[key] = _EqEntry(record, eq, core)
             return record
 
         existing = entry.record
@@ -1723,23 +1526,14 @@ class Mlx5Collector:
         for (dev_name, eqn), entry in self._eqs.items():
             if dev_name != device.name:
                 continue
-            eq = entry.eq
-            core = compat._safe_member(eq, "core")
-            core_or_eq = core if core is not None else eq
-            tree = compat._safe_member_path(core_or_eq, ["cq_table", "tree"])
-            if tree is None:
-                continue
+            core = _core_eq(entry.eq)
             role = entry.record.get("role") or "eq"
             owner = f"eq_cq_table:{role}:eqn{eqn}"
             for key, obj in self._iter_walk_limited(
-                self._walk_index_table(tree, ["eq", "cq_table", "tree"]),
+                radix_tree_for_each(core.cq_table.tree.address_of_()),
                 f"{device.name}: EQ {eqn} CQ table walk",
             ):
-                core_cq = compat._safe_pointer(
-                    self.prog, "struct mlx5_core_cq *", compat._addr(obj)
-                )
-                if core_cq is None:
-                    continue
+                core_cq = cast("struct mlx5_core_cq *", obj)
                 self._record_core_cq(
                     core_cq, device, owner=owner, table_key=key
                 )
@@ -1751,9 +1545,11 @@ class Mlx5Collector:
         owner: str,
         table_key: Optional[int] = None,
     ) -> Dict[str, Any]:
-        cqn = compat._safe_int(compat._safe_member(core_cq, "cqn"))
-        if cqn is None:
-            cqn = table_key
+        cqn = int(core_cq.cqn)
+        if table_key is not None and cqn != table_key:
+            raise ValueError(
+                f"CQ table key {table_key} does not match CQN {cqn}"
+            )
         mlx5e_cq = self._mlx5e_cq_from_core_cq(core_cq, device)
         ib_cq = None
         aso_cq = None
@@ -1766,20 +1562,17 @@ class Mlx5Collector:
         netdev = None
         event_ctr = None
         specific_owner = None
+        size = None
+        stride_bytes = None
         queue_kind: Optional[str] = "core_cq"
         queue_role: Optional[str] = "core"
         queue_number = cqn
         if ib_cq is not None:
             address_obj, address_struct = ib_cq, "struct mlx5_ib_cq"
-            wq = compat._first_member_path(
-                ib_cq,
-                (
-                    ["buf", "fbc"],
-                    ["buf", "frag_buf"],
-                    ["resize_buf", "fbc"],
-                    ["resize_buf", "frag_buf"],
-                ),
-            )
+            size = int(ib_cq.ibcq.cqe) + 1
+            stride_bytes = int(ib_cq.cqe_size)
+            if not ib_cq.ibcq.uobject:
+                wq = ib_cq.buf.fbc
             queue_kind, queue_role = "rdma_cq", "rdma"
         elif mlx5e_cq is not None:
             address_obj, address_struct = mlx5e_cq, "struct mlx5e_cq"
@@ -1788,14 +1581,11 @@ class Mlx5Collector:
             netdev = mlx5e_owner.get("netdev")
             queue_kind = mlx5e_owner.get("queue_kind")
             queue_role = mlx5e_owner.get("queue_role")
-            queue_number = mlx5e_owner.get("queue_number")
-            event_ctr = compat._safe_int(
-                compat._safe_member(mlx5e_cq, "event_ctr")
-            )
+            event_ctr = int(mlx5e_cq.event_ctr)
             specific_owner = _owner_string(mlx5e_owner)
         elif aso_cq is not None:
             address_obj, address_struct = aso_cq, "struct mlx5_aso_cq"
-            wq = compat._safe_member(aso_cq, "wq")
+            wq = aso_cq.wq
             queue_kind, queue_role = "aso_cq", "internal"
             specific_owner = f"aso_cq{cqn}" if cqn is not None else "aso_cq"
         owners = (
@@ -1807,12 +1597,12 @@ class Mlx5Collector:
         consumer_index, consumer_source, core_cons_index = _cq_consumer_index(
             address_struct, wq_summary, core_cq
         )
-        arm_sn_raw = compat._safe_int(compat._safe_member(core_cq, "arm_sn"))
+        arm_sn_raw = int(core_cq.arm_sn)
         record = {
             "cqn": cqn,
-            "address": formatting._hex(compat._addr(address_obj)),
+            "address": formatting._hex(int(address_obj)),
             "address_struct": address_struct,
-            "core_cq": formatting._hex(compat._addr(core_cq)),
+            "core_cq": formatting._hex(int(core_cq)),
             "core_cq_struct": "struct mlx5_core_cq",
             "owner": ";".join(str(o) for o in owners if o),
             "owners": owners,
@@ -1828,12 +1618,13 @@ class Mlx5Collector:
             "wq_cc": wq_summary.get("cc"),
             "arm_sn": _cq_arm_sn(arm_sn_raw),
             "arm_sn_raw": arm_sn_raw,
-            "vector": compat._safe_int(compat._safe_member(core_cq, "vector")),
-            "irqn": compat._safe_int(compat._safe_member(core_cq, "irqn")),
+            "vector": int(core_cq.vector),
+            "irqn": int(core_cq.irqn),
             "event_ctr": event_ctr,
-            "size": wq_summary.get("size"),
-            "stride_bytes": wq_summary.get("stride_bytes")
-            or compat._safe_int(compat._safe_member(core_cq, "cqe_sz")),
+            "size": size or wq_summary.get("size"),
+            "stride_bytes": stride_bytes
+            or wq_summary.get("stride_bytes")
+            or int(core_cq.cqe_sz),
         }
 
         key = _record_key(device.name, cqn)
@@ -1858,37 +1649,28 @@ class Mlx5Collector:
         self, core_cq: Object, device: DeviceRecord
     ) -> Optional[Object]:
         comp = collect_device._symbol_for_addr(
-            self.prog, compat._addr(compat._safe_member(core_cq, "comp"))
+            self.prog, int(core_cq.comp) if core_cq.comp else None
         )
         event = collect_device._symbol_for_addr(
-            self.prog, compat._addr(compat._safe_member(core_cq, "event"))
+            self.prog, int(core_cq.event) if core_cq.event else None
         )
-        if (
-            (comp is not None or event is not None)
-            and comp != "mlx5e_completion_event"
-            and event != "mlx5e_cq_error_event"
-        ):
+        if comp != "mlx5e_completion_event" and event != "mlx5e_cq_error_event":
             return None
-        cq = compat._safe_container_of(core_cq, "struct mlx5e_cq", "mcq")
-        if cq is None or compat._is_null(cq):
-            return None
-        mdev = compat._safe_member(cq, "mdev")
-        if not dumps._same_address(mdev, device.mdev):
-            return None
-        if not dumps._plausible_cq_wq(compat._safe_member(cq, "wq")):
-            return None
+        cq = container_of(core_cq, "struct mlx5e_cq", "mcq")
+        if int(cq.mdev) != int(device.mdev):
+            raise ValueError("mlx5e CQ belongs to a different core device")
         return cq
 
     def _mlx5e_core_cq_owner(
         self, cq: Object, core_cq: Object, device: DeviceRecord
     ) -> Dict[str, Any]:
-        cqn = compat._safe_int(compat._safe_member(core_cq, "cqn"))
-        cq_netdev = compat._safe_member(cq, "netdev")
+        cqn = int(core_cq.cqn)
+        cq_netdev = cq.netdev
         netdev_name = None
         for netdev in device.netdevs:
             priv = netdev.get("_priv_obj")
-            if dumps._same_address(
-                cq, compat._safe_member_path(priv, ["drop_rq", "cq"])
+            if priv is not None and int(cq) == int(
+                priv.drop_rq.cq.address_of_()
             ):
                 return {
                     "device": device.name,
@@ -1897,15 +1679,15 @@ class Mlx5Collector:
                     "queue_role": "drop",
                     "queue_number": cqn,
                 }
-            if netdev_name is None and dumps._same_address(
-                cq_netdev, netdev.get("_netdev_obj")
+            netdev_obj = netdev.get("_netdev_obj")
+            if (
+                netdev_name is None
+                and cq_netdev
+                and netdev_obj
+                and int(cq_netdev) == int(netdev_obj)
             ):
                 netdev_name = netdev.get("name")
-        if (
-            netdev_name is None
-            and cq_netdev is not None
-            and not compat._is_null(cq_netdev)
-        ):
+        if netdev_name is None and cq_netdev:
             netdev_name = cq_netdev.name.string_().decode("utf-8", "replace")
 
         return {
@@ -1919,43 +1701,20 @@ class Mlx5Collector:
     def _mlx5_aso_cq_from_core_cq(
         self, core_cq: Object, device: DeviceRecord
     ) -> Optional[Object]:
-        cq = compat._safe_container_of(core_cq, "struct mlx5_aso_cq", "mcq")
-        if cq is None or compat._is_null(cq):
+        if core_cq.comp or core_cq.event:
             return None
-        if not dumps._same_address(
-            compat._safe_member(cq, "mdev"), device.mdev
-        ):
-            return None
-        wq = compat._safe_member(cq, "wq")
-        return cq if dumps._plausible_cq_wq(wq) else None
+        cq = container_of(core_cq, "struct mlx5_aso_cq", "mcq")
+        if int(cq.mdev) != int(device.mdev):
+            raise ValueError("ASO CQ belongs to a different core device")
+        return cq
 
     def _mlx5_ib_cq_from_core_cq(self, core_cq: Object) -> Optional[Object]:
-        cq = compat._safe_container_of(core_cq, "struct mlx5_ib_cq", "mcq")
-        if cq is None or compat._is_null(cq):
+        event = collect_device._symbol_for_addr(
+            self.prog, int(core_cq.event) if core_cq.event else None
+        )
+        if event != "mlx5_ib_cq_event":
             return None
-        if (
-            compat._safe_member(cq, "ibcq") is None
-            or compat._safe_member(cq, "buf") is None
-        ):
-            return None
-        cqe_size = compat._safe_int(compat._safe_member(cq, "cqe_size"))
-        buf_cqe_size = compat._safe_int(
-            compat._safe_member_path(cq, ["buf", "cqe_size"])
-        )
-        nent = compat._safe_int(compat._safe_member_path(cq, ["buf", "nent"]))
-        log_sz = compat._safe_int(
-            compat._safe_member_path(cq, ["buf", "fbc", "log_sz"])
-        )
-        sz_m1 = compat._safe_int(
-            compat._safe_member_path(cq, ["buf", "fbc", "sz_m1"])
-        )
-        plausible_cqe_size = cqe_size in (64, 128) or buf_cqe_size in (64, 128)
-        plausible_size = (
-            (nent is None or 0 < nent <= defs.MAX_PLAUSIBLE_RING_ENTRIES)
-            and (log_sz is None or 0 <= log_sz < 32)
-            and (sz_m1 is None or 0 <= sz_m1 < defs.MAX_PLAUSIBLE_RING_ENTRIES)
-        )
-        return cq if plausible_cqe_size and plausible_size else None
+        return container_of(core_cq, "struct mlx5_ib_cq", "mcq")
 
     def _link_cqs_eqs_and_channels(
         self, devices: Sequence[DeviceRecord]
@@ -2041,7 +1800,7 @@ class Mlx5Collector:
                     if channel.get("irq_desc") is None and irqn is not None:
                         desc = irq_to_desc(self.prog, irqn)
                         channel["irq_desc"] = formatting._hex(
-                            compat._addr(desc)
+                            int(desc) if desc else None
                         )
 
     # RDMA queue pairs
@@ -2076,73 +1835,22 @@ class Mlx5Collector:
     def _iter_qps_from_device(
         self, device: DeviceRecord, *, summary: bool
     ) -> Iterator[Tuple[Object, str, Optional[int]]]:
-        """Yield QPs from every source used by summary and full reports."""
+        """Yield every RDMA QP owned by this mlx5 device."""
 
-        mdev = device.mdev
-        mdev_addr = compat._addr(mdev)
         device_name = device.name
-        source_found = False
-        ibdevs = (
-            self._iter_mlx5_ib_devices(mdev_addr)
-            if mdev_addr is not None
-            else ()
+        scope = (
+            f"{device_name}: summary mlx5_ib qp_list count"
+            if summary
+            else f"{device_name}: mlx5_ib qp_list walk"
         )
-        for ibdev in ibdevs:
-            qp_head = compat._safe_member(ibdev, "qp_list")
-            if qp_head is not None:
-                source_found = True
-                purpose = " for summary counts" if summary else ""
-                qp_list_head = qp_head.address_of_()
-                qps = compat._safe_iter(
-                    lambda: list_for_each_entry(
-                        "struct mlx5_ib_qp",
-                        qp_list_head,
-                        "qps_list",
-                    ),
-                    self._warn,
-                    f"walking {device_name} mlx5_ib qp_list{purpose}",
-                )
-                scope = (
-                    f"{device_name}: summary mlx5_ib qp_list count"
-                    if summary
-                    else f"{device_name}: mlx5_ib qp_list walk"
-                )
-                for qp in self._iter_walk_limited(qps, scope):
-                    yield qp, "mlx5_ib_qp_list", None
-
-            path = ["qp_table", "tree"]
-            root = compat._safe_member_path(ibdev, path)
-            if root is not None:
-                source_found = True
-                ib_path = ["mlx5_ib", *path]
-                scope = f"{device_name}: mlx5_ib qp_table walk"
-                for table_qpn, obj in self._iter_walk_limited(
-                    self._walk_index_table(root, ib_path), scope
-                ):
-                    qp = self._qp_candidate_from_table_entry(obj)
-                    if qp is not None:
-                        yield qp, "mlx5_ib_qp_table", table_qpn
-
-        if mdev is not None:
-            for path in defs._MLX5_CORE_QP_TABLE_PATHS:
-                root = compat._safe_member_path(mdev, path)
-                if root is None:
-                    continue
-                source_found = True
-                scope = f"{device_name}: core QP table {'.'.join(path)} walk"
-                for table_qpn, obj in self._iter_walk_limited(
-                    self._walk_index_table(root, path), scope
-                ):
-                    qp = self._qp_candidate_from_table_entry(obj)
-                    if qp is not None:
-                        yield qp, "core_table", table_qpn
-
-        if (
-            not source_found
-            and not summary
-            and (self.args.qps or self.args.dump_wqe)
-        ):
-            self._warn(f"{device_name}: no readable mlx5 QP table was found")
+        for ibdev in self._iter_mlx5_ib_devices(int(device.mdev)):
+            qps = list_for_each_entry(
+                "struct mlx5_ib_qp",
+                ibdev.qp_list.address_of_(),
+                "qps_list",
+            )
+            for qp in self._iter_walk_limited(qps, scope):
+                yield qp, "mlx5_ib_qp_list", None
 
     def _iter_walk_limited(
         self, iterable: Iterable[Any], truncation_scope: str
@@ -2158,98 +1866,6 @@ class Mlx5Collector:
                 break
             yield item
 
-    def _walk_index_table(
-        self,
-        root: Object,
-        path: Sequence[str],
-        depth: int = 0,
-        seen: Optional[set] = None,
-    ) -> Iterator[Tuple[Optional[int], Object]]:
-        """Walk an mlx5 table stored as an xarray, IDR, or radix tree."""
-
-        if seen is None:
-            seen = set()
-        if depth > 8:
-            return
-        type_name = compat._struct_type_name(root)
-        root_addr = compat._addr(root)
-        if root_addr is not None:
-            marker = (type_name, root_addr)
-            if marker in seen:
-                return
-            seen.add(marker)
-
-        helper = None
-        helper_name = None
-        if type_name == "struct xarray":
-            helper_name, helper = "xarray", xa_for_each
-        elif type_name == "struct idr":
-            helper_name, helper = "IDR", idr_for_each
-        elif type_name == "struct radix_tree_root":
-            helper_name, helper = "radix tree", radix_tree_for_each
-        if helper is not None:
-            try:
-                for index, entry in helper(root):
-                    yield compat._safe_int(index), entry
-            except (
-                FaultError,
-                ObjectAbsentError,
-                OutOfBoundsError,
-                LookupError,
-                TypeError,
-                ValueError,
-            ) as err:
-                self._warn(
-                    f"could not walk {'.'.join(path)} as {helper_name}: "
-                    f"{type(err).__name__}: {err}"
-                )
-            return
-
-        for member in ("xa", "xarray", "idr", "tree"):
-            child = compat._safe_member(root, member)
-            if child is None:
-                continue
-            for item in self._walk_index_table(
-                child,
-                [*path, member],
-                depth=depth + 1,
-                seen=seen,
-            ):
-                yield item
-            return
-        self._warn(
-            f"could not walk {'.'.join(path)}: unsupported table type "
-            f"{type_name or 'unknown'}"
-        )
-
-    def _qp_candidate_from_table_entry(self, obj: Object) -> Optional[Object]:
-        if obj is None or compat._is_null(obj):
-            return None
-        if compat._struct_type_name(obj) == "struct mlx5_ib_qp":
-            return obj
-        qp_from_core = self._mlx5_ib_qp_from_core_qp(obj)
-        if qp_from_core is not None:
-            return qp_from_core
-        qp = compat._safe_pointer(
-            self.prog, "struct mlx5_ib_qp *", compat._addr(obj)
-        )
-        return qp if _plausible_mlx5_ib_qp(qp) else None
-
-    def _mlx5_ib_qp_from_core_qp(self, obj: Object) -> Optional[Object]:
-        """Find mlx5_ib_qp when a table points to its embedded core QP.
-
-        UEK QP tables are keyed by hardware QPN and may point to
-        mlx5_ib_qp_base.mqp. container_mibqp leads to the outer mlx5_ib_qp.
-        """
-
-        addr = compat._addr(obj)
-        if addr is None:
-            return None
-        core = compat._safe_pointer(self.prog, "struct mlx5_core_qp *", addr)
-        base = compat._safe_container_of(core, "struct mlx5_ib_qp_base", "mqp")
-        qp = compat._safe_member(base, "container_mibqp")
-        return qp if _plausible_mlx5_ib_qp(qp) else None
-
     def _record_qp(
         self,
         qp: Object,
@@ -2263,17 +1879,17 @@ class Mlx5Collector:
         qpn = identity.qpn
         ib_qpn = identity.ib_qpn
         hw_qpn = identity.hw_qpn
-        send_cq = compat._safe_member_path(qp, ["ibqp", "send_cq"])
-        recv_cq = compat._safe_member_path(qp, ["ibqp", "recv_cq"])
+        send_cq = qp.ibqp.send_cq
+        recv_cq = qp.ibqp.recv_cq
         qp_type = _qp_type(qp)
         if qp_type == int(self.prog.constant("IB_QPT_RAW_PACKET")):
-            sq_wq = compat._safe_member_path(qp, ["raw_packet_qp", "sq", "sq"])
-            rq_wq = compat._safe_member_path(qp, ["raw_packet_qp", "rq", "rq"])
+            sq_wq = qp.raw_packet_qp.sq.sq
+            rq_wq = qp.raw_packet_qp.rq.rq
             sq_source = "qp.raw_packet_qp.sq.sq"
             rq_source = "qp.raw_packet_qp.rq.rq"
         else:
-            sq_wq = compat._safe_member(qp, "sq")
-            rq_wq = compat._safe_member(qp, "rq")
+            sq_wq = qp.sq
+            rq_wq = qp.rq
             sq_source = "qp.sq"
             rq_source = "qp.rq"
         sq_summary = self._collect_wq_summary(sq_wq)
@@ -2282,9 +1898,7 @@ class Mlx5Collector:
         sq_cc = sq_summary.get("tail")
         rq_pc = rq_summary.get("head")
         rq_cc = rq_summary.get("tail")
-        qp_state = compat._first_int_path(
-            qp, (["state"], ["ibqp", "state"], ["mqp", "state"])
-        )
+        qp_state = int(qp.state)
         creator = _qp_creator(qp)
         record = {
             "qpn": qpn,
@@ -2292,8 +1906,8 @@ class Mlx5Collector:
             "hw_qpn": hw_qpn,
             "table_qpn": table_qpn,
             "qpn_aliases": list(identity.aliases),
-            "address": formatting._hex(compat._addr(qp)),
-            "address_struct": compat._struct_type_name(qp),
+            "address": formatting._hex(int(qp)),
+            "address_struct": "struct mlx5_ib_qp",
             "device": device.name,
             "owner": source,
             "owners": [source],
@@ -2310,20 +1924,14 @@ class Mlx5Collector:
             "state_display": decode._enum_type_label(
                 self.prog, qp_state, "enum ib_qp_state"
             ),
-            "flags": formatting._hex(
-                compat._safe_int(compat._safe_member(qp, "flags"))
-            ),
-            "has_rq": compat._safe_int(compat._safe_member(qp, "has_rq")),
-            "is_rss": compat._safe_int(compat._safe_member(qp, "is_rss")),
-            "max_inline_data": compat._safe_int(
-                compat._safe_member(qp, "max_inline_data")
-            ),
-            "db": formatting._hex(compat._addr(compat._safe_member(qp, "db"))),
-            "buf": formatting._hex(
-                compat._addr(compat._safe_member(qp, "buf"))
-            ),
-            "send_cq": formatting._hex(compat._addr(send_cq)),
-            "recv_cq": formatting._hex(compat._addr(recv_cq)),
+            "flags": formatting._hex(int(qp.flags)),
+            "has_rq": int(qp.has_rq),
+            "is_rss": int(qp.is_rss) if has_member(qp, "is_rss") else None,
+            "max_inline_data": int(qp.max_inline_data),
+            "db": formatting._hex(int(qp.db.address_)),
+            "buf": formatting._hex(int(qp.buf.address_)),
+            "send_cq": formatting._hex(int(send_cq) if send_cq else None),
+            "recv_cq": formatting._hex(int(recv_cq) if recv_cq else None),
             "send_cqn": _cq_number_from_cq(send_cq),
             "recv_cqn": _cq_number_from_cq(recv_cq),
             "sq": sq_summary,
@@ -2380,7 +1988,7 @@ class Mlx5Collector:
                 list
             )
             for qp_key, qp_entry in self._qps.items():
-                send_cqn = compat._safe_int(qp_entry.record.get("send_cqn"))
+                send_cqn = qp_entry.record.get("send_cqn")
                 if send_cqn is not None:
                     qps_by_cq[(qp_key.device, send_cqn)].append(qp_entry)
             if self.args.cqn is None:
@@ -2529,7 +2137,7 @@ class Mlx5Collector:
             item: Tuple[Tuple[str, int], Dict[str, Any]]
         ) -> Tuple[int, int, str, int]:
             (device_name, cqn), cq = item
-            size = compat._safe_int(cq.get("size"))
+            size = cq.get("size")
             return (
                 1 if size is not None and size <= 1 else 0,
                 role_rank.get(str(cq.get("queue_kind") or ""), len(role_rank)),
@@ -2565,17 +2173,13 @@ class Mlx5Collector:
         ) -> Tuple[int, int, str, int]:
             _key, qp = item
             sq = qp.get("sq")
-            sq_size = (
-                compat._safe_int(sq.get("size"))
-                if isinstance(sq, dict)
-                else None
-            )
+            sq_size = sq.get("size") if isinstance(sq, dict) else None
             inflight = _nonnegative_delta(qp.get("sq_pc"), qp.get("sq_cc"))
             return (
                 1 if sq_size in (None, 0) else 0,
                 1 if inflight == 0 else 0,
                 str(qp.get("device") or ""),
-                compat._safe_int(qp.get("qpn")) or 0,
+                qp.get("qpn") or 0,
             )
 
         candidates.sort(key=rank)
@@ -2604,11 +2208,7 @@ class Mlx5Collector:
         ) -> Tuple[int, int, str, int, str]:
             (device_name, _selector_name, queue_number, owner), queue = item
             wq = queue.get("wq", {})
-            size = (
-                compat._safe_int(wq.get("size"))
-                if isinstance(wq, dict)
-                else None
-            )
+            size = wq.get("size") if isinstance(wq, dict) else None
             return (
                 1 if size in (None, 0) else 0,
                 role_rank.get(str(queue.get("kind") or ""), len(role_rank)),
@@ -2766,16 +2366,16 @@ class Mlx5Collector:
                 continue
             # mlx5_ib_poll_one() uses wqe_counter directly for send completions
             # and errors. Receive/SRQ completions use different cursor rules.
-            if compat._safe_int(entry.get("opcode_value")) not in (
+            if entry.get("opcode_value") not in (
                 int(self.prog.constant("MLX5_CQE_REQ")),
                 int(self.prog.constant("MLX5_CQE_REQ_ERR")),
             ):
                 continue
-            wqe_ctr = compat._safe_int(entry.get("wqe_counter"))
+            wqe_ctr = entry.get("wqe_counter")
             if wqe_ctr is None:
                 continue
             matches = qp_candidates
-            cqe_qpn = compat._safe_int(entry.get("qpn"))
+            cqe_qpn = entry.get("qpn")
             if len(matches) != 1 and cqe_qpn not in (None, 0):
                 matches = [
                     qp_entry
@@ -2829,10 +2429,6 @@ class Mlx5Collector:
         device_name, eqn = key
         entry = self._eqs.get(key)
         record, eq, wq = entry if entry is not None else ({}, None, None)
-        if wq is None and eq is not None:
-            wq = compat._first_member_path(
-                eq, (["wq"], ["core", "wq"], ["buf"], ["frag_buf"])
-            )
         if wq is None:
             return {
                 "kind": "eqe",
@@ -2880,7 +2476,7 @@ class Mlx5Collector:
         entry = self._qps.get(key)
         record = entry.record if entry is not None else {}
         device_name = str(record.get("device") or key.device)
-        qpn = compat._safe_int(record.get("qpn"))
+        qpn = record.get("qpn")
         wq = entry.dump_wq if entry is not None else None
         owner = record.get("owner")
         wq_summary = record.get("sq", {})
@@ -2965,9 +2561,7 @@ class Mlx5Collector:
             }
         wq_summary = record.get("wq", {})
         is_rq = record.get("kind") in ("rq", "xskrq", "ptp_rq")
-        linked_rq = is_rq and "mlx5_wq_ll" in str(
-            compat._object_type_name(wq) or ""
-        )
+        linked_rq = is_rq and wq.type_.type_name() == "struct mlx5_wq_ll"
         decode_wqe = (
             (lambda raw: _decode_rq_wqe(raw, linked=linked_rq))
             if is_rq
@@ -2989,7 +2583,7 @@ class Mlx5Collector:
             [
                 "queue progress shows no outstanding WQEs; entries may be old ring contents"
             ]
-            if compat._safe_int(record.get("inflight")) == 0
+            if record.get("inflight") == 0
             else []
         )
         if _descriptor_dump_has_errors(entries):
@@ -3081,16 +2675,30 @@ class Mlx5Collector:
         around_consumer: bool = False,
     ) -> List[Dict[str, Any]]:
         entries: List[Dict[str, Any]] = []
-        size = compat._safe_int(known_size)
+        size = int(known_size) if known_size is not None else None
         if size is None:
             size = dumps._ring_size(wq, default_len)
         if size is not None and size <= 0:
             return [{"index": None, "status": "size-unavailable"}]
-        consumer_index = compat._safe_int(known_consumer_index)
+        consumer_index = (
+            int(known_consumer_index)
+            if known_consumer_index is not None
+            else None
+        )
         if consumer_index is None:
-            consumer_index = compat._first_int_path(
-                wq, (["cc"], ["cons_index"], ["wqe_ctr"])
-            )
+            type_name = wq.type_.type_name()
+            if type_name == "struct mlx5_cqwq":
+                consumer_index = int(wq.cc)
+            elif type_name in ("struct mlx5_wq_cyc", "struct mlx5_wq_ll"):
+                consumer_index = int(wq.wqe_ctr)
+            elif type_name == "struct mlx5_ib_wq":
+                consumer_index = int(wq.tail)
+            elif type_name == "struct mlx5_eq":
+                consumer_index = int(wq.cons_index)
+            elif type_name != "struct mlx5_frag_buf_ctrl":
+                raise TypeError(
+                    f"unsupported mlx5 ring type: {type_name}"
+                )
         if consumer_index is None:
             return [{"index": None, "status": "consumer-index-unavailable"}]
         stride = dumps._ring_stride_bytes(wq)
@@ -3120,13 +2728,7 @@ class Mlx5Collector:
                 cqe_mode=cqe_mode,
             )
             error_status = "address-unavailable" if addr is None else None
-            raw = (
-                compat._read_memory(self.prog, addr, read_len)
-                if addr is not None
-                else None
-            )
-            if error_status is None and raw is None:
-                error_status = "fault"
+            raw = self.prog.read(addr, read_len) if addr is not None else None
             if error_status is not None:
                 entry: Dict[str, Any] = {
                     "index": index,
@@ -3223,14 +2825,10 @@ class Mlx5Collector:
                     for queue in selection._channel_queues(channel):
                         queue_name = _queue_finding_name(queue)
                         wq = queue.get("wq")
-                        size = (
-                            compat._safe_int(wq.get("size"))
-                            if isinstance(wq, dict)
-                            else None
-                        )
-                        pc = compat._safe_int(queue.get("pc"))
-                        cc = compat._safe_int(queue.get("cc"))
-                        inflight = compat._safe_int(queue.get("inflight"))
+                        size = wq.get("size") if isinstance(wq, dict) else None
+                        pc = queue.get("pc")
+                        cc = queue.get("cc")
+                        inflight = queue.get("inflight")
                         for severity, present, message in (
                             (
                                 "MED",
@@ -3306,7 +2904,7 @@ class Mlx5Collector:
                     continue
                 if (
                     kind == "cqe"
-                    and compat._safe_int(entry.get("opcode_value"))
+                    and entry.get("opcode_value")
                     in {
                         int(self.prog.constant(name))
                         for name in (
@@ -3326,7 +2924,7 @@ class Mlx5Collector:
                     )
                 elif (
                     kind == "eqe"
-                    and compat._safe_int(entry.get("type_value"))
+                    and entry.get("type_value")
                     == int(self.prog.constant("MLX5_EVENT_TYPE_CQ_ERROR"))
                 ):
                     syndrome = entry.get("syndrome_display") or entry.get(
@@ -3349,7 +2947,10 @@ class Mlx5Collector:
     def _walk_count(
         self, total: int, scope: str, hard_limit: int = defs.MAX_WALK_LIMIT
     ) -> int:
-        count = compat._bounded_count(total, self.args.walk_limit, hard_limit)
+        limits = [int(total), int(hard_limit)]
+        if self.args.walk_limit is not None:
+            limits.append(int(self.args.walk_limit))
+        count = max(0, min(limits))
         if int(total) > count:
             limit = f"sanity-max={hard_limit}"
             if self.args.walk_limit is not None:
@@ -3421,10 +3022,9 @@ def _shared_known_value(values: Iterable[Optional[int]]) -> Optional[int]:
 
 
 def _record_key(device: Any, number: Any) -> Optional[Tuple[str, int]]:
-    number = compat._safe_int(number)
     if device is None or number is None:
         return None
-    return str(device), number
+    return str(device), int(number)
 
 
 def _qp_identity(
@@ -3432,23 +3032,13 @@ def _qp_identity(
 ) -> _QpIdentity:
     """Read the small set of fields used to identify a QP."""
 
-    ib_qpn = compat._first_int_path(qp, (["ibqp", "qp_num"],))
-    object_hw_qpn = compat._first_int_path(qp, defs._MLX5_QPN_PATHS)
-    hw_qpn = object_hw_qpn if object_hw_qpn is not None else table_qpn
-    qpn = ib_qpn if ib_qpn is not None else hw_qpn
-    address = compat._nonzero_addr(qp)
-
-    key = None
-    if device is not None and qpn is not None:
-        if address is not None:
-            key = _QpKey(str(device), "address", address)
-        elif hw_qpn is not None:
-            key = _QpKey(str(device), "hw_qpn", hw_qpn)
-        else:
-            key = _QpKey(str(device), "qpn", qpn)
-
-    aliases = tuple(selection._qp_aliases(qpn, ib_qpn, hw_qpn, table_qpn))
-    return _QpIdentity(key, qpn, ib_qpn, hw_qpn, aliases)
+    ib_qpn = int(qp.ibqp.qp_num)
+    hw_qpn = int(qp.trans_qp.base.mqp.qpn)
+    key = _QpKey(str(device), "address", int(qp))
+    aliases = tuple(
+        selection._qp_aliases(ib_qpn, ib_qpn, hw_qpn, table_qpn)
+    )
+    return _QpIdentity(key, ib_qpn, ib_qpn, hw_qpn, aliases)
 
 
 def _merge_discovery(
@@ -3464,32 +3054,13 @@ def _merge_discovery(
             existing[name] = value
 
 
-def _qp_type(qp: Optional[Object]) -> Optional[int]:
-    if qp is None:
-        return None
-
-    for name in ("type", "qp_type"):
-        direct_type = compat._safe_int(compat._safe_member(qp, name))
-        if direct_type is not None:
-            return direct_type
-
-    ib_qp_type = compat._safe_int(
-        compat._safe_member_path(qp, ["ibqp", "qp_type"])
-    )
-    qp_sub_type = compat._safe_int(compat._safe_member(qp, "qp_sub_type"))
-    if ib_qp_type == 255 and qp_sub_type is not None:
-        return qp_sub_type
-    return ib_qp_type if ib_qp_type is not None else qp_sub_type
-
-
-def _plausible_mlx5_ib_qp(qp: Optional[Object]) -> bool:
-    return (
-        qp is not None
-        and not compat._is_null(qp)
-        and compat._safe_member(qp, "ibqp") is not None
-        and compat._safe_int(compat._safe_member_path(qp, ["ibqp", "qp_num"]))
-        is not None
-    )
+def _qp_type(qp: Object) -> int:
+    if has_member(qp, "type"):
+        return int(qp.type)
+    ib_qp_type = int(qp.ibqp.qp_type)
+    if ib_qp_type == int(qp.prog_.constant("IB_QPT_DRIVER")):
+        return int(qp.qp_sub_type)
+    return ib_qp_type
 
 
 def _creator_record(
@@ -3509,54 +3080,36 @@ def _creator_record(
     }
 
 
-def _qp_creator(qp: Optional[Object]) -> Dict[str, Any]:
-    resource = compat._safe_member_path(qp, ["ibqp", "res"])
-    if resource is not None:
-        user = compat._safe_int(compat._safe_member(resource, "user"))
-        if user == 1:
-            task = compat._safe_member(resource, "task")
-            comm = compat._safe_cstr(compat._safe_member(task, "comm"))
-            pid = compat._first_int_path(task, (["pid"], ["tgid"]))
-            display = "user"
-            if comm and pid is not None:
-                display = f"user:{comm}[{pid}]"
-            elif comm:
-                display = f"user:{comm}"
-            elif pid is not None:
-                display = f"user:[{pid}]"
+def _qp_creator(qp: Object) -> Dict[str, Any]:
+    resource = qp.ibqp.res
+    if resource.user:
+        task = resource.task
+        if not task:
             return _creator_record(
-                display,
-                "user",
-                "struct ib_qp.res.user/task",
-                name=comm,
-                pid=pid,
+                "user", "user", "struct ib_qp.res.user/task"
             )
-        if user == 0:
-            kern_name = compat._safe_cstr(
-                compat._safe_member(resource, "kern_name")
-            )
-            display = f"kernel:{kern_name}" if kern_name else "kernel"
-            return _creator_record(
-                display,
-                "kernel",
-                "struct ib_qp.res.user/kern_name",
-                name=kern_name,
-            )
+        comm = task.comm.string_().decode("utf-8", "replace")
+        pid = int(task.pid)
+        return _creator_record(
+            f"user:{comm}[{pid}]",
+            "user",
+            "struct ib_qp.res.user/task",
+            name=comm,
+            pid=pid,
+        )
 
-    uobjects = []
-    # A non-NULL uobject means userspace ownership. NULL means kernel ownership;
-    # a missing member leaves ownership unknown.
-    for path, source in (
-        (["ibqp", "uobject"], "struct ib_qp.uobject"),
-        (["ibqp", "pd", "uobject"], "struct ib_qp.pd.uobject"),
-    ):
-        uobject = compat._safe_member_path(qp, path)
-        uobjects.append(uobject)
-        if uobject is not None and not compat._is_null(uobject):
-            return _creator_record("user", "user", source)
-    if any(uobject is not None for uobject in uobjects):
-        return _creator_record("kernel", "kernel", "struct ib_qp.uobject")
-    return _creator_record("unresolved", None, None)
+    kern_name = (
+        resource.kern_name.string_().decode("utf-8", "replace")
+        if resource.kern_name
+        else None
+    )
+    display = f"kernel:{kern_name}" if kern_name else "kernel"
+    return _creator_record(
+        display,
+        "kernel",
+        "struct ib_qp.res.user/kern_name",
+        name=kern_name,
+    )
 
 
 def _qp_creator_resolution(qps: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
@@ -3579,53 +3132,49 @@ def _qp_creator_resolution(qps: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _cq_number_from_cq(cq: Optional[Object]) -> Optional[int]:
-    if cq is None or compat._is_null(cq):
+    if cq is None or not cq:
         return None
-    cqn = compat._first_int_path(cq, (["mcq", "cqn"], ["cqn"]))
-    if cqn is not None:
-        return cqn
-    mlx5_ib_cq = compat._safe_container_of(cq, "struct mlx5_ib_cq", "ibcq")
-    return compat._first_int_path(mlx5_ib_cq, (["mcq", "cqn"], ["cqn"]))
+    mlx5_ib_cq = container_of(cq, "struct mlx5_ib_cq", "ibcq")
+    return int(mlx5_ib_cq.mcq.cqn)
 
 
 def _mlx5_ib_wq_wrid_at_counter(
     wq: Optional[Object], wqe_counter: int
 ) -> Tuple[Optional[int], Optional[int]]:
-    if wq is None or compat._is_null(wq):
+    if wq is None or not wq:
         return None, None
-    wqe_cnt = compat._first_int_path(wq, (["wqe_cnt"],))
-    if wqe_cnt is None or wqe_cnt <= 0:
+    wqe_cnt = int(wq.wqe_cnt)
+    if wqe_cnt <= 0:
         return None, None
     index = wqe_counter & (wqe_cnt - 1)
-    wrid = compat._safe_member(wq, "wrid")
-    if wrid is None or compat._is_null(wrid):
+    wrid = wq.wrid
+    if not wrid:
         return None, index
-    return compat._safe_int(compat._safe_index(wrid, index)), index
+    return int(wrid[index]), index
 
 
 def _mlx5_ib_gsi_saved_wr_id(prog: Program, wr_cqe: Any) -> Optional[int]:
-    addr = compat._safe_int(wr_cqe)
-    if addr is None or not _looks_like_kernel_pointer_value(addr):
+    if wr_cqe is None:
         return None
-    cqe = compat._safe_pointer(prog, "struct ib_cqe *", addr)
-    done = compat._safe_int(compat._safe_member(cqe, "done"))
-    if done is None:
+    addr = int(wr_cqe)
+    if not _looks_like_kernel_pointer_value(addr):
         return None
+    cqe = Object(prog, "struct ib_cqe *", value=addr)
+    done = int(cqe.done)
     try:
         symbol_name = prog.symbol(done).name
     except LookupError:
         return None
     if symbol_name != "handle_single_completion":
         return None
-    gsi_wr = compat._safe_container_of(cqe, "struct mlx5_ib_gsi_wr", "cqe")
-    return compat._first_int_path(gsi_wr, (["wc", "wr_id"],))
+    gsi_wr = container_of(cqe, "struct mlx5_ib_gsi_wr", "cqe")
+    return int(gsi_wr.wc.wr_id)
 
 
 def _looks_like_kernel_pointer_value(value: Any) -> bool:
-    number = compat._safe_int(value)
     # Supported 64-bit vmcores use high canonical kernel addresses. Apply this
     # only to kernel QPs because userspace may choose any u64 WR_ID.
-    return number is not None and number >= (1 << 63)
+    return int(value) >= (1 << 63)
 
 
 def _cq_consumer_index(
@@ -3639,12 +3188,8 @@ def _cq_consumer_index(
     mlx5_cqwq, so use wq.cc; their mcq.cons_index may remain zero.
     """
 
-    core_cons_index = (
-        compat._safe_int(compat._safe_member(core_cq, "cons_index"))
-        if core_cq is not None
-        else None
-    )
-    wq_cc = compat._safe_int(wq_summary.get("cc"))
+    core_cons_index = int(core_cq.cons_index) if core_cq is not None else None
+    wq_cc = wq_summary.get("cc")
     if (
         address_struct in ("struct mlx5e_cq", "struct mlx5_aso_cq")
         and wq_cc is not None
@@ -3663,7 +3208,7 @@ def _validate_cap(option: str, value: int, hard_limit: int) -> None:
 def _wqe_ctrl_wqebbs(
     decoded: Dict[str, Any], stride_bytes: Optional[int], default_len: int
 ) -> int:
-    ds = compat._safe_int(decoded.get("ds"))
+    ds = decoded.get("ds")
     if ds is None or ds <= 0:
         return 1
     stride = (

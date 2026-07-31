@@ -26,22 +26,3 @@ _MLX5_EQ_TABLE_COMP_ARRAY_COUNT_PATHS = (
     ("struct mlx5_eq_table.num_comp_vectors", ["num_comp_vectors"]),
     ("struct mlx5_eq_table.ncomp_eqs", ["ncomp_eqs"]),
 )
-
-_MLX5_CORE_QP_TABLE_PATHS = (
-    ["priv", "qp_table", "tree"],
-    ["priv", "qp_table", "idrs"],
-    ["priv", "qp_table", "qpn_table"],
-    ["priv", "qp_table", "xarray"],
-    ["priv", "qp_table", "xa"],
-)
-
-_MLX5_QPN_PATHS = (
-    ["qpn"],
-    ["mqp", "qpn"],
-    ["core_qp", "qpn"],
-    ["base", "mqp", "qpn"],
-    ["trans_qp", "base", "mqp", "qpn"],
-    ["raw_packet_qp", "sq", "base", "mqp", "qpn"],
-    ["raw_packet_qp", "rq", "base", "mqp", "qpn"],
-    ["dct", "mdct", "mqp", "qpn"],
-)
