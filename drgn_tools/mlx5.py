@@ -1661,7 +1661,7 @@ class Mlx5Collector(collect_device.DeviceCollectorMixin):
             and cq_netdev is not None
             and not compat._is_null(cq_netdev)
         ):
-            netdev_name = collect_device._netdev_name(cq_netdev)
+            netdev_name = cq_netdev.name.string_().decode("utf-8", "replace")
 
         return {
             "device": device.get("name"),

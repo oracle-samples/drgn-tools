@@ -12,43 +12,25 @@ from typing import Optional
 from typing import Set
 from typing import Tuple
 
-from drgn import cast
-from drgn import FaultError
+from drgn import container_of
 from drgn import Object
-from drgn import ObjectAbsentError
-from drgn import OutOfBoundsError
 from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.net import netdev_priv
-from drgn.helpers.linux.xarray import xa_for_each
 
 from . import defs
 from . import selection
-from .compat import _addr
-from .compat import _first_int_path
-from .compat import _first_member_path_with_source
-from .compat import _is_null
-from .compat import _safe_container_of
-from .compat import _safe_cstr
-from .compat import _safe_index
-from .compat import _safe_int
-from .compat import _safe_iter
-from .compat import _safe_member
-from .compat import _safe_member_path
-from .compat import _safe_pointer
-from .compat import _sizeof_type
-from .compat import _struct_type_name
 from .defs import _MLX5_CMDIF_STATE
 from .defs import _MLX5_COREDEV_TYPE
 from .defs import _MLX5_DEVICE_STATE
 from .defs import _MLX5_PCI_STATUS
-from .defs import _MLX5E_CHANNELS_OBJECT_PATHS
 from .defs import _PCI_BDF_RE
 from .format import _enum_name
 from .format import _format_fw_revision
 from .format import _format_ib_fw_ver
 from .format import _format_iseg_fw_revision
 from .format import _hex
+from drgn_tools.crash_net import for_each_netdev
 from drgn_tools.crash_net import netdev_ipv4s
 from drgn_tools.crash_net import netdev_ipv6s
 from drgn_tools.util import has_member
@@ -103,54 +85,39 @@ class DeviceCollectorMixin:
         devices_by_key: Dict[str, Dict[str, Any]] = {}
         saw_netdev = False
 
-        for netdev in self._iter_walk_limited(
-            _safe_iter(
-                lambda: list_for_each_entry(
-                    "struct net_device",
-                    self.prog["init_net"].dev_base_head.address_of_(),
-                    "dev_list",
-                ),
-                self._warn,
-                "iterating netdevs",
-            ),
+        for name, netdev in self._iter_walk_limited(
+            for_each_netdev(self.prog["init_net"].address_of_()),
             "net_device discovery",
         ):
             saw_netdev = True
-            name = _netdev_name(netdev)
             if self.args.netdev and name != self.args.netdev:
                 continue
 
-            driver = _driver_name_from_netdev(netdev)
-            priv = _mlx5e_priv_from_netdev(netdev)
-            mdev = _safe_member(priv, "mdev")
-            if _is_null(mdev):
-                mdev = None
-            if not _looks_like_mlx5_netdev(netdev, driver, priv, mdev):
+            netdev_ops = _symbol_for_addr(self.prog, int(netdev.netdev_ops))
+            if not (netdev_ops or "").startswith("mlx5"):
                 continue
 
-            mdev_addr = _addr(mdev)
-            key = hex(mdev_addr) if mdev_addr is not None else f"netdev:{name}"
+            priv = netdev_priv(netdev, "struct mlx5e_priv")
+            mdev = priv.mdev
+            if not mdev:
+                raise ValueError(f"{name}: mlx5e_priv.mdev is NULL")
+
+            mdev_addr = int(mdev)
+            key = hex(mdev_addr)
             if key not in devices_by_key:
                 devices_by_key[key] = _device_record(
                     len(devices_by_key),
                     mdev,
                     mdev_addr,
                     "netdev",
-                    netdev_driver=driver or "unknown",
+                    netdev_driver=netdev_ops,
                 )
-            try:
-                netdev_summary = _collect_netdev_summary(netdev)
-                priv_summary = _collect_mlx5e_priv_summary(priv)
-            except (FaultError, ObjectAbsentError) as err:
-                self._warn(f"failed to read netdev {name}: {err}")
-                netdev_summary = {"status": "unavailable"}
-                priv_summary = {"status": "unavailable"}
             devices_by_key[key]["netdevs"].append(
                 {
                     "name": name,
-                    "driver": driver or "unknown",
-                    "summary": netdev_summary,
-                    "priv": priv_summary,
+                    "driver": netdev_ops,
+                    "summary": _collect_netdev_summary(netdev),
+                    "priv": _collect_mlx5e_priv_summary(priv),
                     "channels": [],
                     "channels_collected": False,
                     "_netdev_obj": netdev,
@@ -159,7 +126,6 @@ class DeviceCollectorMixin:
             )
 
         self._merge_rdma_devices(devices_by_key)
-        self._merge_symbol_devices(devices_by_key)
         if self.args.netdev:
             devices_by_key = {
                 key: device
@@ -178,44 +144,13 @@ class DeviceCollectorMixin:
                     f"--netdev {self.args.netdev!r} did not match a discovered mlx5 netdev"
                 )
             else:
-                self._warn(
-                    "no mlx5 devices discovered through netdev, RDMA, or symbol paths"
-                )
+                self._warn("no mlx5 devices discovered through netdev or RDMA")
 
         return list(devices_by_key.values())
-
-    def _discover_devices_from_symbols(self) -> Dict[str, Dict[str, Any]]:
-        devices_by_address: Dict[str, Dict[str, Any]] = {}
-        # No stable mlx5_core_dev list exists across kernel versions. Probe
-        # names found in vendor and debugging kernels.
-        for symbol in ("mlx5_core_dev_list", "mlx5_dev_list", "mlx5_devices"):
-            try:
-                head = self.prog[symbol]
-            except LookupError:
-                continue
-            for mdev in self._iter_walk_limited(
-                _safe_iter(
-                    lambda h=head: list_for_each_entry(  # type: ignore[misc]
-                        "struct mlx5_core_dev", h.address_of_(), "list"
-                    ),
-                    self._warn,
-                    f"walking {symbol}",
-                ),
-                f"{symbol} discovery",
-            ):
-                mdev_addr = _addr(mdev)
-                if mdev_addr is None:
-                    continue
-                key = hex(mdev_addr)
-                devices_by_address[key] = _device_record(
-                    len(devices_by_address), mdev, mdev_addr, symbol
-                )
-        return devices_by_address
 
     def _merge_rdma_devices(self, devices: Dict[str, Dict[str, Any]]) -> None:
         rdmacg_devices = list(
             self._iter_rdmacg_mlx5_devices(
-                walk_context="walking rdmacg_devices for mlx5 devices",
                 truncation_scope="rdmacg_devices discovery",
             )
         )
@@ -228,31 +163,21 @@ class DeviceCollectorMixin:
             self._merge_mlx5_ib_device(devices, ibdev, "mlx5_ib_registry")
 
     def _iter_rdmacg_mlx5_devices(
-        self, *, walk_context: str, truncation_scope: str
+        self, *, truncation_scope: str
     ) -> Iterator[Tuple[Object, Optional[str]]]:
         try:
             rdmacg_head = self.prog["rdmacg_devices"]
         except LookupError:
             return
-        for cgdev in self._iter_walk_limited(
-            _safe_iter(
-                lambda h=rdmacg_head: list_for_each_entry(  # type: ignore[misc]
-                    "struct rdmacg_device", h.address_of_(), "dev_node"
-                ),
-                self._warn,
-                walk_context,
-            ),
-            truncation_scope,
-        ):
-            ib_device = _safe_container_of(
-                cgdev, "struct ib_device", "cg_device"
-            )
-            if ib_device is None:
-                continue
+        entries = list_for_each_entry(
+            "struct rdmacg_device", rdmacg_head.address_of_(), "dev_node"
+        )
+        for cgdev in self._iter_walk_limited(entries, truncation_scope):
+            ib_device = container_of(cgdev, "struct ib_device", "cg_device")
             ibdev = self._mlx5_ib_dev_from_ib_device(ib_device)
             if ibdev is None:
                 continue
-            yield ibdev, _safe_cstr(_safe_member(cgdev, "name"))
+            yield ibdev, cgdev.name.string_().decode("utf-8", "replace")
 
     def _merge_mlx5_ib_device(
         self,
@@ -261,14 +186,12 @@ class DeviceCollectorMixin:
         source: str,
         rdma_name: Optional[str] = None,
     ) -> None:
-        mdev = _safe_member(ibdev, "mdev")
-        mdev_addr = _addr(mdev)
-        if mdev_addr is None:
-            return
+        mdev = ibdev.mdev
+        if not mdev:
+            raise ValueError("mlx5_ib_dev.mdev is NULL")
+        mdev_addr = int(mdev)
         if rdma_name is None:
-            rdma_name = _safe_cstr(
-                _safe_member_path(ibdev, ["ib_dev", "name"])
-            )
+            rdma_name = ibdev.ib_dev.name.string_().decode("utf-8", "replace")
         for (
             port_mdev_addr,
             port_num,
@@ -305,9 +228,8 @@ class DeviceCollectorMixin:
         if rdma_port is not None:
             device.setdefault("rdma_port", rdma_port)
             discovery.setdefault("rdma_port", rdma_port)
-        ibdev_addr = _addr(ibdev)
-        if ibdev_addr is not None and "rdma_ibdev" not in device:
-            device["rdma_ibdev"] = _hex(ibdev_addr)
+        if "rdma_ibdev" not in device:
+            device["rdma_ibdev"] = _hex(int(ibdev))
 
     def _iter_mlx5_ib_mdev_ports(
         self, ibdev: Object, primary_mdev: Object, primary_mdev_addr: int
@@ -328,59 +250,33 @@ class DeviceCollectorMixin:
     def _iter_mlx5_ib_port_mdevs(
         self, ibdev: Object
     ) -> Iterator[Tuple[int, int, Object]]:
-        ports = _safe_member(ibdev, "port")
-        num_ports = _safe_int(_safe_member(ibdev, "num_ports"))
-        if ports is None or num_ports is None:
-            return
+        ports = ibdev.port
+        num_ports = int(ibdev.num_ports)
         for index in range(max(0, min(num_ports, defs.MAX_MLX5_IB_PORTS))):
-            port = _safe_index(ports, index)
-            mpi = _safe_member_path(port, ["mp", "mpi"])
-            if _is_null(mpi):
+            mpi = ports[index].mp.mpi
+            if not mpi:
                 continue
-            port_mdev = _safe_member(mpi, "mdev")
-            port_mdev_addr = _addr(port_mdev)
-            if port_mdev_addr is not None:
-                yield port_mdev_addr, index + 1, port_mdev
-
-    def _merge_symbol_devices(
-        self, devices: Dict[str, Dict[str, Any]]
-    ) -> None:
-        for (
-            key,
-            symbol_device,
-        ) in self._discover_devices_from_symbols().items():
-            if key in devices:
-                discovery = devices[key].setdefault("discovery", {})
-                via = discovery.setdefault("via", [])
-                for source in symbol_device.get("discovery", {}).get(
-                    "via", []
-                ):
-                    if source not in via:
-                        via.append(source)
-                continue
-            symbol_device["name"] = f"mlx5_{len(devices)}"
-            devices[key] = symbol_device
+            port_mdev = mpi.mdev
+            if port_mdev:
+                yield int(port_mdev), index + 1, port_mdev
 
     def _iter_mlx5_ib_devices(self, mdev_addr: int) -> Iterator[Object]:
         for ibdev in self._iter_all_mlx5_ib_devices():
-            if _addr(_safe_member(ibdev, "mdev")) == mdev_addr:
+            if int(ibdev.mdev) == mdev_addr:
                 yield ibdev
 
     def _iter_mlx5_ib_devices_for_fw(self, mdev: Object) -> Iterator[Object]:
         """Yield direct, multiport, then GUID-matched mlx5 IB devices."""
 
-        mdev_addr = _addr(mdev)
-        if mdev_addr is None:
-            return
-
-        target_guid = _safe_int(_safe_member(mdev, "sys_image_guid"))
-        target_type = _safe_int(_safe_member(mdev, "coredev_type"))
+        mdev_addr = int(mdev)
+        target_guid = int(mdev.sys_image_guid)
+        target_type = int(mdev.coredev_type)
         direct: List[Object] = []
         multiport: List[Object] = []
         guid_match: List[Object] = []
         for ibdev in self._iter_all_mlx5_ib_devices():
-            ib_mdev = _safe_member(ibdev, "mdev")
-            if _addr(ib_mdev) == mdev_addr:
+            ib_mdev = ibdev.mdev
+            if int(ib_mdev) == mdev_addr:
                 direct.append(ibdev)
                 continue
             if any(
@@ -391,111 +287,32 @@ class DeviceCollectorMixin:
             ):
                 multiport.append(ibdev)
                 continue
-            if target_guid in (None, 0):
+            if target_guid == 0:
                 continue
-            ib_guid = _safe_int(_safe_member(ibdev, "sys_image_guid"))
-            ib_type = _safe_int(_safe_member(ib_mdev, "coredev_type"))
+            ib_guid = int(ibdev.sys_image_guid)
+            ib_type = int(ib_mdev.coredev_type)
             if ib_guid != target_guid:
                 continue
-            if (
-                target_type is not None
-                and ib_type is not None
-                and ib_type != target_type
-            ):
+            if ib_type != target_type:
                 continue
             guid_match.append(ibdev)
         yield from direct
         yield from multiport
         yield from guid_match
 
-    def _iter_ib_core_device_xarrays(self) -> Iterator[Tuple[Object, str]]:
-        """Find the RDMA core ``devices`` xarray.
-
-        Other subsystems use the same symbol name, so check its size and type
-        before walking it.
-        """
-
-        seen: Set[int] = set()
-        xarray_size = _sizeof_type(self.prog, "struct xarray")
-
-        try:
-            symbols = list(self.prog.symbols("devices"))
-        except LookupError:
-            symbols = []
-        for symbol in symbols:
-            symbol_address = _safe_int(getattr(symbol, "address", None))
-            if symbol_address is None or symbol_address in seen:
-                continue
-            symbol_size = _safe_int(getattr(symbol, "size", None))
-            if xarray_size is not None and symbol_size != xarray_size:
-                continue
-            try:
-                devices = Object(
-                    self.prog, "struct xarray", address=symbol_address
-                )
-            except (LookupError, TypeError, ValueError):
-                continue
-            seen.add(symbol_address)
-            yield devices, "ib_core.devices"
-
-        try:
-            devices = self.prog["devices"]
-        except LookupError:
-            return
-        address = _addr(devices)
-        if address is not None and address in seen:
-            return
-        if _struct_type_name(devices) != "struct xarray":
-            return
-        if address is not None:
-            seen.add(address)
-        yield devices, "ib_core.devices"
-
     def _mlx5_ib_dev_from_ib_device(
         self, ib_device: Optional[Object]
     ) -> Optional[Object]:
-        if _is_null(ib_device):
+        if not ib_device:
             return None
-        name = _safe_cstr(_safe_member(ib_device, "name"))
-        vendor_id = _safe_int(
-            _safe_member_path(ib_device, ["attrs", "vendor_id"])
-        )
-        ibdev = _safe_container_of(ib_device, "struct mlx5_ib_dev", "ib_dev")
-        if ibdev is None:
+        name = ib_device.name.string_().decode("utf-8", "replace")
+        vendor_id = int(ib_device.attrs.vendor_id)
+        if not name.startswith("mlx5_") and vendor_id != 0x15B3:
             return None
-        mdev = _safe_member(ibdev, "mdev")
-        if _is_null(mdev):
-            return None
-        is_mlx5 = (
-            (name and name.startswith("mlx5_"))
-            or vendor_id == 0x15B3
-            or _mdev_has_mlx5_core_shape(mdev)
-        )
-        return ibdev if is_mlx5 else None
-
-    def _iter_mlx5_ib_devices_from_ib_core_xarray(self) -> Iterator[Object]:
-        for devices, source in self._iter_ib_core_device_xarrays():
-            for _index, entry in self._iter_walk_limited(
-                _safe_iter(
-                    lambda d=devices: xa_for_each(  # type: ignore[misc]
-                        d.address_of_()
-                    ),
-                    self._warn,
-                    f"walking {source}",
-                ),
-                f"{source} discovery",
-            ):
-                entry_address = _addr(entry)
-                if entry_address in (None, 0):
-                    continue
-                ib_device = _safe_pointer(
-                    self.prog, "struct ib_device *", entry_address
-                )
-                if ib_device is None:
-                    continue
-                ibdev = self._mlx5_ib_dev_from_ib_device(ib_device)
-                if ibdev is not None:
-                    yield ibdev
+        ibdev = container_of(ib_device, "struct mlx5_ib_dev", "ib_dev")
+        if not ibdev.mdev:
+            raise ValueError("mlx5_ib_dev.mdev is NULL")
+        return ibdev
 
     def _iter_all_mlx5_ib_devices(
         self,
@@ -509,42 +326,36 @@ class DeviceCollectorMixin:
 
         seen: Set[int] = set()
         collected: List[Object] = []
-        sources: List[Iterable[Object]] = []
         try:
             head = self.prog["mlx5_ib_dev_list"]
         except LookupError:
             head = None
         if head is not None:
-            sources.append(
-                self._iter_walk_limited(
-                    _safe_iter(
-                        lambda h=head: list_for_each_entry(  # type: ignore[misc]
-                            "struct mlx5_ib_dev",
-                            h.address_of_(),
-                            "ib_dev_list",
-                        ),
-                        self._warn,
-                        "walking mlx5_ib_dev_list",
-                    ),
-                    "mlx5_ib_dev_list discovery",
-                )
+            entries = list_for_each_entry(
+                "struct mlx5_ib_dev",
+                head.address_of_(),
+                "ib_dev_list",
             )
-        sources.append(self._iter_mlx5_ib_devices_from_ib_core_xarray())
+            source = self._iter_walk_limited(
+                entries, "mlx5_ib_dev_list discovery"
+            )
+            for ibdev in source:
+                address = int(ibdev)
+                if address in seen:
+                    continue
+                seen.add(address)
+                collected.append(ibdev)
+
         if rdmacg_devices is None:
             rdmacg_devices = self._iter_rdmacg_mlx5_devices(
-                walk_context="walking rdmacg_devices",
                 truncation_scope="rdmacg_devices mlx5_ib discovery",
             )
-        sources.append((ibdev for ibdev, _rdma_name in rdmacg_devices))
-
-        for source in sources:
-            for ibdev in source:
-                address = _addr(ibdev)
-                if address is not None and address in seen:
-                    continue
-                if address is not None:
-                    seen.add(address)
-                collected.append(ibdev)
+        for ibdev, _rdma_name in rdmacg_devices:
+            address = int(ibdev)
+            if address in seen:
+                continue
+            seen.add(address)
+            collected.append(ibdev)
         self._mlx5_ib_devices_cache = collected
         yield from collected
 
@@ -579,16 +390,9 @@ class DeviceCollectorMixin:
 
     def _collect_device_details(self, device: Dict[str, Any]) -> None:
         mdev = device.get("_mdev_obj")
-        try:
-            device["summary"] = self._collect_core_summary(mdev, device)
-            device["health"] = self._collect_health(mdev)
-            device["capabilities"] = self._collect_capabilities(mdev)
-        except (FaultError, ObjectAbsentError) as err:
-            self._warn(
-                f"failed to collect {device.get('name')} details: {err}"
-            )
-            for key in ("summary", "health", "capabilities"):
-                device[key] = {"status": "unavailable"}
+        device["summary"] = self._collect_core_summary(mdev, device)
+        device["health"] = self._collect_health(mdev)
+        device["capabilities"] = self._collect_capabilities(mdev)
 
         for netdev in device.get("netdevs", []):
             priv = netdev.get("_priv_obj")
@@ -691,39 +495,36 @@ class DeviceCollectorMixin:
         if mdev is None:
             return "unavailable"
         for ibdev in self._iter_mlx5_ib_devices_for_fw(mdev):
-            fw_ver = _format_ib_fw_ver(
-                _safe_int(
-                    _safe_member_path(ibdev, ["ib_dev", "attrs", "fw_ver"])
-                )
-            )
+            fw_ver = _format_ib_fw_ver(int(ibdev.ib_dev.attrs.fw_ver))
             if fw_ver is not None:
                 return fw_ver
         # Upstream fw_rev_maj/min/sub helpers read MMIO through iseg, which is
         # often unavailable in a vmcore. Some kernels cache these fields; use
         # them only when the complete version tuple is present.
-        cached_candidates = (
-            (["fw_rev_maj"], ["fw_rev_min"], ["fw_rev_sub"]),
-            (
-                ["priv", "fw_rev_maj"],
-                ["priv", "fw_rev_min"],
-                ["priv", "fw_rev_sub"],
-            ),
-        )
-        for major_path, minor_path, subminor_path in cached_candidates:
+        if has_member(mdev, "fw_rev_maj"):
             fw_ver = _format_fw_revision(
-                _safe_int(_safe_member_path(mdev, major_path)),
-                _safe_int(_safe_member_path(mdev, minor_path)),
-                _safe_int(_safe_member_path(mdev, subminor_path)),
+                int(mdev.fw_rev_maj),
+                int(mdev.fw_rev_min),
+                int(mdev.fw_rev_sub),
             )
-            if fw_ver is not None:
-                return fw_ver
-        iseg = _safe_member(mdev, "iseg")
-        if _is_null(iseg):
+        elif has_member(mdev.priv, "fw_rev_maj"):
+            fw_ver = _format_fw_revision(
+                int(mdev.priv.fw_rev_maj),
+                int(mdev.priv.fw_rev_min),
+                int(mdev.priv.fw_rev_sub),
+            )
+        else:
+            fw_ver = None
+        if fw_ver is not None:
+            return fw_ver
+
+        iseg = mdev.iseg
+        if not iseg:
             return "unavailable"
         return (
             _format_iseg_fw_revision(
-                _safe_int(_safe_member(iseg, "fw_rev")),
-                _safe_int(_safe_member(iseg, "cmdif_rev_fw_sub")),
+                int(iseg.fw_rev),
+                int(iseg.cmdif_rev_fw_sub),
             )
             or "unavailable"
         )
@@ -743,9 +544,9 @@ class DeviceCollectorMixin:
             "prev_counter": int(health.prev),
             "flags": _hex(int(health.flags)),
             "crdump_size": int(health.crdump_size),
-            "health_buffer": _hex(_addr(health.health)),
-            "health_counter": _hex(_addr(health.health_counter)),
-            "workqueue": _hex(_addr(health.wq)),
+            "health_buffer": _hex(int(health.health)),
+            "health_counter": _hex(int(health.health_counter)),
+            "workqueue": _hex(int(health.wq)),
         }
 
     def _collect_capabilities(self, mdev: Optional[Object]) -> Dict[str, Any]:
@@ -761,8 +562,10 @@ class DeviceCollectorMixin:
             "embedded_cpu": int(mdev.caps.embedded_cpu),
             "roce_en": int(mdev.roce.roce_en),
             "sriov_max_vfs": int(sriov.max_vfs),
-            "sriov_enabled_vfs": _first_int_path(
-                sriov, (["enabled_vfs"], ["num_vfs"])
+            "sriov_enabled_vfs": int(
+                sriov.enabled_vfs
+                if has_member(sriov, "enabled_vfs")
+                else sriov.num_vfs
             ),
         }
 
@@ -784,123 +587,34 @@ def _health_status(
     return "ok"
 
 
-def _netdev_name(netdev: Object) -> str:
-    try:
-        return netdev.name.string_().decode("utf-8", "replace")
-    except (FaultError, ObjectAbsentError):
-        return "<unknown>"
-
-
-def _mlx5e_priv_from_netdev(netdev: Object) -> Optional[Object]:
-    try:
-        return netdev_priv(netdev, "struct mlx5e_priv")
-    except (FaultError, ObjectAbsentError, LookupError, TypeError):
-        pass
-    if has_member(netdev, "ml_priv") and netdev.ml_priv:
-        try:
-            return cast("struct mlx5e_priv *", netdev.ml_priv)
-        except (FaultError, ObjectAbsentError, LookupError, TypeError):
-            return None
-    return None
-
-
-def _looks_like_mlx5_netdev(
-    netdev: Object,
-    driver: Optional[str],
-    priv: Optional[Object],
-    mdev: Optional[Object],
-) -> bool:
-    if driver and driver.startswith("mlx5"):
-        return True
-    netdev_ops = _safe_member(netdev, "netdev_ops")
-    symbol = _symbol_for_addr(netdev.prog_, _addr(netdev_ops))
-    if symbol and "mlx5" in symbol:
-        return True
-    if not _mdev_has_mlx5_core_shape(mdev):
-        return False
-    return (
-        _mlx5e_priv_points_to_netdev(priv, netdev)
-        or _pci_bdf_from_mdev(mdev) is not None
-    )
-
-
-def _mlx5e_priv_points_to_netdev(
-    priv: Optional[Object], netdev: Object
-) -> bool:
-    priv_netdev = _safe_member(priv, "netdev")
-    priv_netdev_addr = _addr(priv_netdev)
-    netdev_addr = _addr(netdev)
-    return (
-        priv_netdev_addr is not None
-        and netdev_addr is not None
-        and priv_netdev_addr == netdev_addr
-    )
-
-
-def _mdev_has_mlx5_core_shape(mdev: Optional[Object]) -> bool:
-    if _is_null(mdev):
-        return False
-    return (
-        _safe_member(mdev, "priv") is not None
-        and _safe_member(mdev, "cmd") is not None
-    )
-
-
-def _driver_name_from_netdev(netdev: Object) -> Optional[str]:
-    # net_device.dev is embedded; its PCI or auxiliary parent usually carries
-    # the mlx5_core driver pointer.
-    try:
-        for candidate in _device_parent_walk(netdev.dev):
-            name = _device_driver_name(candidate)
-            if name:
-                return name
-    except (FaultError, ObjectAbsentError):
-        pass
-    return None
-
-
 def _device_parent_walk(
     dev: Optional[Object], max_depth: int = 8
 ) -> Iterator[Object]:
     current = dev
     depth = 0
-    while current is not None and not _is_null(current) and depth < max_depth:
+    while current and depth < max_depth:
         yield current
-        try:
-            current = current.parent
-        except (FaultError, ObjectAbsentError):
-            return
+        current = current.parent
         depth += 1
-
-
-def _device_driver_name(dev: Optional[Object]) -> Optional[str]:
-    if dev is None or _is_null(dev.driver):
-        return None
-    driver = dev.driver
-    name = _safe_cstr(driver.name)
-    if name:
-        return name
-    if has_member(driver, "owner") and not _is_null(driver.owner):
-        return _safe_cstr(driver.owner.name)
-    return None
 
 
 def _pci_bdf_from_mdev(mdev: Optional[Object]) -> Optional[str]:
     if mdev is None:
         return None
-    pdev_dev = _safe_member_path(mdev, ["pdev", "dev"])
-    bdf = _pci_bdf_from_device(pdev_dev)
-    return bdf or _pci_bdf_from_device(_safe_member(mdev, "device"))
+    if mdev.pdev:
+        bdf = _pci_bdf_from_device(mdev.pdev.dev.address_of_())
+        if bdf:
+            return bdf
+    if has_member(mdev, "device"):
+        return _pci_bdf_from_device(mdev.device)
+    return None
 
 
 def _pci_bdf_from_device(dev: Optional[Object]) -> Optional[str]:
-    try:
-        for current in _device_parent_walk(dev):
-            kobj_name = _safe_cstr(current.kobj.name)
-            if kobj_name and _PCI_BDF_RE.match(kobj_name):
-                return kobj_name.lower()
-    except (FaultError, ObjectAbsentError):
-        pass
+    for current in _device_parent_walk(dev):
+        kobj_name = current.kobj.name.string_().decode("utf-8", "replace")
+        if _PCI_BDF_RE.match(kobj_name):
+            return kobj_name.lower()
     return None
 
 
@@ -966,11 +680,15 @@ def _collect_netdev_summary(netdev: Object) -> Dict[str, Any]:
         "operstate": int(netdev.operstate),
         "carrier": _netdev_carrier_state(netdev),
         "ip_addresses": _netdev_ip_addresses(netdev),
-        "num_tx_queues": _first_int_path(
-            netdev, (["real_num_tx_queues"], ["num_tx_queues"])
+        "num_tx_queues": int(
+            netdev.real_num_tx_queues
+            if has_member(netdev, "real_num_tx_queues")
+            else netdev.num_tx_queues
         ),
-        "num_rx_queues": _first_int_path(
-            netdev, (["real_num_rx_queues"], ["num_rx_queues"])
+        "num_rx_queues": int(
+            netdev.real_num_rx_queues
+            if has_member(netdev, "real_num_rx_queues")
+            else netdev.num_rx_queues
         ),
         "stats": stats,
     }
@@ -979,18 +697,7 @@ def _collect_netdev_summary(netdev: Object) -> Dict[str, Any]:
 def _netdev_ip_addresses(netdev: Object) -> List[str]:
     addresses: List[str] = []
     for helper in (netdev_ipv4s, netdev_ipv6s):
-        try:
-            values: Any = helper(netdev)
-        except (
-            FaultError,
-            ObjectAbsentError,
-            OutOfBoundsError,
-            LookupError,
-            TypeError,
-            ValueError,
-        ):
-            continue
-        for value in values:
+        for value in helper(netdev):
             ip = str(value)
             if ip not in addresses:
                 addresses.append(ip)
@@ -1002,13 +709,24 @@ def _netdev_ip_addresses(netdev: Object) -> List[str]:
 def _collect_mlx5e_priv_summary(priv: Optional[Object]) -> Dict[str, Any]:
     if priv is None:
         return {"status": "unavailable"}
-    channels, channels_source = _first_member_path_with_source(
-        priv, _MLX5E_CHANNELS_OBJECT_PATHS
-    )
+    if has_member(priv, "channels"):
+        channels = priv.channels
+        channels_source = "struct mlx5e_priv.channels"
+    else:
+        channels = priv.channels_info
+        channels_source = "struct mlx5e_priv.channels_info"
+
+    if has_member(channels, "num"):
+        channels_num = int(channels.num)
+    elif has_member(channels, "num_channels"):
+        channels_num = int(channels.num_channels)
+    else:
+        channels_num = int(channels.params.num_channels)
+
     return {
-        "address": _hex(_addr(priv)),
-        "mdev": _hex(_addr(priv.mdev)),
-        "netdev": _hex(_addr(priv.netdev)),
+        "address": _hex(int(priv)),
+        "mdev": _hex(int(priv.mdev)),
+        "netdev": _hex(int(priv.netdev)),
         "state": _hex(int(priv.state)),
         "stats_nch": int(priv.stats_nch),
         "max_nch": int(priv.max_nch),
@@ -1019,12 +737,10 @@ def _collect_mlx5e_priv_summary(priv: Optional[Object]) -> Dict[str, Any]:
         "rx_ptp_opened": int(priv.rx_ptp_opened)
         if has_member(priv, "rx_ptp_opened")
         else None,
-        "channels": _hex(_addr(channels)),
+        "channels": _hex(int(channels.address_)),
         "channels_source": channels_source,
-        "channels_num": _first_int_path(
-            channels, (["num"], ["num_channels"], ["params", "num_channels"])
-        ),
-        "profile": _hex(_addr(priv.profile)),
+        "channels_num": channels_num,
+        "profile": _hex(int(priv.profile)),
     }
 
 
