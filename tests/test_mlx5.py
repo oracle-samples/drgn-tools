@@ -25,6 +25,108 @@ from tests.unittest_helpers import parametrize
 from tests.unittest_helpers import raises
 
 
+class _FakeEnumType:
+    def __init__(self, enumerators):
+        self.enumerators = enumerators
+
+
+class _FakeConstant:
+    def __init__(self, value, type_):
+        self.value = value
+        self.type_ = type_
+
+    def __int__(self):
+        return self.value
+
+
+class _FakeProgram:
+    def __init__(self):
+        self.cache = {}
+        self._constants = {}
+        self._types = {}
+        for enumerators in (
+            (
+                ("MLX5_CQE_OWNER_MASK", 1),
+                ("MLX5_CQE_REQ", 0),
+                ("MLX5_CQE_RESP_WR_IMM", 1),
+                ("MLX5_CQE_RESP_SEND", 2),
+                ("MLX5_CQE_RESP_SEND_IMM", 3),
+                ("MLX5_CQE_RESP_SEND_INV", 4),
+                ("MLX5_CQE_SIG_ERR", 12),
+                ("MLX5_CQE_REQ_ERR", 13),
+                ("MLX5_CQE_RESP_ERR", 14),
+            ),
+            (
+                ("MLX5_CQE_SYNDROME_LOCAL_LENGTH_ERR", 1),
+                ("MLX5_CQE_SYNDROME_LOCAL_QP_OP_ERR", 2),
+                ("MLX5_CQE_SYNDROME_LOCAL_PROT_ERR", 4),
+                ("MLX5_CQE_SYNDROME_WR_FLUSH_ERR", 5),
+            ),
+            (
+                ("MLX5_OPCODE_NOP", 0),
+                ("MLX5_OPCODE_RDMA_READ", 16),
+                ("MLX5_OPCODE_SEND", 10),
+                ("MLX5_OPCODE_TEST_NEW", 127),
+            ),
+            (
+                ("MLX5_EVENT_TYPE_COMP", 0),
+                ("MLX5_EVENT_TYPE_PATH_MIG", 1),
+                ("MLX5_EVENT_TYPE_COMM_EST", 2),
+                ("MLX5_EVENT_TYPE_SQ_DRAINED", 3),
+                ("MLX5_EVENT_TYPE_CQ_ERROR", 4),
+                ("MLX5_EVENT_TYPE_WQ_CATAS_ERROR", 5),
+                ("MLX5_EVENT_TYPE_PATH_MIG_FAILED", 7),
+                ("MLX5_EVENT_TYPE_PORT_CHANGE", 9),
+                ("MLX5_EVENT_TYPE_PAGE_REQUEST", 11),
+                ("MLX5_EVENT_TYPE_NIC_VPORT_CHANGE", 13),
+                ("MLX5_EVENT_TYPE_VHCA_STATE_CHANGE", 15),
+                ("MLX5_EVENT_TYPE_WQ_INVAL_REQ_ERROR", 16),
+                ("MLX5_EVENT_TYPE_WQ_ACCESS_ERROR", 17),
+                ("MLX5_EVENT_TYPE_SRQ_CATAS_ERROR", 18),
+                ("MLX5_EVENT_TYPE_SRQ_LAST_WQE", 19),
+                ("MLX5_EVENT_TYPE_SRQ_RQ_LIMIT", 20),
+                ("MLX5_EVENT_TYPE_PORT_MODULE_EVENT", 22),
+                ("MLX5_EVENT_TYPE_OBJECT_CHANGE", 39),
+            ),
+            (
+                ("MLX5_CQ_ERROR_SYNDROME_CQ_OVERRUN", 1),
+                (
+                    "MLX5_CQ_ERROR_SYNDROME_CQ_ACCESS_VIOLATION_ERROR",
+                    2,
+                ),
+            ),
+            (
+                ("IB_QPT_SMI", 0),
+                ("IB_QPT_GSI", 1),
+                ("IB_QPT_RC", 2),
+                ("IB_QPT_RAW_PACKET", 8),
+            ),
+            (
+                ("IB_QPS_RESET", 0),
+                ("IB_QPS_INIT", 1),
+                ("IB_QPS_RTR", 2),
+                ("IB_QPS_RTS", 3),
+                ("IB_QPS_ERR", 6),
+            ),
+        ):
+            type_ = _FakeEnumType(enumerators)
+            for name, value in enumerators:
+                self._constants[name] = _FakeConstant(value, type_)
+            if enumerators[0][0].startswith("IB_QPT_"):
+                self._types["enum ib_qp_type"] = type_
+            elif enumerators[0][0].startswith("IB_QPS_"):
+                self._types["enum ib_qp_state"] = type_
+
+    def constant(self, name):
+        return self._constants[name]
+
+    def type(self, name):
+        return self._types[name]
+
+
+_FAKE_PROG = _FakeProgram()
+
+
 class TestMlx5DeviceDiscovery(DrgnToolsTestCase):
     def test_driver_device_relationships(self):
         try:
@@ -98,7 +200,7 @@ def _mapping_collector(monkeypatch):
     )
     device = DeviceRecord(0, 1)
     device.name = "mlx5_core0"
-    return mlx5.Mlx5Collector(None, _args()), device
+    return mlx5.Mlx5Collector(_FAKE_PROG, _args()), device
 
 
 def _addressed_mapping_collector(monkeypatch):
@@ -574,7 +676,7 @@ def test_descriptor_dump_status_summarizes_the_whole_window(
 
 
 def test_findings_are_classified_from_collected_values():
-    collector = mlx5.Mlx5Collector(object(), _args())
+    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args())
     cq = {"device": "mlx5_0", "cqn": 7, "eqn": None, "irqn": 42}
     collector._cqs = {("mlx5_0", 7): mlx5._RingEntry(cq, None)}
     device = DeviceRecord(0, 1)
@@ -641,7 +743,7 @@ def test_decode_response_cqe_from_hardware_layout():
     raw[60:62] = (123).to_bytes(2, "big")
     raw[63] = 0x21
 
-    assert mlx5._decode_cqe(bytes(raw)) == {
+    assert mlx5._decode_cqe(_FAKE_PROG, bytes(raw)) == {
         "owner_bit": 1,
         "opcode_value": 2,
         "opcode_display": "RESP_SEND(0x2)",
@@ -659,13 +761,13 @@ def test_decode_request_and_error_cqe_fields():
     request[56:60] = (0x0A000087).to_bytes(4, "big")
     request[60:62] = (1536).to_bytes(2, "big")
     request[63] = 0x01
-    decoded_request = mlx5._decode_cqe(bytes(request))
+    decoded_request = mlx5._decode_cqe(_FAKE_PROG, bytes(request))
 
     error = bytearray(64)
     error[54:56] = bytes((0x9, 0x7))
     error[56:60] = (0x0A123456).to_bytes(4, "big")
     error[63] = 0xD1
-    decoded_error = mlx5._decode_cqe(bytes(error))
+    decoded_error = mlx5._decode_cqe(_FAKE_PROG, bytes(error))
 
     assert decoded_request["opcode_display"] == "REQ(0x0)"
     assert decoded_request["req_opcode_display"] == "SEND(0xa)"
@@ -689,14 +791,14 @@ def test_decode_completion_and_error_eqe_fields():
     error[32:36] = (0x100).to_bytes(4, "big")
     error[43] = 0xEE
 
-    assert mlx5._decode_eqe(bytes(completion)) == {
+    assert mlx5._decode_eqe(_FAKE_PROG, bytes(completion)) == {
         "owner_bit": 1,
         "type_value": 0,
         "type_display": "COMP(0x0)",
         "sub_type": "0x3",
         "cqn": 0x1234,
     }
-    decoded_error = mlx5._decode_eqe(bytes(error))
+    decoded_error = mlx5._decode_eqe(_FAKE_PROG, bytes(error))
     assert decoded_error["type_display"] == "CQ_ERROR(0x4)"
     assert decoded_error["cqn"] == 0x100
     assert decoded_error["syndrome"] == "0xee"
@@ -712,7 +814,7 @@ def test_decode_send_and_linked_receive_wqes():
     receive[20:24] = (0xABCDEF).to_bytes(4, "big")
     receive[24:32] = (0x123456789ABCDEF0).to_bytes(8, "big")
 
-    assert mlx5._decode_wqe(bytes(send)) == {
+    assert mlx5._decode_wqe(_FAKE_PROG, bytes(send)) == {
         "opcode_display": "SEND(0xa)",
         "wqe_index": 0x3456,
         "qpn": 0x123456,
@@ -725,10 +827,20 @@ def test_decode_send_and_linked_receive_wqes():
     }
 
 
+def test_decode_uses_new_program_enum_values_without_a_code_table():
+    send = bytearray(64)
+    send[0:4] = (0x7F).to_bytes(4, "big")
+
+    assert (
+        mlx5._decode_wqe(_FAKE_PROG, bytes(send))["opcode_display"]
+        == "TEST_NEW(0x7f)"
+    )
+
+
 def test_short_descriptors_return_unknown_fields_without_index_errors():
-    assert mlx5._decode_cqe(b"")["opcode_value"] is None
-    assert mlx5._decode_eqe(b"")["type_value"] is None
-    assert mlx5._decode_wqe(b"")["qpn"] is None
+    assert mlx5._decode_cqe(_FAKE_PROG, b"")["opcode_value"] is None
+    assert mlx5._decode_eqe(_FAKE_PROG, b"")["type_value"] is None
+    assert mlx5._decode_wqe(_FAKE_PROG, b"")["qpn"] is None
     assert mlx5._decode_rq_wqe(b"")["dma_addr"] is None
 
 

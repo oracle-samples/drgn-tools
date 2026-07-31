@@ -683,16 +683,16 @@ class Mlx5Collector:
             "pci_bdf": collect_device._pci_bdf_from_mdev(mdev)
             or "unavailable",
             "coredev_type": formatting._enum_name(
-                defs._MLX5_COREDEV_TYPE, int(mdev.coredev_type)
+                mdev.coredev_type, "MLX5_COREDEV_"
             ),
             "device_state": formatting._enum_name(
-                defs._MLX5_DEVICE_STATE, int(mdev.state)
+                mdev.state, "MLX5_DEVICE_STATE_"
             ),
             "pci_status": formatting._enum_name(
-                defs._MLX5_PCI_STATUS, int(mdev.pci_status)
+                mdev.pci_status, "MLX5_PCI_STATUS_"
             ),
             "cmd_state": formatting._enum_name(
-                defs._MLX5_CMDIF_STATE, int(mdev.cmd.state)
+                mdev.cmd.state, "MLX5_CMDIF_STATE_"
             ),
             "intf_state": formatting._hex(int(mdev.intf_state)),
             "board_id": mdev.board_id.string_().decode("utf-8", "replace"),
@@ -1203,7 +1203,6 @@ class Mlx5Collector:
                 rq,
                 kind="ptp_rq",
                 role="rx",
-                state_bits=defs._MLX5E_RQ_STATE_BITS,
             )
 
         for tc, ptpsq in self._iter_ptp_sqs(ptp, priv):
@@ -1218,7 +1217,6 @@ class Mlx5Collector:
                     txqsq,
                     kind="ptp_sq",
                     role="tx",
-                    state_bits=defs._MLX5E_SQ_STATE_BITS,
                     tc=tc,
                 )
                 record["tx_sqs"].append(sq_record)
@@ -1279,12 +1277,6 @@ class Mlx5Collector:
             tc,
             source,
         ) in self._iter_channel_queues(channel, priv):
-            if kind in ("rq", "xskrq"):
-                state_bits = defs._MLX5E_RQ_STATE_BITS
-            elif report_field == "icosqs":
-                state_bits = defs._MLX5E_ICOSQ_STATE_BITS
-            else:
-                state_bits = defs._MLX5E_SQ_STATE_BITS
             queue_record = self._collect_queue(
                 device,
                 netdev_record,
@@ -1292,7 +1284,6 @@ class Mlx5Collector:
                 queue,
                 kind=kind,
                 role=role,
-                state_bits=state_bits,
                 tc=tc,
             )
             if source is not None:
@@ -1312,7 +1303,6 @@ class Mlx5Collector:
         queue_obj: Object,
         kind: str,
         role: str,
-        state_bits: Dict[int, str],
         tc: Optional[int] = None,
     ) -> Dict[str, Any]:
         qn, qn_source = _queue_number_with_source(queue_obj, kind)
@@ -1368,6 +1358,13 @@ class Mlx5Collector:
             if txq is not None
             else None
         )
+        state_prefix = (
+            "MLX5E_RQ_STATE_"
+            if kind in ("rq", "xskrq", "ptp_rq")
+            else "MLX5E_SQ_STATE_"
+        )
+        state_type = self.prog.constant(state_prefix + "ENABLED").type_
+        txq_state_type = self.prog.type("enum netdev_queue_state_t")
 
         record = {
             "kind": kind,
@@ -1382,15 +1379,23 @@ class Mlx5Collector:
             "number_source": qn_source,
             **progress,
             "state": formatting._hex(state),
-            "state_flags": _decode_state_bits(state, state_bits),
-            "enabled": _bit_is_set(state, 0),
-            "recovering": _bit_is_set(state, 1 if kind == "rq" else 2),
+            "state_flags": formatting._enum_flags(
+                state, state_type, state_prefix
+            ),
+            "enabled": _bit_is_set(
+                state,
+                int(self.prog.constant(state_prefix + "ENABLED")),
+            ),
+            "recovering": _bit_is_set(
+                state,
+                int(self.prog.constant(state_prefix + "RECOVERING")),
+            ),
             "txq": formatting._hex(compat._addr(txq)),
             "txq_state": formatting._hex(txq_state),
-            "txq_state_flags": _decode_state_bits(
-                txq_state, defs._NETDEV_QUEUE_STATE_BITS
+            "txq_state_flags": formatting._enum_flags(
+                txq_state, txq_state_type, "__QUEUE_STATE_"
             ),
-            "txq_stopped": bool(txq_state & 0x7)
+            "txq_stopped": bool(txq_state)
             if txq_state is not None
             else None,
             "wq": self._collect_wq_summary(wq),
@@ -2441,7 +2446,7 @@ class Mlx5Collector:
         send_cq = compat._safe_member_path(qp, ["ibqp", "send_cq"])
         recv_cq = compat._safe_member_path(qp, ["ibqp", "recv_cq"])
         qp_type = _qp_type(qp)
-        if qp_type == 8:  # IB_QPT_RAW_PACKET
+        if qp_type == int(self.prog.constant("IB_QPT_RAW_PACKET")):
             sq_wq = compat._safe_member_path(qp, ["raw_packet_qp", "sq", "sq"])
             rq_wq = compat._safe_member_path(qp, ["raw_packet_qp", "rq", "rq"])
             sq_source = "qp.raw_packet_qp.sq.sq"
@@ -2478,12 +2483,12 @@ class Mlx5Collector:
             "creator_pid": creator.get("pid"),
             "creator_source": creator.get("source"),
             "type": qp_type,
-            "type_display": decode._enum_table_label(
-                qp_type, defs._IB_QP_TYPE
+            "type_display": decode._enum_type_label(
+                self.prog, qp_type, "enum ib_qp_type"
             ),
             "state": qp_state,
-            "state_display": decode._enum_table_label(
-                qp_state, defs._IB_QP_STATE
+            "state_display": decode._enum_type_label(
+                self.prog, qp_state, "enum ib_qp_state"
             ),
             "flags": formatting._hex(
                 compat._safe_int(compat._safe_member(qp, "flags"))
@@ -2890,7 +2895,7 @@ class Mlx5Collector:
             wq,
             max_entries,
             defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES,
-            decode=_decode_cqe,
+            decode=lambda raw: _decode_cqe(self.prog, raw),
             known_size=record.get("size"),
             known_consumer_index=record.get("consumer_index"),
             cqe_mode=True,
@@ -2941,7 +2946,10 @@ class Mlx5Collector:
                 continue
             # mlx5_ib_poll_one() uses wqe_counter directly for send completions
             # and errors. Receive/SRQ completions use different cursor rules.
-            if compat._safe_int(entry.get("opcode_value")) not in (0x0, 0xD):
+            if compat._safe_int(entry.get("opcode_value")) not in (
+                int(self.prog.constant("MLX5_CQE_REQ")),
+                int(self.prog.constant("MLX5_CQE_REQ_ERR")),
+            ):
                 continue
             wqe_ctr = compat._safe_int(entry.get("wqe_counter"))
             if wqe_ctr is None:
@@ -3019,7 +3027,7 @@ class Mlx5Collector:
             wq,
             max_entries,
             defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES,
-            decode=_decode_eqe,
+            decode=lambda raw: _decode_eqe(self.prog, raw),
             known_size=record.get("size"),
             known_consumer_index=record.get("consumer_index"),
             descriptor_kind="eqe",
@@ -3072,7 +3080,7 @@ class Mlx5Collector:
             wq,
             max_entries,
             defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES,
-            decode=_decode_wqe,
+            decode=lambda raw: _decode_wqe(self.prog, raw),
             known_size=wq_summary.get("size")
             if isinstance(wq_summary, dict)
             else None,
@@ -3143,7 +3151,7 @@ class Mlx5Collector:
         decode_wqe = (
             (lambda raw: _decode_rq_wqe(raw, linked=linked_rq))
             if is_rq
-            else _decode_wqe
+            else lambda raw: _decode_wqe(self.prog, raw)
         )
         entries = self._dump_ring(
             wq,
@@ -3479,7 +3487,14 @@ class Mlx5Collector:
                 if (
                     kind == "cqe"
                     and compat._safe_int(entry.get("opcode_value"))
-                    in defs._MLX5_CQE_ERROR_OPCODES
+                    in {
+                        int(self.prog.constant(name))
+                        for name in (
+                            "MLX5_CQE_SIG_ERR",
+                            "MLX5_CQE_REQ_ERR",
+                            "MLX5_CQE_RESP_ERR",
+                        )
+                    }
                 ):
                     syndrome = entry.get("syndrome_display") or entry.get(
                         "syndrome"
@@ -3491,7 +3506,8 @@ class Mlx5Collector:
                     )
                 elif (
                     kind == "eqe"
-                    and compat._safe_int(entry.get("type_value")) == 0x4
+                    and compat._safe_int(entry.get("type_value"))
+                    == int(self.prog.constant("MLX5_EVENT_TYPE_CQ_ERROR"))
                 ):
                     syndrome = entry.get("syndrome_display") or entry.get(
                         "syndrome"
@@ -3842,14 +3858,6 @@ def _wqe_ctrl_wqebbs(
 
 def _bit_is_set(value: Optional[int], bit: int) -> Optional[bool]:
     return None if value is None else bool(value & (1 << bit))
-
-
-def _decode_state_bits(
-    value: Optional[int], names: Dict[int, str]
-) -> List[str]:
-    if value is None:
-        return []
-    return [name for bit, name in sorted(names.items()) if value & (1 << bit)]
 
 
 def _nonnegative_delta(pc: Optional[int], cc: Optional[int]) -> Optional[int]:

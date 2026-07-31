@@ -2,9 +2,13 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Formatting helpers for the mlx5 Corelens report."""
 from typing import Any
-from typing import Dict
+from typing import List
 from typing import Optional
 from typing import Tuple
+
+from drgn import Object
+from drgn import Type
+from drgn.helpers.common.format import decode_enum_type_flags
 
 
 def _hex(value: Optional[int]) -> Optional[str]:
@@ -13,10 +17,37 @@ def _hex(value: Optional[int]) -> Optional[str]:
     return hex(int(value))
 
 
-def _enum_name(mapping: Dict[int, str], value: Optional[int]) -> str:
+def _strip_enum_prefix(name: str, prefix: str) -> str:
+    return name[len(prefix) :] if name.startswith(prefix) else name
+
+
+def _enum_value_name(
+    value: Optional[int], type_: Type, prefix: str = ""
+) -> str:
     if value is None:
         return "unavailable"
-    return mapping.get(value) or "unknown({})".format(value)
+    enumerators = type_.enumerators
+    if enumerators is None:
+        raise TypeError("cannot decode incomplete enumerated type")
+    names = {
+        enum_value: _strip_enum_prefix(name, prefix)
+        for name, enum_value in enumerators
+        if not prefix or name.startswith(prefix)
+    }
+    return names.get(value) or "unknown({})".format(value)
+
+
+def _enum_name(value: Object, prefix: str = "") -> str:
+    return _enum_value_name(int(value), value.type_, prefix)
+
+
+def _enum_flags(value: Optional[int], type_: Type, prefix: str) -> List[str]:
+    if value is None:
+        return []
+    decoded = decode_enum_type_flags(value, type_)
+    if decoded == "0":
+        return []
+    return [_strip_enum_prefix(name, prefix) for name in decoded.split("|")]
 
 
 def _display(value: Any) -> str:
