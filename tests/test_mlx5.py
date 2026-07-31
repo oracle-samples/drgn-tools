@@ -156,6 +156,25 @@ class TestMlx5DeviceDiscovery(DrgnToolsTestCase):
             if netdev:
                 priv = netdev_priv(netdev, "struct mlx5e_priv")
                 self.assertEqual(int(priv.mdev), int(mdev))
+                channels = priv.channels
+                for index in range(int(channels.num)):
+                    channel = channels.c[index]
+                    if not channel:
+                        continue
+                    self.assertEqual(int(channel.priv), int(priv))
+                    self.assertEqual(int(channel.mdev), int(mdev))
+                    self.assertEqual(int(channel.netdev), int(netdev))
+                    self.assertGreaterEqual(int(channel.rq.rqn), 0)
+                    self.assertGreaterEqual(int(channel.rq.cq.mcq.cqn), 0)
+                    for tc in range(int(channel.num_tc)):
+                        self.assertGreaterEqual(int(channel.sq[tc].sqn), 0)
+                        self.assertGreaterEqual(
+                            int(channel.sq[tc].cq.mcq.cqn), 0
+                        )
+                    self.assertGreaterEqual(int(channel.icosq.sqn), 0)
+                    self.assertGreaterEqual(
+                        int(channel.icosq.cq.mcq.cqn), 0
+                    )
 
             ib_device = mlx5_core_ib_device(mdev)
             if ib_device:
