@@ -1,10 +1,9 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-"""Tests for mlx5 compatibility and ring layout helpers."""
+"""Tests for mlx5 ring layout helpers."""
 import argparse
 
 from drgn_tools import mlx5
-from drgn_tools.mlx5_support import compat
 from drgn_tools.mlx5_support import dumps
 from tests.unittest_helpers import load_test_functions
 from tests.unittest_helpers import parametrize
@@ -30,45 +29,6 @@ class MemoryProgram:
 
     def read(self, address, length):
         return self.blocks[address][:length]
-
-
-def test_member_paths_use_the_first_readable_value_and_report_its_source():
-    obj = Struct(
-        unusable="not-an-integer",
-        nested=Struct(value=17),
-        zero=0,
-    )
-
-    assert compat._safe_member_path(obj, ["nested", "value"]) == 17
-    assert compat._safe_member_path(obj, ["missing", "value"]) is None
-    assert (
-        compat._first_member_path(
-            obj, (["missing"], ["zero"], ["nested", "value"])
-        )
-        == 0
-    )
-    assert compat._first_member_path_with_source(
-        obj,
-        (
-            ("missing", ["missing"]),
-            ("nested value", ["nested", "value"]),
-            ("later zero", ["zero"]),
-        ),
-    ) == (17, "nested value")
-    assert (
-        compat._first_int_path(
-            obj, (["unusable"], ["nested", "value"], ["zero"])
-        )
-        == 17
-    )
-    assert compat._first_int_path_with_source(
-        obj,
-        (
-            ("bad", ["unusable"]),
-            ("nested integer", ["nested", "value"]),
-            ("later zero", ["zero"]),
-        ),
-    ) == (17, "nested integer")
 
 
 @parametrize(

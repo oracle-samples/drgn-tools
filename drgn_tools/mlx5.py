@@ -370,18 +370,13 @@ class Mlx5Collector:
         devices_by_key: Dict[str, DeviceRecord] = {}
         saw_netdev = False
 
-        mdevs = list(
-            self._iter_walk_limited(
-                collect_device.for_each_mlx5_core_dev(self.prog),
-                "mlx5 core driver discovery",
-            )
-        )
+        mdevs = list(collect_device.for_each_mlx5_core_dev(self.prog))
         for mdev in mdevs:
             if not mdev:
                 raise ValueError("mlx5 driver device has no mlx5_core_dev")
             mdev_addr = int(mdev)
             key = hex(mdev_addr)
-            devices_by_key[key] = DeviceRecord(len(devices_by_key), mdev)
+            devices_by_key[key] = DeviceRecord(mdev)
 
             netdev = collect_device.mlx5_netdev(mdev)
             if not netdev:
@@ -424,8 +419,7 @@ class Mlx5Collector:
                 key: device
                 for key, device in devices_by_key.items()
                 if any(
-                    n.get("name") == self.args.netdev
-                    for n in device.netdevs
+                    n.get("name") == self.args.netdev for n in device.netdevs
                 )
             }
 
@@ -614,9 +608,7 @@ class Mlx5Collector:
 
         device.counts = self._device_counts(device)
 
-    def _device_counts(
-        self, device: DeviceRecord
-    ) -> Dict[str, Optional[int]]:
+    def _device_counts(self, device: DeviceRecord) -> Dict[str, Optional[int]]:
         netdevs = device.netdevs
         channels = [
             channel
@@ -650,7 +642,7 @@ class Mlx5Collector:
             if channel_count is None
             else sum(len(channel.get("xdp_sqs", [])) for channel in channels),
         }
-        device_name = device.name
+        device_name = device.mdev_address
         for count_name, wanted, records in (
             (
                 "cqs",
@@ -679,7 +671,6 @@ class Mlx5Collector:
         self, mdev: Object, device: DeviceRecord
     ) -> Dict[str, Any]:
         return {
-            "name": device.name,
             "mdev": device.mdev_address,
             "rdma_name": device.rdma_name,
             "rdma_port": device.rdma_port,
@@ -800,10 +791,10 @@ class Mlx5Collector:
                     self._collect_cqs_from_eq_tables(device)
                 if self._want_qps:
                     for qp, source, table_qpn in self._iter_qps_from_device(
-                        device, summary=False
+                        device
                     ):
                         identity = _qp_identity(
-                            qp, device.name, table_qpn
+                            qp, device.mdev_address, table_qpn
                         )
                         record = self._record_qp(
                             qp,
@@ -933,9 +924,7 @@ class Mlx5Collector:
                     queue_total += 1
                     self._add_summary_queue_cqn(queue, cqns)
 
-            ptp_queues = self._count_summary_ptp_queues(
-                channels_obj, cqns
-            )
+            ptp_queues = self._count_summary_ptp_queues(channels_obj, cqns)
             if ptp_queues:
                 channel_total += 1
                 queue_total += ptp_queues
@@ -1020,9 +1009,7 @@ class Mlx5Collector:
         state = int(ptp.state[0])
         return (None, state) if state == 0 else (ptp, state)
 
-    def _iter_ptp_sqs(
-        self, ptp: Object
-    ) -> Iterator[Tuple[int, Object]]:
+    def _iter_ptp_sqs(self, ptp: Object) -> Iterator[Tuple[int, Object]]:
         tx_bit = int(self.prog.constant("MLX5E_PTP_STATE_TX"))
         if not int(ptp.state[0]) & (1 << tx_bit):
             return
@@ -1058,9 +1045,7 @@ class Mlx5Collector:
                     channel,
                 )
             )
-        ptp_record = self._collect_ptp_channel(
-            device, netdev_record, channels
-        )
+        ptp_record = self._collect_ptp_channel(device, netdev_record, channels)
         if ptp_record is not None:
             result.append(ptp_record)
         return result
@@ -1104,7 +1089,7 @@ class Mlx5Collector:
             self._collect_mlx5e_cq(
                 ts_cq,
                 {
-                    "device": device.name,
+                    "device": device.mdev_address,
                     "netdev": netdev_record.get("name"),
                     "channel": "ptp",
                     "queue_kind": "ptp_ts_cq",
@@ -1174,7 +1159,7 @@ class Mlx5Collector:
         tc: Optional[int] = None,
     ) -> Dict[str, Any]:
         qn = _queue_number(queue_obj, kind)
-        device_name = device.name
+        device_name = device.mdev_address
         netdev_name = netdev_record["name"]
         state = int(queue_obj.state)
         wq, wq_source = self._queue_wq(queue_obj, kind)
@@ -1247,9 +1232,7 @@ class Mlx5Collector:
             "txq_state_flags": formatting._enum_flags(
                 txq_state, txq_state_type, "__QUEUE_STATE_"
             ),
-            "txq_stopped": bool(txq_state)
-            if txq_state is not None
-            else None,
+            "txq_stopped": bool(txq_state) if txq_state is not None else None,
             "wq": self._collect_wq_summary(wq),
             "cq": cq_record,
         }
@@ -1259,9 +1242,7 @@ class Mlx5Collector:
             self._mlx5e_queues[key] = _RingEntry(record, wq)
         return record
 
-    def _queue_wq(
-        self, queue_obj: Object, kind: str
-    ) -> Tuple[Object, str]:
+    def _queue_wq(self, queue_obj: Object, kind: str) -> Tuple[Object, str]:
         if kind not in ("rq", "xskrq", "ptp_rq"):
             return queue_obj.wq, "queue.wq"
         linked = int(
@@ -1294,9 +1275,7 @@ class Mlx5Collector:
         summary = {
             "address": formatting._hex(int(wq.address_)),
             "size": None if direct_fbc else sz_m1 + 1,
-            "size_source": (
-                None if direct_fbc else f"{field_source}.sz_m1"
-            ),
+            "size_source": (None if direct_fbc else f"{field_source}.sz_m1"),
             "sz_m1": sz_m1,
             "log_sz": log_sz,
             "log_stride": log_stride,
@@ -1308,9 +1287,7 @@ class Mlx5Collector:
             "wqe_counter": None,
             "cur_size": None,
             "db": None,
-            "fbc": formatting._hex(
-                None if direct_fbc else int(fbc.address_)
-            ),
+            "fbc": formatting._hex(None if direct_fbc else int(fbc.address_)),
         }
         if type_name in (
             "struct mlx5_cqwq",
@@ -1402,7 +1379,7 @@ class Mlx5Collector:
     ) -> Tuple[Optional[int], Optional[int]]:
         eqs: Dict[Tuple[str, int], Object] = {}
         for eq, _role, _meta, _vector, _source in self._iter_eq_candidates(
-            device, summary=True
+            device
         ):
             core = _core_eq(eq)
             eqs.setdefault(("eqn", int(core.eqn)), core)
@@ -1411,18 +1388,16 @@ class Mlx5Collector:
         cq_table_seen = False
         for eq in eqs.values():
             cq_table_seen = True
-            for cq_key, _cq in self._iter_walk_limited(
-                radix_tree_for_each(eq.cq_table.tree.address_of_()),
-                f"{device.name}: summary CQ count",
+            for cq_key, _cq in radix_tree_for_each(
+                eq.cq_table.tree.address_of_()
             ):
                 cqns.add(int(cq_key))
         return len(eqs), (len(cqns) if cq_table_seen or cqns else None)
 
     def _iter_eq_candidates(
-        self, device: DeviceRecord, summary: bool = False
+        self, device: DeviceRecord
     ) -> Iterator[Tuple[Object, str, Optional[Object], Optional[int], str]]:
         eq_table = device.mdev.priv.eq_table
-        name = device.name
         for field, role in (
             ("cmd_eq", "cmd"),
             ("async_eq", "async"),
@@ -1431,14 +1406,7 @@ class Mlx5Collector:
             yield getattr(eq_table, field), role, None, None, "direct"
 
         if has_member(eq_table, "comp_eqs"):
-            scope = (
-                f"{name} summary comp_eq count"
-                if summary
-                else f"{name} comp_eqs xarray"
-            )
-            for vector, entry in self._iter_walk_limited(
-                xa_for_each(eq_table.comp_eqs), f"{scope}: iterator walk"
-            ):
+            for vector, entry in xa_for_each(eq_table.comp_eqs):
                 eq_comp = cast("struct mlx5_eq_comp *", entry)
                 yield (
                     eq_comp.core,
@@ -1449,19 +1417,12 @@ class Mlx5Collector:
                 )
             return
 
-        scope = (
-            f"{name} summary comp_eqs_list count"
-            if summary
-            else f"{name} comp_eqs_list"
-        )
         objects = list_for_each_entry(
             "struct mlx5_eq_comp",
             eq_table.comp_eqs_list.address_of_(),
             "list",
         )
-        for eq_comp in self._iter_walk_limited(
-            objects, f"{scope}: iterator walk"
-        ):
+        for eq_comp in objects:
             yield eq_comp.core, "completion", eq_comp, None, "list"
 
     def _collect_eqs_from_device(self, device: DeviceRecord) -> None:
@@ -1488,7 +1449,7 @@ class Mlx5Collector:
             "address_struct": eq.type_.type_name(),
             "core_eq": formatting._hex(int(core.address_)),
             "core_eq_struct": core.type_.type_name(),
-            "device": device.name,
+            "device": device.mdev_address,
             "role": role,
             "irqn": irqn,
             "irq_cpu": _irq_affinity_cpus(self.prog, irqn),
@@ -1502,7 +1463,7 @@ class Mlx5Collector:
             "mask": None,
         }
 
-        key = _record_key(device.name, eqn)
+        key = _record_key(device.mdev_address, eqn)
         if key is None:
             return record
         entry = self._eqs.get(key)
@@ -1524,14 +1485,13 @@ class Mlx5Collector:
         """
 
         for (dev_name, eqn), entry in self._eqs.items():
-            if dev_name != device.name:
+            if dev_name != device.mdev_address:
                 continue
             core = _core_eq(entry.eq)
             role = entry.record.get("role") or "eq"
             owner = f"eq_cq_table:{role}:eqn{eqn}"
-            for key, obj in self._iter_walk_limited(
-                radix_tree_for_each(core.cq_table.tree.address_of_()),
-                f"{device.name}: EQ {eqn} CQ table walk",
+            for key, obj in radix_tree_for_each(
+                core.cq_table.tree.address_of_()
             ):
                 core_cq = cast("struct mlx5_core_cq *", obj)
                 self._record_core_cq(
@@ -1606,7 +1566,7 @@ class Mlx5Collector:
             "core_cq_struct": "struct mlx5_core_cq",
             "owner": ";".join(str(o) for o in owners if o),
             "owners": owners,
-            "device": device.name,
+            "device": device.mdev_address,
             "netdev": netdev,
             "channel": None,
             "queue_kind": queue_kind,
@@ -1627,7 +1587,7 @@ class Mlx5Collector:
             or int(core_cq.cqe_sz),
         }
 
-        key = _record_key(device.name, cqn)
+        key = _record_key(device.mdev_address, cqn)
         if key is None:
             return record
         entry = self._cqs.get(key)
@@ -1654,7 +1614,10 @@ class Mlx5Collector:
         event = collect_device._symbol_for_addr(
             self.prog, int(core_cq.event) if core_cq.event else None
         )
-        if comp != "mlx5e_completion_event" and event != "mlx5e_cq_error_event":
+        if (
+            comp != "mlx5e_completion_event"
+            and event != "mlx5e_cq_error_event"
+        ):
             return None
         cq = container_of(core_cq, "struct mlx5e_cq", "mcq")
         if int(cq.mdev) != int(device.mdev):
@@ -1673,7 +1636,7 @@ class Mlx5Collector:
                 priv.drop_rq.cq.address_of_()
             ):
                 return {
-                    "device": device.name,
+                    "device": device.mdev_address,
                     "netdev": netdev.get("name"),
                     "queue_kind": "drop_rq_cq",
                     "queue_role": "drop",
@@ -1691,7 +1654,7 @@ class Mlx5Collector:
             netdev_name = cq_netdev.name.string_().decode("utf-8", "replace")
 
         return {
-            "device": device.name,
+            "device": device.mdev_address,
             "netdev": netdev_name,
             "queue_kind": "mlx5e_cq",
             "queue_role": "mlx5e",
@@ -1807,10 +1770,8 @@ class Mlx5Collector:
 
     def _count_summary_qps(self, device: DeviceRecord) -> Optional[int]:
         keys = set()
-        for qp, _owner, table_qpn in self._iter_qps_from_device(
-            device, summary=True
-        ):
-            key = _qp_identity(qp, device.name, table_qpn).key
+        for qp, _owner, table_qpn in self._iter_qps_from_device(device):
+            key = _qp_identity(qp, device.mdev_address, table_qpn).key
             if key is not None:
                 keys.add(key)
         return len(keys)
@@ -1833,38 +1794,18 @@ class Mlx5Collector:
         )
 
     def _iter_qps_from_device(
-        self, device: DeviceRecord, *, summary: bool
+        self, device: DeviceRecord
     ) -> Iterator[Tuple[Object, str, Optional[int]]]:
         """Yield every RDMA QP owned by this mlx5 device."""
 
-        device_name = device.name
-        scope = (
-            f"{device_name}: summary mlx5_ib qp_list count"
-            if summary
-            else f"{device_name}: mlx5_ib qp_list walk"
-        )
         for ibdev in self._iter_mlx5_ib_devices(int(device.mdev)):
             qps = list_for_each_entry(
                 "struct mlx5_ib_qp",
                 ibdev.qp_list.address_of_(),
                 "qps_list",
             )
-            for qp in self._iter_walk_limited(qps, scope):
+            for qp in qps:
                 yield qp, "mlx5_ib_qp_list", None
-
-    def _iter_walk_limited(
-        self, iterable: Iterable[Any], truncation_scope: str
-    ) -> Iterator[Any]:
-        for index, item in enumerate(iterable):
-            if (
-                self.args.walk_limit is not None
-                and index >= self.args.walk_limit
-            ):
-                self._warn_truncated(
-                    f"{truncation_scope} truncated at --walk-limit={self.args.walk_limit}"
-                )
-                break
-            yield item
 
     def _record_qp(
         self,
@@ -1875,7 +1816,7 @@ class Mlx5Collector:
         table_qpn: Optional[int] = None,
         identity: Optional[_QpIdentity] = None,
     ) -> Dict[str, Any]:
-        identity = identity or _qp_identity(qp, device.name, table_qpn)
+        identity = identity or _qp_identity(qp, device.mdev_address, table_qpn)
         qpn = identity.qpn
         ib_qpn = identity.ib_qpn
         hw_qpn = identity.hw_qpn
@@ -1908,7 +1849,7 @@ class Mlx5Collector:
             "qpn_aliases": list(identity.aliases),
             "address": formatting._hex(int(qp)),
             "address_struct": "struct mlx5_ib_qp",
-            "device": device.name,
+            "device": device.mdev_address,
             "owner": source,
             "owners": [source],
             "creator": creator.get("display"),
@@ -2696,9 +2637,7 @@ class Mlx5Collector:
             elif type_name == "struct mlx5_eq":
                 consumer_index = int(wq.cons_index)
             elif type_name != "struct mlx5_frag_buf_ctrl":
-                raise TypeError(
-                    f"unsupported mlx5 ring type: {type_name}"
-                )
+                raise TypeError(f"unsupported mlx5 ring type: {type_name}")
         if consumer_index is None:
             return [{"index": None, "status": "consumer-index-unavailable"}]
         stride = dumps._ring_stride_bytes(wq)
@@ -2789,7 +2728,7 @@ class Mlx5Collector:
 
         for device in devices:
             health = device.health
-            scope = device.name
+            scope = device.rdma_name or device.mdev_address
             for severity, present, message in (
                 (
                     "HIGH",
@@ -2803,8 +2742,7 @@ class Mlx5Collector:
                 ),
                 (
                     "HIGH",
-                    device.summary.get("device_state")
-                    == "INTERNAL_ERROR",
+                    device.summary.get("device_state") == "INTERNAL_ERROR",
                     "mlx5_core_dev state is INTERNAL_ERROR",
                 ),
             ):
@@ -2902,18 +2840,14 @@ class Mlx5Collector:
             for entry in dump.get("entries", []) or []:
                 if entry.get("status", "ok") not in ("ok", "ready"):
                     continue
-                if (
-                    kind == "cqe"
-                    and entry.get("opcode_value")
-                    in {
-                        int(self.prog.constant(name))
-                        for name in (
-                            "MLX5_CQE_SIG_ERR",
-                            "MLX5_CQE_REQ_ERR",
-                            "MLX5_CQE_RESP_ERR",
-                        )
-                    }
-                ):
+                if kind == "cqe" and entry.get("opcode_value") in {
+                    int(self.prog.constant(name))
+                    for name in (
+                        "MLX5_CQE_SIG_ERR",
+                        "MLX5_CQE_REQ_ERR",
+                        "MLX5_CQE_RESP_ERR",
+                    )
+                }:
                     syndrome = entry.get("syndrome_display") or entry.get(
                         "syndrome"
                     )
@@ -2922,10 +2856,8 @@ class Mlx5Collector:
                         f"CQE error on {selector_name}={selector} index {entry.get('index')}"
                         f" syndrome={syndrome}",
                     )
-                elif (
-                    kind == "eqe"
-                    and entry.get("type_value")
-                    == int(self.prog.constant("MLX5_EVENT_TYPE_CQ_ERROR"))
+                elif kind == "eqe" and entry.get("type_value") == int(
+                    self.prog.constant("MLX5_EVENT_TYPE_CQ_ERROR")
                 ):
                     syndrome = entry.get("syndrome_display") or entry.get(
                         "syndrome"
@@ -3035,9 +2967,7 @@ def _qp_identity(
     ib_qpn = int(qp.ibqp.qp_num)
     hw_qpn = int(qp.trans_qp.base.mqp.qpn)
     key = _QpKey(str(device), "address", int(qp))
-    aliases = tuple(
-        selection._qp_aliases(ib_qpn, ib_qpn, hw_qpn, table_qpn)
-    )
+    aliases = tuple(selection._qp_aliases(ib_qpn, ib_qpn, hw_qpn, table_qpn))
     return _QpIdentity(key, ib_qpn, ib_qpn, hw_qpn, aliases)
 
 

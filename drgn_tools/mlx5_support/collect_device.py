@@ -77,7 +77,6 @@ def for_each_mlx5_core_dev(prog: Program) -> Iterator[Object]:
 class DeviceRecord:
     """Collected state for one ``struct mlx5_core_dev``."""
 
-    name: str
     mdev: Object
     mdev_address: str
     netdevs: List[Dict[str, Any]]
@@ -89,8 +88,7 @@ class DeviceRecord:
     rdma_port: Optional[int]
     rdma_ibdev: Optional[str]
 
-    def __init__(self, index: int, mdev: Object) -> None:
-        self.name = f"mlx5_{index}"
+    def __init__(self, mdev: Object) -> None:
         self.mdev = mdev
         self.mdev_address = hex(int(mdev))
         self.netdevs = []
@@ -104,7 +102,6 @@ class DeviceRecord:
 
     def to_dict(self) -> Dict[str, Any]:
         record: Dict[str, Any] = {
-            "name": self.name,
             "mdev": self.mdev_address,
             "netdevs": self.netdevs,
             "summary": self.summary,
@@ -155,7 +152,6 @@ def _symbol_for_addr(prog: Program, addr: Optional[int]) -> Optional[str]:
 
 def _device_matches_selector(device: DeviceRecord, selector: str) -> bool:
     candidates = {
-        device.name.lower(),
         device.mdev_address.lower(),
         str(device.rdma_name or "").lower(),
         str(device.summary.get("pci_bdf", "")).lower(),

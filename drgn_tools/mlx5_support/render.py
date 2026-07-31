@@ -199,12 +199,10 @@ def _render_devices(report: Dict[str, Any], args: argparse.Namespace) -> None:
     if args._full_report:
         print("Device details")
         for device in report.get("devices", []):
-            name = device.get("name")
-            label = device_labels.get(str(name), name)
+            mdev = device.get("mdev")
+            label = device_labels.get(str(mdev), mdev)
             print(f"  {label}")
             summary = dict(device.get("summary", {}) or {})
-            if "name" in summary:
-                summary["name"] = label
             _print_kv_block("summary", summary, indent="    ")
             _print_kv_block("health", device.get("health", {}), indent="    ")
             _print_kv_block(
@@ -238,6 +236,17 @@ def _device_ips(device: Dict[str, Any]) -> str:
 
 def _device_display_labels(report: Dict[str, Any]) -> Dict[str, str]:
     devices = report.get("devices", [])
+    labels: Dict[str, str] = {}
+    for device in devices:
+        mdev = device.get("mdev")
+        if mdev is None:
+            continue
+        labels[str(mdev)] = _device_display_label(device)
+    return labels
+
+
+def _device_rdma_labels(report: Dict[str, Any]) -> Dict[str, str]:
+    devices = report.get("devices", [])
     rdma_counts: Dict[str, int] = defaultdict(int)
     for device in devices:
         rdma_name = _device_rdma_name(device)
@@ -246,10 +255,16 @@ def _device_display_labels(report: Dict[str, Any]) -> Dict[str, str]:
 
     labels: Dict[str, str] = {}
     for device in devices:
-        name = device.get("name")
-        if name is None:
+        mdev = device.get("mdev")
+        rdma_name = _device_rdma_name(device)
+        if mdev is None or rdma_name is None:
             continue
-        labels[str(name)] = _device_display_label(device, rdma_counts)
+        rdma_port = device.get("summary", {}).get("rdma_port") or device.get(
+            "rdma_port"
+        )
+        if rdma_counts[rdma_name] > 1 and rdma_port not in (None, "", "-"):
+            rdma_name = f"{rdma_name}/{rdma_port}"
+        labels[str(mdev)] = rdma_name
     return labels
 
 
@@ -259,45 +274,36 @@ def _device_rdma_name(device: Dict[str, Any]) -> Optional[str]:
     return None if value in (None, "", "-") else str(value)
 
 
-def _device_display_label(
-    device: Dict[str, Any], rdma_counts: Dict[str, int]
-) -> str:
+def _device_display_label(device: Dict[str, Any]) -> str:
     summary = device.get("summary", {})
-    rdma_name = _device_rdma_name(device)
-    if rdma_name:
-        rdma_port = summary.get("rdma_port") or device.get("rdma_port")
-        if rdma_port in (None, "", "-"):
-            rdma_port = None
-        if rdma_counts.get(rdma_name, 0) > 1 and rdma_port is not None:
-            return f"{rdma_name}/{rdma_port}"
-        return rdma_name
-
     netdevs = [
         str(n.get("name")) for n in device.get("netdevs", []) if n.get("name")
     ]
-    if len(netdevs) == 1:
-        return netdevs[0]
+    if netdevs:
+        return ",".join(netdevs)
 
     for key in ("pci_bdf", "mdev"):
         value = summary.get(key)
         if value not in (None, "", "-"):
             return str(value)
 
-    return str(device.get("name") or "-")
+    return str(device.get("mdev") or "-")
 
 
 def _record_device_label(
-    record: Dict[str, Any], device_labels: Dict[str, str]
+    record: Dict[str, Any],
+    device_labels: Dict[str, str],
+    *,
+    fallback: bool = True,
 ) -> Any:
-    display = record.get("device_display")
-    if display not in (None, "", "-"):
-        return display
     device = record.get("device")
     if device is None:
-        device = record.get("name")
+        device = record.get("mdev")
     if device is None:
         return None
-    return device_labels.get(str(device), device)
+    if fallback:
+        return device_labels.get(str(device), device)
+    return device_labels.get(str(device))
 
 
 def _should_render_wqe_context(
@@ -336,9 +342,11 @@ def _render_queues(report: Dict[str, Any], args: argparse.Namespace) -> None:
     table = Table(headers)
     candidates: List[Tuple[Tuple[str, str], List[Any]]] = []
     selected_dump_keys = selection._wqe_queue_context_keys(report, args)
-    device_labels = _device_display_labels(report)
+    rdma_labels = _device_rdma_labels(report)
     for device in report.get("devices", []):
-        rdma_dev = _record_device_label(device, device_labels)
+        rdma_dev = (
+            _record_device_label(device, rdma_labels, fallback=False) or "-"
+        )
         for netdev in device.get("netdevs", []):
             for channel in netdev.get("channels", []):
                 for queue in selection._channel_queues(channel):
@@ -346,7 +354,7 @@ def _render_queues(report: Dict[str, Any], args: argparse.Namespace) -> None:
                         queue,
                         args,
                         selected_dump_keys=selected_dump_keys,
-                        device_name=device.get("name"),
+                        device_name=device.get("mdev"),
                     ):
                         continue
                     cq = queue.get("cq") or {}
@@ -418,7 +426,7 @@ def _render_cqs(report: Dict[str, Any], args: argparse.Namespace) -> None:
             or (cq.get("cqn") is not None and int(cq["cqn"]) == args.cqn)
         )
     ]
-    device_labels = _device_display_labels(report)
+    rdma_labels = _device_rdma_labels(report)
     for cq in selection._limit_balanced(
         cqs, args.maxcq, selection._cq_balance_bucket
     ):
@@ -427,7 +435,7 @@ def _render_cqs(report: Dict[str, Any], args: argparse.Namespace) -> None:
             if _short_struct(cq.get("address_struct")) == "mlx5e_cq"
             and cq.get("netdev")
             else "-",
-            _record_device_label(cq, device_labels),
+            _record_device_label(cq, rdma_labels, fallback=False) or "-",
             cq.get("cqn"),
             cq.get("address"),
             _short_struct(cq.get("address_struct")),
@@ -497,10 +505,10 @@ def _render_eqs(report: Dict[str, Any], args: argparse.Namespace) -> None:
     )
     print("  CQ_CNT is the number of CQs linked to this EQ.")
     table = Table(headers)
-    device_labels = _device_display_labels(report)
+    rdma_labels = _device_rdma_labels(report)
     for eq in eqs:
         row = [
-            _record_device_label(eq, device_labels),
+            _record_device_label(eq, rdma_labels, fallback=False) or "-",
             eq.get("eqn"),
             eq.get("address"),
             _short_struct(eq.get("address_struct")),
@@ -546,7 +554,7 @@ def _render_qps(report: Dict[str, Any], args: argparse.Namespace) -> None:
         "RDMA_DEV QPN HW_QPN MLX5_IB_QP CREATOR QP_TYPE STATE SEND_CQN RECV_CQN "
         "SQ_SZ RQ_SZ SQ_PC SQ_CC RQ_PC RQ_CC".split()
     )
-    device_labels = _device_display_labels(report)
+    rdma_labels = _device_rdma_labels(report)
     qps = [
         qp
         for qp in report.get("qps", [])
@@ -555,7 +563,7 @@ def _render_qps(report: Dict[str, Any], args: argparse.Namespace) -> None:
     ]
     for qp in selection._limit_items(qps, args.maxqp):
         row = [
-            _record_device_label(qp, device_labels),
+            _record_device_label(qp, rdma_labels, fallback=False) or "-",
             qp.get("qpn"),
             qp.get("hw_qpn"),
             qp.get("address"),
@@ -599,7 +607,7 @@ def _render_dumps(report: Dict[str, Any], args: argparse.Namespace) -> None:
     for dump in dumps:
         groups.setdefault(str(dump.get("kind", "descriptor")), []).append(dump)
 
-    device_labels = _device_display_labels(report)
+    rdma_labels = _device_rdma_labels(report)
     for kind, group in groups.items():
         if not group:
             continue
@@ -610,13 +618,13 @@ def _render_dumps(report: Dict[str, Any], args: argparse.Namespace) -> None:
             print(line)
         print()
         for dump in group:
-            _render_one_dump(dump, args, device_labels)
+            _render_one_dump(dump, args, rdma_labels)
 
 
 def _render_one_dump(
     dump: Dict[str, Any],
     args: argparse.Namespace,
-    device_labels: Optional[Dict[str, str]] = None,
+    rdma_labels: Optional[Dict[str, str]] = None,
 ) -> None:
     kind = str(dump.get("kind", "descriptor"))
     entries = dump.get("entries", [])
@@ -629,7 +637,7 @@ def _render_one_dump(
             f"  selector : {dump.get('selector_name', 'id')}={dump.get('selector')}"
         )
     if dump.get("device"):
-        for label, value in _dump_device_lines(dump, device_labels or {}):
+        for label, value in _dump_device_lines(dump, rdma_labels or {}):
             print(f"  {label:<8}: {value}")
     if dump.get("consumer_index") is not None:
         print(f"  consumer : {dump.get('consumer_index')}")
@@ -669,7 +677,7 @@ def _cqe_path_display(dump: Dict[str, Any]) -> str:
 
 
 def _dump_device_lines(
-    dump: Dict[str, Any], device_labels: Dict[str, str]
+    dump: Dict[str, Any], rdma_labels: Dict[str, str]
 ) -> List[Tuple[str, Any]]:
     kind = str(dump.get("kind", "descriptor"))
     netdev = None
@@ -688,14 +696,14 @@ def _dump_device_lines(
             netdev = queue.get("netdev")
         if isinstance(dump.get("qp"), dict):
             device_record = dump["qp"]
-    rdma_dev = _record_device_label(device_record, device_labels)
+    rdma_dev = _record_device_label(device_record, rdma_labels, fallback=False)
     if netdev and rdma_dev and netdev != rdma_dev:
         return [("netdev", netdev), ("rdma_dev", rdma_dev)]
     if netdev:
         return [("netdev", netdev)]
     if rdma_dev:
         return [("rdma_dev", rdma_dev)]
-    return [("device", _record_device_label(dump, device_labels))]
+    return [("device", _record_device_label(dump, rdma_labels))]
 
 
 def _is_rq_wqe_dump(dump: Dict[str, Any]) -> bool:
