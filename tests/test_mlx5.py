@@ -30,6 +30,11 @@ class _FakeConstant:
         return self.value
 
 
+class _FakeObject(argparse.Namespace):
+    def __int__(self):
+        return self.address_
+
+
 class _FakeProgram:
     def __init__(self):
         self.cache = {}
@@ -148,31 +153,46 @@ def _parser():
 
 
 def _mapping_collector(monkeypatch):
-    monkeypatch.setattr(
-        mlx5.compat,
-        "_safe_member",
-        lambda obj, name: obj.get(name) if isinstance(obj, dict) else None,
-    )
+    monkeypatch.setattr(mlx5, "has_member", lambda obj, name: hasattr(obj, name))
     device = DeviceRecord(0, 1)
     device.name = "mlx5_core0"
-    return mlx5.Mlx5Collector(_FAKE_PROG, _args()), device
-
-
-def _addressed_mapping_collector(monkeypatch):
-    collector, device = _mapping_collector(monkeypatch)
-    real_addr = mlx5.compat._addr
-    monkeypatch.setattr(
-        mlx5.compat,
-        "_addr",
-        lambda obj: obj.get("_address")
-        if isinstance(obj, dict)
-        else real_addr(obj),
+    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args())
+    collector._collect_wq_summary = (
+        lambda wq: wq if isinstance(wq, dict) else {}
     )
     return collector, device
 
 
-def _fake_qp(address, hw_qpn):
-    return {"_address": address, "ibqp": {"qp_num": 1}, "qpn": hw_qpn}
+def _addressed_mapping_collector(monkeypatch):
+    return _mapping_collector(monkeypatch)
+
+
+def _fake_qp(address=0x1000, hw_qpn=7, **overrides):
+    values = {
+        "address_": address,
+        "ibqp": _FakeObject(
+            send_cq=None,
+            recv_cq=None,
+            qp_num=1,
+            res=_FakeObject(user=0, task=None, kern_name=None),
+        ),
+        "qpn": hw_qpn,
+        "trans_qp": _FakeObject(
+            base=_FakeObject(mqp=_FakeObject(qpn=hw_qpn))
+        ),
+        "type": 2,
+        "state": 0,
+        "flags": 0,
+        "has_rq": 1,
+        "is_rss": 0,
+        "max_inline_data": 0,
+        "db": _FakeObject(address_=address + 0x100),
+        "buf": _FakeObject(address_=address + 0x200),
+        "sq": {},
+        "rq": {},
+    }
+    values.update(overrides)
+    return _FakeObject(**values)
 
 
 def test_qp_registry_keeps_distinct_objects_with_the_same_logical_qpn(
@@ -198,28 +218,33 @@ def test_qp_registry_merges_sources_aliases_and_preserves_first_work_queue(
 ):
     collector, device = _mapping_collector(monkeypatch)
     first_sq = {"head": 4, "tail": 2}
-    first = collector._record_qp({"qpn": 7, "sq": first_sq}, device, "qp_list")
-    merged = collector._record_qp({"qpn": 7}, device, "qp_table", table_qpn=9)
+    first = collector._record_qp(
+        _fake_qp(sq=first_sq), device, "qp_list"
+    )
+    merged = collector._record_qp(
+        _fake_qp(), device, "qp_table", table_qpn=9
+    )
 
-    entry = collector._qps[mlx5._QpKey("mlx5_core0", "hw_qpn", 7)]
+    entry = collector._qps[
+        mlx5._QpKey("mlx5_core0", "address", 0x1000)
+    ]
     assert first is merged is entry.record
     assert entry.record["owners"] == ["qp_list", "qp_table"]
-    assert entry.record["qpn_aliases"] == [7, 9]
+    assert entry.record["qpn_aliases"] == [1, 7, 9]
     assert entry.dump_wq is entry.sq_wq is first_sq
 
 
 def test_raw_packet_qp_progress_uses_nested_work_queues(monkeypatch):
     collector, device = _mapping_collector(monkeypatch)
-    qp = {
-        "qpn": 7,
-        "type": 8,
-        "sq": {"head": 1, "tail": 2},
-        "rq": {"head": 3, "tail": 4},
-        "raw_packet_qp": {
-            "sq": {"sq": {"head": 11, "tail": 12}},
-            "rq": {"rq": {"head": 13, "tail": 14}},
-        },
-    }
+    qp = _fake_qp(
+        type=8,
+        sq={"head": 1, "tail": 2},
+        rq={"head": 3, "tail": 4},
+        raw_packet_qp=_FakeObject(
+            sq=_FakeObject(sq={"head": 11, "tail": 12}),
+            rq=_FakeObject(rq={"head": 13, "tail": 14}),
+        ),
+    )
 
     record = collector._record_qp(qp, device, "qp_list")
 
@@ -251,14 +276,36 @@ def test_cq_registry_merges_metadata_and_preserves_first_work_queue(
     collector._cqs[key] = mlx5._RingEntry(record, None)
     collector._mlx5e_cq_from_core_cq = lambda *_args: None
     collector._mlx5_ib_cq_from_core_cq = lambda *_args: None
-    collector._mlx5_aso_cq_from_core_cq = lambda core, _device: core["aso"]
+    collector._mlx5_aso_cq_from_core_cq = lambda core, _device: core.aso
     first_wq = object()
 
     merged = collector._record_core_cq(
-        {"cqn": 7, "vector": 4, "aso": {"wq": first_wq}}, device, "eq0"
+        _FakeObject(
+            address_=0x1000,
+            cqn=7,
+            arm_sn=0,
+            cons_index=0,
+            vector=4,
+            irqn=0,
+            cqe_sz=64,
+            aso=_FakeObject(address_=0x2000, wq=first_wq),
+        ),
+        device,
+        "eq0",
     )
     collector._record_core_cq(
-        {"cqn": 7, "vector": 9, "aso": {"wq": object()}}, device, "eq1"
+        _FakeObject(
+            address_=0x1000,
+            cqn=7,
+            arm_sn=0,
+            cons_index=0,
+            vector=9,
+            irqn=0,
+            cqe_sz=64,
+            aso=_FakeObject(address_=0x2000, wq=object()),
+        ),
+        device,
+        "eq1",
     )
 
     entry = collector._cqs[key]
