@@ -128,21 +128,6 @@ def _safe_index(obj: Optional[Object], index: int) -> Optional[Object]:
         return None
 
 
-def _safe_index_or_single_sq(
-    array_or_sq: Optional[Object], index: int
-) -> Optional[Object]:
-    if array_or_sq is None:
-        return None
-    # Index 0 may refer to a single struct rather than an array.
-    if (
-        index == 0
-        and _addr(array_or_sq) is not None
-        and _safe_int(_safe_member(array_or_sq, "sqn")) is not None
-    ):
-        return array_or_sq
-    return _safe_index(array_or_sq, index)
-
-
 def _safe_int(obj: Any) -> Optional[int]:
     if obj is None:
         return None

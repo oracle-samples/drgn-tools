@@ -40,6 +40,7 @@ from drgn import ObjectAbsentError
 from drgn import OutOfBoundsError
 from drgn import Program
 from drgn import ProgramFlags
+from drgn import TypeKind
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import cpumask_to_cpulist
 from drgn.helpers.linux.idr import idr_for_each
@@ -913,13 +914,10 @@ class Mlx5Collector:
             priv = netdev.get("_priv_obj")
             if priv is None:
                 return None, None, cqns
-            layout = self._channel_layout(priv)
-            if layout is None:
-                return None, None, cqns
-            channels_obj, count, channel_array, *_sources = layout
+            channels_obj, count, channel_array = self._channel_layout(priv)
             for index in range(count):
-                channel = compat._safe_index(channel_array, index)
-                if channel is None:
+                channel = channel_array[index]
+                if not channel:
                     continue
                 channel_total += 1
                 for (
@@ -928,13 +926,12 @@ class Mlx5Collector:
                     _kind,
                     _role,
                     _tc,
-                    _source,
-                ) in self._iter_channel_queues(channel, priv):
+                ) in self._iter_channel_queues(channel):
                     queue_total += 1
                     self._add_summary_queue_cqn(queue, cqns)
 
             ptp_queues = self._count_summary_ptp_queues(
-                channels_obj, priv, cqns
+                channels_obj, cqns
             )
             if ptp_queues:
                 channel_total += 1
@@ -944,178 +941,93 @@ class Mlx5Collector:
     def _channel_layout(
         self,
         priv: Object,
-    ) -> Optional[
-        Tuple[Object, int, Object, Optional[str], Optional[str], Optional[str]]
-    ]:
-        channels, channels_source = compat._first_member_path_with_source(
-            priv, defs._MLX5E_CHANNELS_OBJECT_PATHS
-        )
-        if channels is None:
-            return None
-        count, count_source = compat._first_int_path_with_source(
-            channels, defs._MLX5E_CHANNEL_COUNT_PATHS
-        )
-        if count is None:
-            count, count_source = compat._first_int_path_with_source(
-                priv,
-                (
-                    ("struct mlx5e_priv.stats_nch", ["stats_nch"]),
-                    ("struct mlx5e_priv.max_nch", ["max_nch"]),
-                    ("struct mlx5e_priv.channels_num", ["channels_num"]),
-                ),
-            )
-        if count is None:
-            return None
+    ) -> Tuple[Object, int, Object]:
+        channels = priv.channels
         count = self._walk_count(
-            count, "mlx5e channel walk", hard_limit=defs.MAX_CHANNELS
+            int(channels.num),
+            "mlx5e channel walk",
+            hard_limit=defs.MAX_CHANNELS,
         )
-        array, array_source = compat._first_member_path_with_source(
-            channels, defs._MLX5E_CHANNEL_ARRAY_PATHS
-        )
-        if array is None:
-            return None
-        return (
-            channels,
-            count,
-            array,
-            channels_source,
-            count_source,
-            array_source,
-        )
+        return channels, count, channels.c
 
     def _iter_channel_queues(
-        self, channel: Object, priv: Object
-    ) -> Iterator[Tuple[str, Object, str, str, Optional[int], Optional[str]]]:
-        def present(
-            queue: Optional[Object],
-            kind: str = "sq",
-            require_activity: bool = False,
-        ) -> bool:
-            if queue is None:
-                return False
-            if require_activity:
-                number, _source = _queue_number_with_source(queue, kind)
-                activity = (
-                    number,
-                    compat._safe_int(compat._safe_member(queue, "state")),
-                    compat._first_int_path(
-                        queue,
-                        (["pc"], ["wq", "pc"], ["wqe_ctr"], ["wq", "wqe_ctr"]),
-                    ),
-                    compat._first_int_path(
-                        queue, (["cc"], ["wq", "cc"], ["wq", "head"])
-                    ),
-                )
-                return any(value not in (None, 0) for value in activity)
-            return self._queue_object_has_identity(queue, kind)
+        self, channel: Object
+    ) -> Iterator[Tuple[str, Object, str, str, Optional[int]]]:
+        yield "rx_rq", channel.rq, "rq", "rx", None
 
-        rq, source = compat._first_member_path_with_source(
-            channel, defs._MLX5E_CHANNEL_RQ_PATHS
-        )
-        if rq is not None:
-            yield "rx_rq", rq, "rq", "rx", None, source
+        num_tc = min(int(channel.num_tc), defs.MAX_TC)
+        for tc in range(num_tc):
+            yield "tx_sqs", channel.sq[tc], "sq", "tx", tc
 
-        num_tc = compat._safe_int(compat._safe_member(channel, "num_tc"))
-        if num_tc is None or num_tc <= 0:
-            num_tc = _num_tc_from_priv(priv)
-        sq_base, source = compat._first_member_path_with_source(
-            channel, defs._MLX5E_CHANNEL_SQ_PATHS
-        )
-        if num_tc is not None and num_tc > 0:
-            for tc in range(min(num_tc, defs.MAX_TC)):
-                sq = compat._safe_index_or_single_sq(sq_base, tc)
-                if present(sq):
-                    yield "tx_sqs", sq, "sq", "tx", tc, source
-
-        qos_sqs = compat._safe_member(channel, "qos_sqs")
-        qos_sqs_size = compat._safe_int(
-            compat._safe_member(channel, "qos_sqs_size")
-        )
-        if qos_sqs is not None and qos_sqs_size is not None:
-            count = self._walk_count(qos_sqs_size, "mlx5e qos_sq walk")
+        qos_sqs = channel.qos_sqs
+        if qos_sqs:
+            count = self._walk_count(
+                int(channel.qos_sqs_size), "mlx5e qos_sq walk"
+            )
             for index in range(count):
-                sq = compat._safe_index(qos_sqs, index)
-                if present(sq):
-                    yield "tx_sqs", sq, "qos_sq", "tx", index, None
+                sq = qos_sqs[index]
+                if sq:
+                    yield "tx_sqs", sq, "qos_sq", "tx", index
 
-        xskrq = compat._safe_member(channel, "xskrq")
-        if present(xskrq, "rq", require_activity=True):
-            yield "xsk_rqs", xskrq, "xskrq", "rx", None, None
+        if int(channel.xdp):
+            yield "xdp_sqs", channel.rq_xdpsq, "rq_xdpsq", "xdp", None
 
-        for field in ("xdp_sq", "xdpsq", "rq_xdpsq", "xsksq"):
-            sq = compat._safe_member(channel, field)
-            if present(sq, require_activity=field in ("rq_xdpsq", "xsksq")):
-                yield "xdp_sqs", sq, field, "xdp", None, None
+        xdpsq = channel.xdpsq
+        if (xdpsq.type_.kind != TypeKind.POINTER or xdpsq) and int(xdpsq.sqn):
+            yield "xdp_sqs", xdpsq, "xdpsq", "xdp", None
 
-        for field in ("icosq", "async_icosq"):
-            sq = compat._safe_member(channel, field)
-            if present(sq):
-                yield "icosqs", sq, field, "internal", None, None
+        xsk_bit = int(self.prog.constant("MLX5E_CHANNEL_STATE_XSK"))
+        if int(channel.state[0]) & (1 << xsk_bit):
+            yield "xsk_rqs", channel.xskrq, "xskrq", "rx", None
+            yield "xdp_sqs", channel.xsksq, "xsksq", "xdp", None
+
+        yield "icosqs", channel.icosq, "icosq", "internal", None
+        yield (
+            "icosqs",
+            channel.async_icosq,
+            "async_icosq",
+            "internal",
+            None,
+        )
 
     def _count_summary_ptp_queues(
-        self, channels_obj: Object, priv: Object, cqns: Set[int]
+        self, channels_obj: Object, cqns: Set[int]
     ) -> int:
         ptp, _state = self._ptp_object(channels_obj)
         if ptp is None:
             return 0
         count = 0
-        rq = compat._safe_member(ptp, "rq")
-        if self._queue_object_has_identity(rq, "rq"):
+        rx_bit = int(self.prog.constant("MLX5E_PTP_STATE_RX"))
+        if int(ptp.state[0]) & (1 << rx_bit):
+            rq = ptp.rq
             count += 1
             self._add_summary_queue_cqn(rq, cqns)
-        for _tc, ptpsq in self._iter_ptp_sqs(ptp, priv):
-            txqsq = compat._safe_member(ptpsq, "txqsq")
-            if self._queue_object_has_identity(txqsq, "sq"):
-                count += 1
-                self._add_summary_queue_cqn(txqsq, cqns)
-            ts_cq = compat._safe_member(ptpsq, "ts_cq")
-            cqn = compat._first_int_path(
-                ts_cq, (["mcq", "cqn"], ["core", "cqn"], ["cqn"])
-            )
-            if cqn is not None:
-                cqns.add(cqn)
+        for _tc, ptpsq in self._iter_ptp_sqs(ptp):
+            count += 1
+            self._add_summary_queue_cqn(ptpsq.txqsq, cqns)
+            cqns.add(int(ptpsq.ts_cq.mcq.cqn))
         return count
 
     def _ptp_object(
         self, channels_obj: Object
     ) -> Tuple[Optional[Object], Optional[int]]:
-        ptp = compat._safe_member(channels_obj, "ptp")
-        if ptp is None or compat._is_null(ptp):
+        ptp = channels_obj.ptp
+        if not ptp:
             return None, None
-        state = compat._safe_int(
-            compat._safe_index(compat._safe_member(ptp, "state"), 0)
-        )
+        state = int(ptp.state[0])
         return (None, state) if state == 0 else (ptp, state)
 
     def _iter_ptp_sqs(
-        self, ptp: Object, priv: Object
+        self, ptp: Object
     ) -> Iterator[Tuple[int, Object]]:
-        num_tc = compat._first_int_path(ptp, (["num_tc"],))
-        if num_tc is None:
-            num_tc = _num_tc_from_priv(priv)
-        if num_tc is None or num_tc <= 0:
+        tx_bit = int(self.prog.constant("MLX5E_PTP_STATE_TX"))
+        if not int(ptp.state[0]) & (1 << tx_bit):
             return
-        ptpsq_base = compat._safe_member(ptp, "ptpsq")
-        for tc in range(min(num_tc, defs.MAX_TC)):
-            ptpsq = compat._safe_index_or_single_sq(ptpsq_base, tc)
-            if ptpsq is not None:
-                yield tc, ptpsq
-
-    def _queue_object_has_identity(
-        self, queue: Optional[Object], kind: str
-    ) -> bool:
-        if queue is None:
-            return False
-        qn, _source = _queue_number_with_source(queue, kind)
-        return qn is not None or compat._addr(queue) not in (None, 0)
+        for tc in range(min(int(ptp.num_tc), defs.MAX_TC)):
+            yield tc, ptp.ptpsq[tc]
 
     def _add_summary_queue_cqn(self, queue: Object, cqns: Set[int]) -> None:
-        cq = compat._safe_member(queue, "cq")
-        cqn = compat._first_int_path(
-            cq, (["mcq", "cqn"], ["core", "cqn"], ["cqn"])
-        )
-        if cqn is not None:
-            cqns.add(cqn)
+        cqns.add(int(queue.cq.mcq.cqn))
 
     def _collect_channels(
         self,
@@ -1129,54 +1041,23 @@ class Mlx5Collector:
                 "queue walk skipped"
             )
             return []
-        layout = self._channel_layout(priv)
-        if layout is None:
-            self._warn(
-                f"{netdev_record.get('name')}: channel layout unavailable; "
-                "queue walk skipped"
-            )
-            return []
-        (
-            channels,
-            channel_count,
-            channel_array,
-            channels_source,
-            count_source,
-            array_source,
-        ) = layout
+        channels, channel_count, channel_array = self._channel_layout(priv)
 
         result = []
         for index in range(channel_count):
-            channel = compat._safe_index(channel_array, index)
-            if channel is None:
+            channel = channel_array[index]
+            if not channel:
                 continue
-            try:
-                channel_record = self._collect_channel(
+            result.append(
+                self._collect_channel(
                     device,
                     netdev_record,
-                    priv,
                     channel,
-                    fallback_index=index,
                 )
-            except (FaultError, ObjectAbsentError, OutOfBoundsError) as err:
-                self._warn(
-                    f"{netdev_record.get('name')}: channel {index} "
-                    f"is unreadable: {err}"
-                )
-                continue
-            channel_record["channels_source"] = channels_source
-            channel_record["channel_count_source"] = count_source
-            channel_record["channel_array_source"] = array_source
-            result.append(channel_record)
-        try:
-            ptp_record = self._collect_ptp_channel(
-                device, netdev_record, priv, channels
             )
-        except (FaultError, ObjectAbsentError, OutOfBoundsError) as err:
-            self._warn(
-                f"{netdev_record.get('name')}: PTP channel is unreadable: {err}"
-            )
-            ptp_record = None
+        ptp_record = self._collect_ptp_channel(
+            device, netdev_record, channels
+        )
         if ptp_record is not None:
             result.append(ptp_record)
         return result
@@ -1185,7 +1066,6 @@ class Mlx5Collector:
         self,
         device: DeviceRecord,
         netdev_record: Dict[str, Any],
-        priv: Object,
         channels_obj: Object,
     ) -> Optional[Dict[str, Any]]:
         ptp, state = self._ptp_object(channels_obj)
@@ -1194,48 +1074,42 @@ class Mlx5Collector:
         record = _new_channel_record(ptp, "ptp")
         record.update({"ptp": True, "state": formatting._hex(state)})
 
-        rq = compat._safe_member(ptp, "rq")
-        if rq is not None and self._queue_object_has_identity(rq, "rq"):
+        rx_bit = int(self.prog.constant("MLX5E_PTP_STATE_RX"))
+        if int(ptp.state[0]) & (1 << rx_bit):
             record["rx_rq"] = self._collect_queue(
                 device,
                 netdev_record,
                 "ptp",
-                rq,
+                ptp.rq,
                 kind="ptp_rq",
                 role="rx",
             )
 
-        for tc, ptpsq in self._iter_ptp_sqs(ptp, priv):
-            txqsq = compat._safe_member(ptpsq, "txqsq")
-            if txqsq is not None and self._queue_object_has_identity(
-                txqsq, "sq"
-            ):
-                sq_record = self._collect_queue(
+        for tc, ptpsq in self._iter_ptp_sqs(ptp):
+            record["tx_sqs"].append(
+                self._collect_queue(
                     device,
                     netdev_record,
                     "ptp",
-                    txqsq,
+                    ptpsq.txqsq,
                     kind="ptp_sq",
                     role="tx",
                     tc=tc,
                 )
-                record["tx_sqs"].append(sq_record)
-            ts_cq = compat._safe_member(ptpsq, "ts_cq")
-            if ts_cq is not None:
-                self._collect_mlx5e_cq(
-                    ts_cq,
-                    {
-                        "device": device.name,
-                        "netdev": netdev_record.get("name"),
-                        "channel": "ptp",
-                        "queue_kind": "ptp_ts_cq",
-                        "queue_role": "timestamp",
-                        "queue_number": compat._safe_int(
-                            compat._safe_member_path(ts_cq, ["mcq", "cqn"])
-                        ),
-                        "tc": tc,
-                    },
-                )
+            )
+            ts_cq = ptpsq.ts_cq
+            self._collect_mlx5e_cq(
+                ts_cq,
+                {
+                    "device": device.name,
+                    "netdev": netdev_record.get("name"),
+                    "channel": "ptp",
+                    "queue_kind": "ptp_ts_cq",
+                    "queue_role": "timestamp",
+                    "queue_number": int(ts_cq.mcq.cqn),
+                    "tc": tc,
+                },
+            )
 
         if record["rx_rq"] is None and not record["tx_sqs"]:
             return None
@@ -1245,20 +1119,14 @@ class Mlx5Collector:
         self,
         device: DeviceRecord,
         netdev_record: Dict[str, Any],
-        priv: Object,
         channel: Object,
-        *,
-        fallback_index: int,
     ) -> Dict[str, Any]:
-        channel_index = compat._safe_int(compat._safe_member(channel, "ix"))
-        if channel_index is None:
-            channel_index = fallback_index
+        channel_index = int(channel.ix)
         cpu = int(channel.cpu)
-        irq_desc = compat._first_member_path(
-            channel, (["irq_desc"], ["irq", "desc"])
-        )
-        irqn = compat._first_int_path(channel, (["irqn"], ["irq", "irqn"]))
-        vector = compat._first_int_path(channel, (["vec_ix"], ["vector"]))
+        mcq = channel.icosq.cq.mcq
+        irqn = int(mcq.irqn)
+        vector = int(mcq.vector)
+        irq_desc = irq_to_desc(self.prog, irqn)
 
         record = _new_channel_record(
             channel,
@@ -1275,8 +1143,7 @@ class Mlx5Collector:
             kind,
             role,
             tc,
-            source,
-        ) in self._iter_channel_queues(channel, priv):
+        ) in self._iter_channel_queues(channel):
             queue_record = self._collect_queue(
                 device,
                 netdev_record,
@@ -1286,8 +1153,6 @@ class Mlx5Collector:
                 role=role,
                 tc=tc,
             )
-            if source is not None:
-                queue_record["queue_container_source"] = source
             if report_field == "rx_rq":
                 record[report_field] = queue_record
             else:
@@ -1305,40 +1170,24 @@ class Mlx5Collector:
         role: str,
         tc: Optional[int] = None,
     ) -> Dict[str, Any]:
-        qn, qn_source = _queue_number_with_source(queue_obj, kind)
+        qn = _queue_number(queue_obj, kind)
         device_name = device.name
         netdev_name = netdev_record["name"]
         state = int(queue_obj.state)
-        wq, wq_source = self._queue_wq_with_source(queue_obj, kind)
+        wq, wq_source = self._queue_wq(queue_obj, kind)
         if kind in ("rq", "xskrq", "ptp_rq"):
-            progress = _rq_progress_detail(queue_obj, wq, wq_source)
+            progress = _rq_progress_detail(wq, wq_source)
         else:
-            pc, pc_source = compat._first_int_path_with_source(
-                queue_obj,
-                (
-                    ("queue.pc", ["pc"]),
-                    ("queue.wq.pc", ["wq", "pc"]),
-                    ("queue.wqe_ctr", ["wqe_ctr"]),
-                    ("queue.wq.wqe_ctr", ["wq", "wqe_ctr"]),
-                ),
-            )
-            cc, cc_source = compat._first_int_path_with_source(
-                queue_obj,
-                (
-                    ("queue.cc", ["cc"]),
-                    ("queue.wq.cc", ["wq", "cc"]),
-                    ("queue.wq.head", ["wq", "head"]),
-                ),
-            )
+            pc = int(queue_obj.pc)
+            cc = int(queue_obj.cc)
             inflight = _nonnegative_delta(pc, cc)
-            inflight_source = "pc-cc" if inflight is not None else None
             progress = dict(
                 pc=pc,
                 cc=cc,
                 inflight=inflight,
-                pc_source=pc_source,
-                cc_source=cc_source,
-                inflight_source=inflight_source,
+                pc_source="queue.pc",
+                cc_source="queue.cc",
+                inflight_source="pc-cc" if inflight is not None else None,
             )
         cq = queue_obj.cq
         owner = {
@@ -1352,12 +1201,8 @@ class Mlx5Collector:
         }
         cq_record = self._collect_mlx5e_cq(cq, owner)
 
-        txq = compat._safe_member(queue_obj, "txq")
-        txq_state = (
-            compat._safe_int(compat._safe_member(txq, "state"))
-            if txq is not None
-            else None
-        )
+        txq = queue_obj.txq if has_member(queue_obj, "txq") else None
+        txq_state = int(txq.state) if txq else None
         state_prefix = (
             "MLX5E_RQ_STATE_"
             if kind in ("rq", "xskrq", "ptp_rq")
@@ -1376,7 +1221,11 @@ class Mlx5Collector:
             "channel": channel_index,
             "address": formatting._hex(compat._addr(queue_obj)),
             "number": qn,
-            "number_source": qn_source,
+            "number_source": (
+                "queue.rqn"
+                if kind in ("rq", "xskrq", "ptp_rq")
+                else "queue.sqn"
+            ),
             **progress,
             "state": formatting._hex(state),
             "state_flags": formatting._enum_flags(
@@ -1407,34 +1256,17 @@ class Mlx5Collector:
             self._mlx5e_queues[key] = _RingEntry(record, wq)
         return record
 
-    def _queue_wq_with_source(
+    def _queue_wq(
         self, queue_obj: Object, kind: str
-    ) -> Tuple[Optional[Object], Optional[str]]:
+    ) -> Tuple[Object, str]:
         if kind not in ("rq", "xskrq", "ptp_rq"):
-            return queue_obj.wq, None
-        direct = compat._safe_member(queue_obj, "wq")
-        if direct is not None and compat._addr(direct) is not None:
-            return direct, "rq.wq"
-
-        # CTF and DWARF may expose both union arms. wq_type 1 selects cyclic WQ.
-        cyclic_wq = ("rq.wqe.wq", ["wqe", "wq"])
-        linked_wq = ("rq.mpwqe.wq", ["mpwqe", "wq"])
-        wq_type = compat._safe_int(compat._safe_member(queue_obj, "wq_type"))
-        paths = (
-            (cyclic_wq, linked_wq) if wq_type == 1 else (linked_wq, cyclic_wq)
+            return queue_obj.wq, "queue.wq"
+        linked = int(
+            self.prog.constant("MLX5_WQ_TYPE_LINKED_LIST_STRIDING_RQ")
         )
-        candidates = []
-        for source, path in paths:
-            candidate = compat._safe_member_path(queue_obj, path)
-            if candidate is None:
-                continue
-            candidates.append((source, candidate))
-            if dumps._ring_size(candidate) is not None:
-                return candidate, source
-        if candidates:
-            source, candidate = candidates[0]
-            return candidate, source
-        return direct, None
+        if int(queue_obj.wq_type) == linked:
+            return queue_obj.mpwqe.wq, "rq.mpwqe.wq"
+        return queue_obj.wqe.wq, "rq.wqe.wq"
 
     def _collect_wq_summary(self, wq: Optional[Object]) -> Dict[str, Any]:
         if wq is None:
@@ -1544,15 +1376,9 @@ class Mlx5Collector:
     def _collect_mlx5e_cq(
         self, cq: Object, owner: Dict[str, Any]
     ) -> Dict[str, Any]:
-        mcq, mcq_source = compat._first_member_path_with_source(
-            cq, defs._MLX5E_CQ_CORE_PATHS
-        )
-        cqn = compat._safe_int(compat._safe_member(mcq, "cqn"))
-        if cqn is None:
-            cqn = compat._safe_int(compat._safe_member(cq, "cqn"))
-        wq, wq_source = compat._first_member_path_with_source(
-            cq, defs._MLX5E_CQ_WQ_PATHS
-        )
+        mcq = cq.mcq
+        cqn = int(mcq.cqn)
+        wq = cq.wq
         wq_summary = self._collect_wq_summary(wq)
         consumer_index, consumer_source, core_cons_index = _cq_consumer_index(
             "struct mlx5e_cq", wq_summary, mcq
@@ -1565,7 +1391,7 @@ class Mlx5Collector:
             "address_struct": "struct mlx5e_cq",
             "core_cq": formatting._hex(compat._addr(mcq)),
             "core_cq_struct": "struct mlx5_core_cq",
-            "core_cq_source": mcq_source,
+            "core_cq_source": "struct mlx5e_cq.mcq",
             "owner": owner_name,
             "owners": [owner_name],
             "device": owner.get("device"),
@@ -1578,16 +1404,12 @@ class Mlx5Collector:
             "consumer_index_source": consumer_source,
             "core_cons_index": core_cons_index,
             "wq_cc": wq_summary.get("cc"),
-            "wq_source": wq_source,
+            "wq_source": "struct mlx5e_cq.wq",
             "arm_sn": _cq_arm_sn(arm_sn_raw),
             "arm_sn_raw": arm_sn_raw,
-            "vector": compat._first_int_path(
-                mcq, (["vector"], ["comp", "vector"])
-            ),
-            "irqn": compat._safe_int(compat._safe_member(mcq, "irqn")),
-            "event_ctr": compat._safe_int(
-                compat._safe_member(cq, "event_ctr")
-            ),
+            "vector": int(mcq.vector),
+            "irqn": int(mcq.irqn),
+            "event_ctr": int(cq.event_ctr),
             "size": wq_summary.get("size"),
             "stride_bytes": wq_summary.get("stride_bytes"),
         }
@@ -1961,9 +1783,7 @@ class Mlx5Collector:
             queue_kind, queue_role = "rdma_cq", "rdma"
         elif mlx5e_cq is not None:
             address_obj, address_struct = mlx5e_cq, "struct mlx5e_cq"
-            wq, _ = compat._first_member_path_with_source(
-                mlx5e_cq, defs._MLX5E_CQ_WQ_PATHS
-            )
+            wq = mlx5e_cq.wq
             mlx5e_owner = self._mlx5e_core_cq_owner(mlx5e_cq, core_cq, device)
             netdev = mlx5e_owner.get("netdev")
             queue_kind = mlx5e_owner.get("queue_kind")
@@ -3867,98 +3687,29 @@ def _nonnegative_delta(pc: Optional[int], cc: Optional[int]) -> Optional[int]:
 
 
 def _rq_progress_detail(
-    queue_obj: Object,
-    active_wq: Optional[Object],
-    active_source: Optional[str],
+    active_wq: Object,
+    active_source: str,
 ) -> Dict[str, Any]:
-    linked_rq = active_source == "rq.mpwqe.wq" or "mlx5_wq_ll" in str(
-        compat._object_type_name(active_wq) or ""
-    )
-
-    pc = compat._safe_int(compat._safe_member(active_wq, "wqe_ctr"))
-    pc_source = (
-        f"{active_source}.wqe_ctr"
-        if pc is not None and active_source
-        else None
-    )
-    if pc is None:
-        pc, pc_source = compat._first_int_path_with_source(
-            queue_obj,
-            (
-                ("rq.wq.wqe_ctr", ["wq", "wqe_ctr"]),
-                ("rq.wqe_ctr", ["wqe_ctr"]),
-                ("rq.pc", ["pc"]),
-            ),
-        )
-
-    cc = cc_source = None
-    if linked_rq:
-        cc = compat._safe_int(compat._safe_member(active_wq, "head"))
-        cc_source = (
-            f"{active_source}.head"
-            if cc is not None and active_source
-            else None
-        )
-        if cc is None and active_source == "rq.mpwqe.wq":
-            cc = compat._first_int_path(
-                queue_obj, (["mpwqe", "actual_wq_head"],)
-            )
-            cc_source = "rq.mpwqe.actual_wq_head" if cc is not None else None
-
-    inflight = inflight_source = None
-    if linked_rq:
-        cur_sz = compat._safe_int(compat._safe_member(active_wq, "cur_sz"))
-        size = dumps._ring_size(active_wq, defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES)
-        if (
-            cur_sz is not None
-            and cur_sz >= 0
-            and (size is None or cur_sz <= size)
-        ):
-            inflight = cur_sz
-            inflight_source = (
-                f"{active_source}.cur_sz" if active_source else None
-            )
-    if inflight is None and linked_rq:
-        inflight = _nonnegative_delta(pc, cc)
-        inflight_source = "pc-cc" if inflight is not None else None
+    linked_rq = active_source == "rq.mpwqe.wq"
+    pc = int(active_wq.wqe_ctr)
+    cc = int(active_wq.head) if linked_rq else None
+    inflight = int(active_wq.cur_sz) if linked_rq else None
     return {
         "pc": pc,
         "cc": cc,
         "inflight": inflight,
-        "pc_source": pc_source,
-        "cc_source": cc_source,
-        "inflight_source": inflight_source,
+        "pc_source": f"{active_source}.wqe_ctr",
+        "cc_source": f"{active_source}.head" if linked_rq else None,
+        "inflight_source": f"{active_source}.cur_sz" if linked_rq else None,
     }
 
 
 # Linux/netdev/mlx5 object helpers
 
 
-def _num_tc_from_priv(priv: Object) -> Optional[int]:
-    candidates = (
-        ["channels", "params", "mqprio", "num_tc"],
-        ["channels", "params", "num_tc"],
-        ["channels_info", "params", "mqprio", "num_tc"],
-        ["channels_info", "params", "num_tc"],
-        ["max_opened_tc"],
-    )
-    value = compat._first_int_path(priv, candidates)
-    return min(value, defs.MAX_TC) if value is not None and value > 0 else None
-
-
-def _queue_number_with_source(
-    queue_obj: Object, kind: str
-) -> Tuple[Optional[int], Optional[str]]:
+def _queue_number(queue_obj: Object, kind: str) -> int:
     number_field = "rqn" if kind in ("rq", "xskrq", "ptp_rq") else "sqn"
-    return compat._first_int_path_with_source(
-        queue_obj,
-        (
-            (f"queue.{number_field}", [number_field]),
-            (f"queue.wq.{number_field}", ["wq", number_field]),
-            ("queue.base.mqp.qpn", ["base", "mqp", "qpn"]),
-            ("queue.mqp.qpn", ["mqp", "qpn"]),
-        ),
-    )
+    return int(queue_obj.member_(number_field))
 
 
 def _queue_finding_name(queue: Dict[str, Any]) -> str:
