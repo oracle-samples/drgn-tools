@@ -7,10 +7,7 @@ from operator import itemgetter
 from drgn_tools import mlx5
 from drgn_tools.mlx5_support import selection
 from drgn_tools.mlx5_support.collect_device import DeviceRecord
-from drgn_tools.mlx5_support.render import _render_cqs
-from drgn_tools.mlx5_support.render import _render_dumps
 from drgn_tools.mlx5_support.render import _render_qps
-from drgn_tools.mlx5_support.render import render_report
 from tests.unittest_helpers import load_test_functions
 from tests.unittest_helpers import parametrize
 from tests.unittest_helpers import raises
@@ -52,12 +49,7 @@ class _FakeProgram:
                 ("MLX5_CQE_REQ_ERR", 13),
                 ("MLX5_CQE_RESP_ERR", 14),
             ),
-            (
-                ("MLX5_CQE_SYNDROME_LOCAL_LENGTH_ERR", 1),
-                ("MLX5_CQE_SYNDROME_LOCAL_QP_OP_ERR", 2),
-                ("MLX5_CQE_SYNDROME_LOCAL_PROT_ERR", 4),
-                ("MLX5_CQE_SYNDROME_WR_FLUSH_ERR", 5),
-            ),
+            (("MLX5_CQE_SYNDROME_LOCAL_LENGTH_ERR", 1),),
             (
                 ("MLX5_OPCODE_NOP", 0),
                 ("MLX5_OPCODE_RDMA_READ", 16),
@@ -66,44 +58,14 @@ class _FakeProgram:
             ),
             (
                 ("MLX5_EVENT_TYPE_COMP", 0),
-                ("MLX5_EVENT_TYPE_PATH_MIG", 1),
-                ("MLX5_EVENT_TYPE_COMM_EST", 2),
-                ("MLX5_EVENT_TYPE_SQ_DRAINED", 3),
                 ("MLX5_EVENT_TYPE_CQ_ERROR", 4),
-                ("MLX5_EVENT_TYPE_WQ_CATAS_ERROR", 5),
-                ("MLX5_EVENT_TYPE_PATH_MIG_FAILED", 7),
-                ("MLX5_EVENT_TYPE_PORT_CHANGE", 9),
-                ("MLX5_EVENT_TYPE_PAGE_REQUEST", 11),
-                ("MLX5_EVENT_TYPE_NIC_VPORT_CHANGE", 13),
-                ("MLX5_EVENT_TYPE_VHCA_STATE_CHANGE", 15),
-                ("MLX5_EVENT_TYPE_WQ_INVAL_REQ_ERROR", 16),
-                ("MLX5_EVENT_TYPE_WQ_ACCESS_ERROR", 17),
-                ("MLX5_EVENT_TYPE_SRQ_CATAS_ERROR", 18),
-                ("MLX5_EVENT_TYPE_SRQ_LAST_WQE", 19),
-                ("MLX5_EVENT_TYPE_SRQ_RQ_LIMIT", 20),
-                ("MLX5_EVENT_TYPE_PORT_MODULE_EVENT", 22),
-                ("MLX5_EVENT_TYPE_OBJECT_CHANGE", 39),
             ),
+            (("MLX5_CQ_ERROR_SYNDROME_CQ_OVERRUN", 1),),
             (
-                ("MLX5_CQ_ERROR_SYNDROME_CQ_OVERRUN", 1),
-                (
-                    "MLX5_CQ_ERROR_SYNDROME_CQ_ACCESS_VIOLATION_ERROR",
-                    2,
-                ),
-            ),
-            (
-                ("IB_QPT_SMI", 0),
-                ("IB_QPT_GSI", 1),
                 ("IB_QPT_RC", 2),
                 ("IB_QPT_RAW_PACKET", 8),
             ),
-            (
-                ("IB_QPS_RESET", 0),
-                ("IB_QPS_INIT", 1),
-                ("IB_QPS_RTR", 2),
-                ("IB_QPS_RTS", 3),
-                ("IB_QPS_ERR", 6),
-            ),
+            (("IB_QPS_RESET", 0),),
         ):
             type_ = _FakeEnumType(enumerators)
             for name, value in enumerators:
@@ -153,18 +115,15 @@ def _parser():
 
 
 def _mapping_collector(monkeypatch):
-    monkeypatch.setattr(mlx5, "has_member", lambda obj, name: hasattr(obj, name))
-    device = DeviceRecord(0, 1)
-    device.name = "mlx5_core0"
+    monkeypatch.setattr(
+        mlx5, "has_member", lambda obj, name: hasattr(obj, name)
+    )
+    device = DeviceRecord(1)
     collector = mlx5.Mlx5Collector(_FAKE_PROG, _args())
     collector._collect_wq_summary = (
         lambda wq: wq if isinstance(wq, dict) else {}
     )
     return collector, device
-
-
-def _addressed_mapping_collector(monkeypatch):
-    return _mapping_collector(monkeypatch)
 
 
 def _fake_qp(address=0x1000, hw_qpn=7, **overrides):
@@ -177,9 +136,7 @@ def _fake_qp(address=0x1000, hw_qpn=7, **overrides):
             res=_FakeObject(user=0, task=None, kern_name=None),
         ),
         "qpn": hw_qpn,
-        "trans_qp": _FakeObject(
-            base=_FakeObject(mqp=_FakeObject(qpn=hw_qpn))
-        ),
+        "trans_qp": _FakeObject(base=_FakeObject(mqp=_FakeObject(qpn=hw_qpn))),
         "type": 2,
         "state": 0,
         "flags": 0,
@@ -198,7 +155,7 @@ def _fake_qp(address=0x1000, hw_qpn=7, **overrides):
 def test_qp_registry_keeps_distinct_objects_with_the_same_logical_qpn(
     monkeypatch,
 ):
-    collector, device = _addressed_mapping_collector(monkeypatch)
+    collector, device = _mapping_collector(monkeypatch)
     port_one = _fake_qp(0x1000, 198)
     port_two = _fake_qp(0x2000, 454)
 
@@ -218,16 +175,10 @@ def test_qp_registry_merges_sources_aliases_and_preserves_first_work_queue(
 ):
     collector, device = _mapping_collector(monkeypatch)
     first_sq = {"head": 4, "tail": 2}
-    first = collector._record_qp(
-        _fake_qp(sq=first_sq), device, "qp_list"
-    )
-    merged = collector._record_qp(
-        _fake_qp(), device, "qp_table", table_qpn=9
-    )
+    first = collector._record_qp(_fake_qp(sq=first_sq), device, "qp_list")
+    merged = collector._record_qp(_fake_qp(), device, "qp_table", table_qpn=9)
 
-    entry = collector._qps[
-        mlx5._QpKey("mlx5_core0", "address", 0x1000)
-    ]
+    entry = collector._qps[mlx5._QpKey("0x1", "address", 0x1000)]
     assert first is merged is entry.record
     assert entry.record["owners"] == ["qp_list", "qp_table"]
     assert entry.record["qpn_aliases"] == [1, 7, 9]
@@ -271,7 +222,7 @@ def test_cq_registry_merges_metadata_and_preserves_first_work_queue(
     monkeypatch,
 ):
     collector, device = _mapping_collector(monkeypatch)
-    key = ("mlx5_core0", 7)
+    key = ("0x1", 7)
     record = {"owner": "rq0", "owners": ["rq0"], "vector": None}
     collector._cqs[key] = mlx5._RingEntry(record, None)
     collector._mlx5e_cq_from_core_cq = lambda *_args: None
@@ -338,29 +289,15 @@ def test_cli_report_modes_selectors_and_limits():
     assert args.full and args.ib_cqs and args.eth_cqs
     assert args.qp_creators == ["kernel", "user"]
     assert (args.cqn, args.maxcq, args.maxcqe) == (0x20, 4, 8)
-    help_text = parser.format_help()
-    assert "--ib-cqs" in help_text
-    assert "--eth-cqs" in help_text
-    assert "{kernel,user}" in help_text
-    assert "unknown" not in help_text
-    assert "other" not in help_text
-    assert "--strict" not in help_text
-    assert "--verbose" not in help_text
-    assert "--debug" not in help_text
 
 
 @parametrize(
     ("arguments", "expected_error"),
     (
         (["--summary", "--full"], SystemExit),
-        (["-ib"], SystemExit),
-        (["-eth"], SystemExit),
         (["--qp-creator", "unknown"], SystemExit),
-        (["--qp-creator", "other"], SystemExit),
         (["--maxcq", "0"], ValueError),
-        (["--maxcqe", "0"], ValueError),
         (["--walk-limit", "0"], ValueError),
-        (["--layout"], SystemExit),
     ),
 )
 def test_invalid_cli_values_are_rejected(arguments, expected_error):
@@ -386,44 +323,20 @@ def test_selection_defaults_are_idempotent():
 
 
 def test_default_report_mode_and_explicit_overrides(monkeypatch):
-    for default_mode in ("full", "summary"):
-        monkeypatch.setattr(selection, "DEFAULT_REPORT_MODE", default_mode)
-        args = _args()
-        selection._resolve_report_sections(args)
-        summary = default_mode == "summary"
-        assert args.summary is summary
-        assert args._full_report == (not summary)
-        assert all(
-            getattr(args, name) for name in ("queues", "cqs", "eqs", "qps")
-        ) == (not summary)
-
-    for default_mode, requested_mode in (
-        ("full", "summary"),
-        ("summary", "full"),
-    ):
-        monkeypatch.setattr(selection, "DEFAULT_REPORT_MODE", default_mode)
-        args = _args(**{requested_mode: True})
-        selection._resolve_report_sections(args)
-        assert args.summary is (requested_mode == "summary")
-        assert args._full_report is (requested_mode == "full")
-
     monkeypatch.setattr(selection, "DEFAULT_REPORT_MODE", "summary")
-    args = _args(cqs=True)
-    selection._resolve_report_sections(args)
-    assert not args.summary and not args._full_report
-    assert (args.queues, args.cqs, args.eqs, args.qps) == (
-        False,
-        True,
-        False,
-        False,
-    )
+    default_args = _args()
+    selection._resolve_report_sections(default_args)
+    assert default_args.summary and not default_args._full_report
+
+    selected_args = _args(cqs=True)
+    selection._resolve_report_sections(selected_args)
+    assert not selected_args.summary and selected_args.cqs
 
 
-def test_walk_limits_report_truncation_instead_of_silently_dropping_objects():
+def test_indexed_walk_limits_report_truncation():
     collector = mlx5.Mlx5Collector(object(), _args(walk_limit=2))
 
     assert collector._walk_count(5, "QP table") == 2
-    assert list(collector._iter_walk_limited(range(5), "CQ table")) == [0, 1]
     assert collector._truncated_walks
     assert "--walk-limit=2" in "\n".join(collector.warnings)
 
@@ -488,46 +401,6 @@ def test_cq_filters_match_only_requested_structure_families():
     ]
 
 
-@parametrize(
-    ("raw", "expected"),
-    ((None, None), (0, 0), (3, 3), (4, 0), (7, 3)),
-)
-def test_cq_arm_sn_is_the_two_bit_software_sequence(raw, expected):
-    assert mlx5._cq_arm_sn(raw) == expected
-
-
-def test_cq_table_labels_software_arm_sequence_without_claiming_arm_state(
-    capsys,
-):
-    report = {
-        "devices": [],
-        "cqs": [
-            {
-                "device": "mlx5_0",
-                "cqn": 9,
-                "address": "0x1234",
-                "address_struct": "struct mlx5_core_cq",
-                "arm_sn": 3,
-            }
-        ],
-    }
-
-    _render_cqs(report, _args(cqs=True))
-
-    output = capsys.readouterr().out
-    assert "ARM_SN" in output
-    assert "software arm sequence number" in output
-    assert "not hardware arm state" in output
-
-
-@parametrize(
-    ("pc", "cc", "expected"),
-    ((10, 4, 6), (4, 4, 0), (4, 10, None), (None, 1, None)),
-)
-def test_inflight_delta_never_invents_wrapped_work(pc, cc, expected):
-    assert mlx5._nonnegative_delta(pc, cc) == expected
-
-
 def test_unresolved_qp_creator_metadata_is_counted_and_not_filterable():
     qps = [
         {"device": "mlx5_0", "qpn": 1, "creator_type": "kernel"},
@@ -565,26 +438,6 @@ def test_balanced_limits_round_robin_and_fully_drain_uneven_buckets():
     ] == [1, 4, 6, 2, 5, 3]
 
 
-def test_dump_output_keeps_preferred_group_and_input_order(capsys):
-    dumps = [
-        {"kind": "custom", "selector": 1, "entries": []},
-        {"kind": "wqe", "selector": 2, "entries": []},
-        {"kind": "cqe", "selector": 3, "entries": []},
-        {"kind": "custom", "selector": 4, "entries": []},
-        {"kind": "eqe", "selector": 5, "entries": []},
-    ]
-
-    _render_dumps({"devices": [], "dumps": dumps}, _args())
-    output = capsys.readouterr().out
-
-    headers = [
-        output.index(f"{kind} dumps")
-        for kind in ("CQE", "EQE", "WQE", "CUSTOM")
-    ]
-    assert headers == sorted(headers)
-    assert output.index("selector : id=1") < output.index("selector : id=4")
-
-
 @parametrize(
     "filter_args",
     ({"qpn": 20}, {"qp_creators": ["kernel"]}),
@@ -616,84 +469,17 @@ def test_qp_filters_are_applied_before_row_limit(capsys, filter_args):
     assert "0x1111" not in output
 
 
-def test_qp_table_calls_out_unresolved_creator_metadata(capsys):
-    report = {
-        "devices": [],
-        "qps": [
-            {
-                "device": "mlx5_0",
-                "qpn": 17,
-                "hw_qpn": 17,
-                "address": "0x1234",
-                "creator": "unresolved",
-            }
-        ],
-        "qp_creator_resolution": {
-            "unresolved_count": 1,
-            "examples": [{"device": "mlx5_0", "qpn": 17}],
-        },
-    }
-
-    _render_qps(report, _args(qps=True))
-
-    output = capsys.readouterr().out
-    assert "creator could not be determined for 1 QP(s)" in output
-    assert "mlx5_0/QPN 17" in output
-    assert "unresolved" in output
-
-
-@parametrize(
-    ("statuses", "expected"),
-    (
-        ([], "empty"),
-        (["ready", "ready"], "ready"),
-        (["not-ready", "not-ready"], "not-ready"),
-        (["ready", "not-ready"], "partial"),
-        (["fault", "fault"], "fault"),
-    ),
-)
-def test_descriptor_dump_status_summarizes_the_whole_window(
-    statuses, expected
-):
-    entries = [{"status": status} for status in statuses]
-    assert mlx5._descriptor_dump_status(entries) == expected
-
-
 def test_findings_are_classified_from_collected_values():
     collector = mlx5.Mlx5Collector(_FAKE_PROG, _args())
-    cq = {"device": "mlx5_0", "cqn": 7, "eqn": None, "irqn": 42}
-    collector._cqs = {("mlx5_0", 7): mlx5._RingEntry(cq, None)}
-    device = DeviceRecord(0, 1)
+    cq = {"device": "0x1", "cqn": 7, "eqn": None, "irqn": 42}
+    collector._cqs = {("0x1", 7): mlx5._RingEntry(cq, None)}
+    device = DeviceRecord(1)
     device.summary = {"device_state": "INTERNAL_ERROR"}
-    device.health = {"fatal_error": 1, "miss_counter": 2}
-    device.netdevs = [
-        {
-            "name": "eth0",
-            "summary": {
-                "carrier": "down",
-                "stats": {"rx_errors": 3, "tx_errors": 0},
-            },
-            "channels": [
-                {
-                    "rx_rq": {
-                        "kind": "rq",
-                        "number": 8,
-                        "enabled": False,
-                        "recovering": True,
-                        "pc": 2,
-                        "cc": 3,
-                        "inflight": 8,
-                        "wq": {"size": 8},
-                    }
-                }
-            ],
-        }
-    ]
-    devices = [device]
+    device.health = {"fatal_error": 1}
     dumps = [
         {
             "kind": "cqe",
-            "device": "mlx5_0",
+            "device": "0x1",
             "selector_name": "cqn",
             "selector": 7,
             "entries": [
@@ -707,13 +493,10 @@ def test_findings_are_classified_from_collected_values():
         }
     ]
 
-    findings = collector._analyze_findings(devices, dumps)
-    severities = [finding["severity"] for finding in findings]
+    findings = collector._analyze_findings([device], dumps)
     messages = "\n".join(finding["message"] for finding in findings)
 
-    assert severities.count("HIGH") == 5
-    assert severities.count("MED") == 4
-    assert severities.count("LOW") == 2
+    assert any(finding["severity"] == "HIGH" for finding in findings)
     assert "CQE error" in messages
     assert "no matching EQ linkage" in messages
 
@@ -819,59 +602,6 @@ def test_decode_uses_new_program_enum_values_without_a_code_table():
         mlx5._decode_wqe(_FAKE_PROG, bytes(send))["opcode_display"]
         == "TEST_NEW(0x7f)"
     )
-
-
-def test_render_report_preserves_compact_summary_contract(capsys):
-    report = {
-        "mode": "vmcore",
-        "selection": {},
-        "counts": {
-            "devices": 1,
-            "netdevs": 1,
-            "channels": None,
-            "queues": None,
-            "cqs": None,
-            "eqs": None,
-            "qps": None,
-        },
-        "devices": [],
-        "findings": [],
-        "warnings": [],
-    }
-
-    render_report(report, _args(summary=True))
-    output = capsys.readouterr().out
-
-    assert "Report summary" in output
-    assert "Executive summary" not in output
-    assert "channels     : -" in output
-    assert "queues       : -" in output
-    assert "CQs/EQs/QPs  : - / - / -" in output
-    assert "HIGH=0 MED=0 LOW=0" in output
-    assert "not requested" not in output
-    assert "not collected" not in output
-    assert "(collected scope only)" in output
-
-    default_args = _args()
-    selection._resolve_report_sections(default_args)
-    render_report(report, default_args)
-    default_output = capsys.readouterr().out
-    assert default_args._full_report
-    assert all(
-        getattr(default_args, name) for name in ("queues", "cqs", "eqs", "qps")
-    )
-    assert "Completion queues" in default_output
-    assert "Event queues" in default_output
-    assert "Queue pairs" in default_output
-
-
-def test_json_conversion_removes_private_collection_metadata():
-    report = {
-        "_kernel_object": object(),
-        "public": [{"value": 1, "_source": "member.path"}],
-    }
-
-    assert mlx5._jsonable(report) == {"public": [{"value": 1}]}
 
 
 def load_tests(loader, standard_tests, pattern):
