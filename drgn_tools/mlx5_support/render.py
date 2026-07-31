@@ -13,7 +13,6 @@ from typing import Sequence
 from typing import Tuple
 
 from . import selection
-from .compat import _safe_int
 from .defs import MAX_DEFAULT_DESCRIPTOR_ENTRIES
 from .format import _display
 from .format import _short_struct
@@ -414,7 +413,10 @@ def _render_cqs(report: Dict[str, Any], args: argparse.Namespace) -> None:
         cq
         for cq in report.get("cqs", [])
         if selection._cq_matches_filter(cq, args)
-        and (args.cqn is None or _safe_int(cq.get("cqn")) == args.cqn)
+        and (
+            args.cqn is None
+            or (cq.get("cqn") is not None and int(cq["cqn"]) == args.cqn)
+        )
     ]
     device_labels = _device_display_labels(report)
     for cq in selection._limit_balanced(
@@ -476,7 +478,11 @@ def _render_eqs(report: Dict[str, Any], args: argparse.Namespace) -> None:
     print("Event queues")
     eqs = list(report.get("eqs", []))
     if args.eqn is not None:
-        eqs = [eq for eq in eqs if _safe_int(eq.get("eqn")) == args.eqn]
+        eqs = [
+            eq
+            for eq in eqs
+            if eq.get("eqn") is not None and int(eq["eqn"]) == args.eqn
+        ]
     if args.dump_eqe and args.eqn is None:
         eqs.sort(key=selection._eq_record_auto_dump_key)
     eqs = selection._limit_balanced(

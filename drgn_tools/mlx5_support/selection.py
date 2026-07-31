@@ -15,7 +15,6 @@ from typing import Sequence
 from typing import Set
 from typing import Tuple
 
-from .compat import _safe_int
 from .format import _short_struct
 
 DEFAULT_REPORT_MODE = "full"
@@ -84,9 +83,10 @@ def _wqe_queue_context_keys(
         if dump.get("kind") != "wqe" or dump.get("source") != "queue":
             continue
         selector_name = dump.get("selector_name")
-        selector = _safe_int(dump.get("selector"))
-        if selector_name not in ("sqn", "rqn") or selector is None:
+        selector_value = dump.get("selector")
+        if selector_name not in ("sqn", "rqn") or selector_value is None:
             continue
+        selector = int(selector_value)
         device = dump.get("device")
         keys.add(
             (
@@ -109,10 +109,11 @@ def _queue_matches_wqe_selector(
     queue_selector = (
         "rqn" if queue.get("kind") in ("rq", "xskrq", "ptp_rq") else "sqn"
     )
-    queue_number = _safe_int(queue.get("number"))
+    number = queue.get("number")
+    queue_number = int(number) if number is not None else None
     if args.sqn is not None or args.rqn is not None:
         requested = getattr(args, queue_selector)
-        return requested is not None and queue_number == _safe_int(requested)
+        return requested is not None and queue_number == int(requested)
     if not selected_dump_keys:
         return True
     if queue_number is not None:
@@ -180,7 +181,8 @@ def _eq_item_auto_dump_key(
 
 
 def _eq_record_auto_dump_key(eq: Dict[str, Any]) -> Tuple[int, str, int]:
-    eqn = _safe_int(eq.get("eqn"))
+    eqn_value = eq.get("eqn")
+    eqn = int(eqn_value) if eqn_value is not None else None
     return (
         _eq_auto_dump_role_rank(eq),
         str(eq.get("device") or ""),
@@ -209,18 +211,15 @@ def _first_not_none(*values: Any) -> Any:
 def _qp_aliases(*values: Any) -> List[int]:
     aliases: Set[int] = set()
     for value in values:
-        number = _safe_int(value)
-        if number is not None:
-            aliases.add(number)
+        if value is not None:
+            aliases.add(int(value))
     return sorted(aliases)
 
 
 def _qp_record_matches_qpn(record: Dict[str, Any], qpn: Optional[int]) -> bool:
     if qpn is None:
         return True
-    target = _safe_int(qpn)
-    if target is None:
-        return False
+    target = int(qpn)
     aliases = record.get("qpn_aliases")
     if not isinstance(aliases, list):
         aliases = (
@@ -229,7 +228,7 @@ def _qp_record_matches_qpn(record: Dict[str, Any], qpn: Optional[int]) -> bool:
             record.get("hw_qpn"),
             record.get("table_qpn"),
         )
-    return target in map(_safe_int, aliases)
+    return target in (int(alias) for alias in aliases if alias is not None)
 
 
 def _limit_items(
