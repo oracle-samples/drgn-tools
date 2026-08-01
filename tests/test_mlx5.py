@@ -3,6 +3,9 @@
 """Tests for the mlx5 Corelens module."""
 import argparse
 from operator import itemgetter
+from unittest.mock import patch
+
+from drgn import FaultError
 
 from drgn_tools import mlx5
 from drgn_tools.mlx5_support import selection
@@ -30,6 +33,11 @@ class _FakeConstant:
 class _FakeObject(argparse.Namespace):
     def __int__(self):
         return self.address_
+
+
+class _FakeAggregateObject(_FakeObject):
+    def __bool__(self):
+        raise TypeError("cannot convert aggregate object to bool")
 
 
 class _FakeProgram:
@@ -507,6 +515,31 @@ def test_decode_response_cqe_from_hardware_layout():
         "qpn": 0xABCDE,
         "wqe_counter": 123,
     }
+
+
+def test_ib_wq_wrid_lookup_does_not_truth_test_embedded_struct():
+    wq = _FakeAggregateObject(wqe_cnt=8, wrid=range(100, 108))
+
+    assert mlx5._mlx5_ib_wq_wrid_at_counter(wq, 10) == (102, 2)
+
+
+def test_gsi_wrid_lookup_skips_all_ones_sentinel():
+    assert (
+        mlx5._mlx5_ib_gsi_saved_wr_id(_FAKE_PROG, 0xFFFFFFFFFFFFFFFF) is None
+    )
+
+
+def test_gsi_wrid_lookup_ignores_unreadable_pointer():
+    class _UnreadableCqe:
+        @property
+        def done(self):
+            raise FaultError("missing memory", 0xFFFF888000001000)
+
+    with patch.object(mlx5, "Object", return_value=_UnreadableCqe()):
+        assert (
+            mlx5._mlx5_ib_gsi_saved_wr_id(_FAKE_PROG, 0xFFFF888000001000)
+            is None
+        )
 
 
 def test_decode_request_and_error_cqe_fields():
