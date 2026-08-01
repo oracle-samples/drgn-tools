@@ -181,62 +181,14 @@ class Mlx5(CorelensModule):
         )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
-        _run_mlx5_report(prog, args)
+        selection._resolve_report_sections(args)
+        _validate_args(args)
 
-
-def mlx5_report(
-    prog: Program,
-    dev: Optional[str] = None,
-    netdev: Optional[str] = None,
-    ip: Optional[str] = None,
-    summary: bool = False,
-    full: bool = False,
-    queues: bool = False,
-    cqs: bool = False,
-    ib_cqs: bool = False,
-    eth_cqs: bool = False,
-    eqs: bool = False,
-    qps: bool = False,
-    qp_creators: Optional[Sequence[str]] = None,
-    dump_cqe: bool = False,
-    dump_eqe: bool = False,
-    dump_wqe: bool = False,
-    cqn: Optional[int] = None,
-    eqn: Optional[int] = None,
-    qpn: Optional[int] = None,
-    sqn: Optional[int] = None,
-    rqn: Optional[int] = None,
-    maxqueues: Optional[int] = None,
-    maxcq: Optional[int] = None,
-    maxeq: Optional[int] = None,
-    maxqp: Optional[int] = None,
-    maxcqe: int = MAX_DEFAULT_DESCRIPTOR_ENTRIES,
-    maxeqe: int = MAX_DEFAULT_DESCRIPTOR_ENTRIES,
-    maxwqe: int = MAX_DEFAULT_DESCRIPTOR_ENTRIES,
-    json_output: bool = False,
-) -> Dict[str, Any]:
-    """Collect, render, and return an mlx5 report."""
-
-    report_args = locals().copy()
-    report_args.pop("prog")
-    report_args["json"] = report_args.pop("json_output")
-    report_args["qp_creators"] = list(qp_creators or [])
-    return _run_mlx5_report(prog, argparse.Namespace(**report_args))
-
-
-def _run_mlx5_report(
-    prog: Program, args: argparse.Namespace
-) -> Dict[str, Any]:
-    selection._resolve_report_sections(args)
-    _validate_args(args)
-
-    report = Mlx5Collector(prog, args).collect()
-
-    if args.json:
-        print(json.dumps(_jsonable(report), indent=2, sort_keys=True))
-    else:
-        render.render_report(report, args)
-    return report
+        report = Mlx5Collector(prog, args).collect()
+        if args.json:
+            print(json.dumps(_jsonable(report), indent=2, sort_keys=True))
+        else:
+            render.render_report(report, args)
 
 
 def _new_channel_record(
