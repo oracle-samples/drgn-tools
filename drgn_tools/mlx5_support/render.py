@@ -3,13 +3,13 @@
 """Rendering helpers for the mlx5 Corelens report."""
 import argparse
 from collections import Counter
-from collections import defaultdict
-from collections import OrderedDict
 from typing import Any
 from typing import Dict
+from typing import Iterable
 from typing import List
 from typing import Optional
 from typing import Sequence
+from typing import Set
 from typing import Tuple
 
 from . import selection
@@ -88,17 +88,15 @@ _DESCRIPTOR_COLUMNS = {
 
 
 def render_report(report: Dict[str, Any], args: argparse.Namespace) -> None:
+    report_selection = report.get("selection", {})
     print("MLX5 REPORT")
     print("===========")
     print()
     print("Inputs")
     print(f"  mode    : {report.get('mode')}")
-    print(f"  dev     : {report.get('selection', {}).get('dev') or '<all>'}")
-    print(
-        f"  netdev  : {report.get('selection', {}).get('netdev') or '<all>'}"
-    )
-    print(f"  ip      : {report.get('selection', {}).get('ip') or '<all>'}")
-    report_selection = report.get("selection", {})
+    print(f"  dev     : {report_selection.get('dev') or '<all>'}")
+    print(f"  netdev  : {report_selection.get('netdev') or '<all>'}")
+    print(f"  ip      : {report_selection.get('ip') or '<all>'}")
     if report_selection.get("summary"):
         print("  summary : yes")
     if report_selection.get("full"):
@@ -141,30 +139,42 @@ def render_report(report: Dict[str, Any], args: argparse.Namespace) -> None:
     print(f"  - warnings     : {len(report.get('warnings', []))}")
     print()
 
+    dumps = report.get("dumps", [])
+    wqe_sources = {
+        dump.get("source")
+        for dump in dumps
+        if args.dump_wqe and dump.get("kind") == "wqe"
+    }
+    rdma_labels = _device_rdma_labels(report)
+
     _render_devices(report, args)
-    if args.queues or _should_render_wqe_context(
-        report, args, "queue", ("sqn", "rqn")
+    if args.queues or (
+        args.dump_wqe
+        and (
+            args.sqn is not None
+            or args.rqn is not None
+            or "queue" in wqe_sources
+        )
     ):
-        _render_queues(report, args)
+        _render_queues(report, args, rdma_labels)
     if args.cqs or args.ib_cqs or args.eth_cqs or args.dump_cqe:
-        _render_cqs(report, args)
+        _render_cqs(report, args, rdma_labels)
     if args.eqs or args.dump_eqe:
-        _render_eqs(report, args)
+        _render_eqs(report, args, rdma_labels)
     if (
         args.qps
-        or (args.qpn is not None and not args.dump_wqe)
-        or _should_render_wqe_context(report, args, "qp", ("qpn",))
+        or args.qpn is not None
+        or (args.dump_wqe and "qp" in wqe_sources)
     ):
-        _render_qps(report, args)
-    if report.get("dumps"):
-        _render_dumps(report, args)
+        _render_qps(report, args, rdma_labels)
+    if dumps:
+        _render_dumps(report, args, rdma_labels)
     _render_findings(report)
     _render_warnings(report)
 
 
 def _render_devices(report: Dict[str, Any], args: argparse.Namespace) -> None:
     print("Device summary")
-    device_labels = _device_display_labels(report)
     table = Table(
         "PCI MLX5_CORE_DEV NETDEVS IPS RDMA_DEV RDMA_PORT STATE HEALTH FW CH CQ EQ QP".split()
     )
@@ -180,8 +190,8 @@ def _render_devices(report: Dict[str, Any], args: argparse.Namespace) -> None:
             summary.get("mdev"),
             netdevs,
             _device_ips(device),
-            summary.get("rdma_name") or device.get("rdma_name") or "-",
-            summary.get("rdma_port") or device.get("rdma_port") or "-",
+            summary.get("rdma_name") or "-",
+            summary.get("rdma_port") or "-",
             summary.get("device_state"),
             device.get("health", {}).get("status"),
             summary.get("fw_version"),
@@ -195,12 +205,14 @@ def _render_devices(report: Dict[str, Any], args: argparse.Namespace) -> None:
 
     if args._full_report:
         print("Device details")
+        device_labels = _device_display_labels(report)
         for device in report.get("devices", []):
             mdev = device.get("mdev")
             label = device_labels.get(str(mdev), mdev)
             print(f"  {label}")
-            summary = dict(device.get("summary", {}) or {})
-            _print_kv_block("summary", summary, indent="    ")
+            _print_kv_block(
+                "summary", device.get("summary", {}) or {}, indent="    "
+            )
             _print_kv_block("health", device.get("health", {}), indent="    ")
             _print_kv_block(
                 "capabilities", device.get("capabilities", {}), indent="    "
@@ -217,74 +229,62 @@ def _render_devices(report: Dict[str, Any], args: argparse.Namespace) -> None:
 
 
 def _device_ips(device: Dict[str, Any]) -> str:
-    ips: List[str] = []
-    for netdev in device.get("netdevs", []) or []:
-        summary = netdev.get("summary", {})
-        for ip in summary.get("ip_addresses", []) or []:
-            if ip not in ips:
-                ips.append(str(ip))
-    if not ips:
-        return "-"
-    shown = ips[:4]
-    if len(ips) > len(shown):
-        shown.append(f"+{len(ips) - len(shown)} more")
-    return ",".join(shown)
+    ips = list(
+        dict.fromkeys(
+            str(ip)
+            for netdev in device.get("netdevs", []) or []
+            for ip in netdev.get("summary", {}).get("ip_addresses", []) or []
+        )
+    )
+    if len(ips) > 4:
+        ips[4:] = [f"+{len(ips) - 4} more"]
+    return ",".join(ips) or "-"
 
 
 def _device_display_labels(report: Dict[str, Any]) -> Dict[str, str]:
-    devices = report.get("devices", [])
     labels: Dict[str, str] = {}
-    for device in devices:
+    for device in report.get("devices", []):
         mdev = device.get("mdev")
         if mdev is None:
             continue
-        labels[str(mdev)] = _device_display_label(device)
+        netdevs = [
+            str(netdev.get("name"))
+            for netdev in device.get("netdevs", [])
+            if netdev.get("name")
+        ]
+        summary = device.get("summary", {})
+        labels[str(mdev)] = ",".join(netdevs) or next(
+            (
+                str(summary[key])
+                for key in ("pci_bdf", "mdev")
+                if summary.get(key) not in (None, "", "-")
+            ),
+            str(mdev or "-"),
+        )
     return labels
 
 
 def _device_rdma_labels(report: Dict[str, Any]) -> Dict[str, str]:
-    devices = report.get("devices", [])
-    rdma_counts: Dict[str, int] = defaultdict(int)
-    for device in devices:
-        rdma_name = _device_rdma_name(device)
-        if rdma_name:
-            rdma_counts[rdma_name] += 1
+    rdma_counts: Dict[str, int] = Counter()
+    identities: List[Tuple[str, str, Any]] = []
+    for device in report.get("devices", []):
+        mdev = device.get("mdev")
+        value = device.get("summary", {}).get("rdma_name")
+        if value in (None, "", "-"):
+            continue
+        rdma_name = str(value)
+        rdma_counts[rdma_name] += 1
+        if mdev is None:
+            continue
+        rdma_port = device.get("summary", {}).get("rdma_port")
+        identities.append((str(mdev), rdma_name, rdma_port))
 
     labels: Dict[str, str] = {}
-    for device in devices:
-        mdev = device.get("mdev")
-        rdma_name = _device_rdma_name(device)
-        if mdev is None or rdma_name is None:
-            continue
-        rdma_port = device.get("summary", {}).get("rdma_port") or device.get(
-            "rdma_port"
-        )
+    for mdev, rdma_name, rdma_port in identities:
         if rdma_counts[rdma_name] > 1 and rdma_port not in (None, "", "-"):
             rdma_name = f"{rdma_name}/{rdma_port}"
-        labels[str(mdev)] = rdma_name
+        labels[mdev] = rdma_name
     return labels
-
-
-def _device_rdma_name(device: Dict[str, Any]) -> Optional[str]:
-    summary = device.get("summary", {})
-    value = summary.get("rdma_name") or device.get("rdma_name")
-    return None if value in (None, "", "-") else str(value)
-
-
-def _device_display_label(device: Dict[str, Any]) -> str:
-    summary = device.get("summary", {})
-    netdevs = [
-        str(n.get("name")) for n in device.get("netdevs", []) if n.get("name")
-    ]
-    if netdevs:
-        return ",".join(netdevs)
-
-    for key in ("pci_bdf", "mdev"):
-        value = summary.get(key)
-        if value not in (None, "", "-"):
-            return str(value)
-
-    return str(device.get("mdev") or "-")
 
 
 def _record_device_label(
@@ -303,23 +303,11 @@ def _record_device_label(
     return device_labels.get(str(device))
 
 
-def _should_render_wqe_context(
+def _render_queues(
     report: Dict[str, Any],
     args: argparse.Namespace,
-    dump_source: str,
-    selector_names: Sequence[str],
-) -> bool:
-    if not args.dump_wqe:
-        return False
-    return any(
-        getattr(args, name) is not None for name in selector_names
-    ) or any(
-        dump.get("kind") == "wqe" and dump.get("source") == dump_source
-        for dump in report.get("dumps", [])
-    )
-
-
-def _render_queues(report: Dict[str, Any], args: argparse.Namespace) -> None:
+    rdma_labels: Dict[str, str],
+) -> None:
     print("mlx5e channels and queues")
     print(
         "  PC is the producer counter. For SQs, it tracks posted sends. For RQs, it tracks posted receive WQEs."
@@ -332,14 +320,14 @@ def _render_queues(report: Dict[str, Any], args: argparse.Namespace) -> None:
         "  TX_STOP shows whether the netdev TX queue is stopped or frozen. "
         "'-' means not found or not used for this row."
     )
-    headers = """
-    NETDEV RDMA_DEV CH CPU NAPI NAPI_ST ROLE TC QNUM PC CC INFLIGHT WQ_SZ STRIDE STATE TX_STOP
-    CQN EQN EQ_VEC IRQN
-    """.split()
-    table = Table(headers)
-    candidates: List[Tuple[Tuple[str, str], List[Any]]] = []
+    table = Table(
+        """
+        NETDEV RDMA_DEV CH CPU NAPI NAPI_ST ROLE TC QNUM PC CC INFLIGHT WQ_SZ STRIDE STATE TX_STOP
+        CQN EQN EQ_VEC IRQN
+        """.split()
+    )
+    candidates: List[Tuple[Any, ...]] = []
     selected_dump_keys = selection._wqe_queue_context_keys(report, args)
-    rdma_labels = _device_rdma_labels(report)
     for device in report.get("devices", []):
         rdma_dev = (
             _record_device_label(device, rdma_labels, fallback=False) or "-"
@@ -354,50 +342,48 @@ def _render_queues(report: Dict[str, Any], args: argparse.Namespace) -> None:
                         device_name=device.get("mdev"),
                     ):
                         continue
-                    cq = queue.get("cq") or {}
-                    wq = queue.get("wq") or {}
-                    row = [
-                        netdev.get("name"),
-                        rdma_dev,
-                        channel.get("index"),
-                        channel.get("cpu"),
-                        channel.get("napi_id"),
-                        channel.get("napi_state"),
-                        queue.get("kind"),
-                        selection._first_not_none(queue.get("tc"), "-"),
-                        queue.get("number"),
-                        selection._first_not_none(queue.get("pc"), "-"),
-                        selection._first_not_none(queue.get("cc"), "-"),
-                        selection._first_not_none(queue.get("inflight"), "-"),
-                        selection._first_not_none(wq.get("size"), "-"),
-                        selection._first_not_none(wq.get("stride_bytes"), "-"),
-                        ",".join(queue.get("state_flags", []))
-                        or queue.get("state"),
-                        ",".join(queue.get("txq_state_flags", []))
-                        or selection._first_not_none(
-                            queue.get("txq_stopped"), "-"
-                        ),
-                        cq.get("cqn"),
-                        cq.get("eqn"),
-                        selection._first_not_none(
-                            cq.get("eq_vector"), cq.get("vector")
-                        ),
-                        selection._first_not_none(
-                            cq.get("eq_irqn"), cq.get("irqn")
-                        ),
-                    ]
                     candidates.append(
-                        (selection._queue_balance_bucket(queue), row)
+                        (netdev.get("name"), rdma_dev, channel, queue)
                     )
-    for _bucket, row in selection._limit_balanced(
-        candidates, args.maxqueues, lambda item: item[0]
+    for netdev, rdma_dev, channel, queue in selection._limit_balanced(
+        candidates,
+        args.maxqueues,
+        lambda item: selection._queue_balance_bucket(item[3]),
     ):
-        table.row(*row)
+        cq = queue.get("cq") or {}
+        wq = queue.get("wq") or {}
+        table.row(
+            netdev,
+            rdma_dev,
+            channel.get("index"),
+            channel.get("cpu"),
+            channel.get("napi_id"),
+            channel.get("napi_state"),
+            queue.get("kind"),
+            selection._first_not_none(queue.get("tc"), "-"),
+            queue.get("number"),
+            selection._first_not_none(queue.get("pc"), "-"),
+            selection._first_not_none(queue.get("cc"), "-"),
+            selection._first_not_none(queue.get("inflight"), "-"),
+            selection._first_not_none(wq.get("size"), "-"),
+            selection._first_not_none(wq.get("stride_bytes"), "-"),
+            ",".join(queue.get("state_flags", [])) or queue.get("state"),
+            ",".join(queue.get("txq_state_flags", []))
+            or selection._first_not_none(queue.get("txq_stopped"), "-"),
+            cq.get("cqn"),
+            cq.get("eqn"),
+            selection._first_not_none(cq.get("eq_vector"), cq.get("vector")),
+            selection._first_not_none(cq.get("eq_irqn"), cq.get("irqn")),
+        )
     table.write()
     print()
 
 
-def _render_cqs(report: Dict[str, Any], args: argparse.Namespace) -> None:
+def _render_cqs(
+    report: Dict[str, Any],
+    args: argparse.Namespace,
+    rdma_labels: Dict[str, str],
+) -> None:
     print("Completion queues")
     print(
         "  CQ_ADDR is the CQ structure address. CQ_STRUCT shows which struct it is."
@@ -414,16 +400,17 @@ def _render_cqs(report: Dict[str, Any], args: argparse.Namespace) -> None:
     table = Table(
         "NETDEV RDMA_DEV CQN CQ_ADDR CQ_STRUCT INFO CONS ARM_SN EVENTS SIZE STRIDE EQN IRQN IRQ_CPU".split()
     )
-    cqs = [
-        cq
-        for cq in report.get("cqs", [])
-        if selection._cq_matches_filter(cq, args)
-        and (
-            args.cqn is None
-            or (cq.get("cqn") is not None and int(cq["cqn"]) == args.cqn)
-        )
-    ]
-    rdma_labels = _device_rdma_labels(report)
+    cqs = report.get("cqs", [])
+    if args.ib_cqs or args.eth_cqs or args.cqn is not None:
+        cqs = [
+            cq
+            for cq in cqs
+            if selection._cq_matches_filter(cq, args)
+            and (
+                args.cqn is None
+                or (cq.get("cqn") is not None and int(cq["cqn"]) == args.cqn)
+            )
+        ]
     for cq in selection._limit_balanced(
         cqs, args.maxcq, selection._cq_balance_bucket
     ):
@@ -479,32 +466,33 @@ def _cq_info_column(cq: Dict[str, Any]) -> str:
     return "-"
 
 
-def _render_eqs(report: Dict[str, Any], args: argparse.Namespace) -> None:
+def _render_eqs(
+    report: Dict[str, Any],
+    args: argparse.Namespace,
+    rdma_labels: Dict[str, str],
+) -> None:
     print("Event queues")
-    eqs = list(report.get("eqs", []))
+    eqs = report.get("eqs", [])
     if args.eqn is not None:
         eqs = [
             eq
             for eq in eqs
             if eq.get("eqn") is not None and int(eq["eqn"]) == args.eqn
         ]
-    if args.dump_eqe and args.eqn is None:
-        eqs.sort(key=selection._eq_record_auto_dump_key)
+    elif args.dump_eqe:
+        eqs = sorted(eqs, key=selection._eq_record_auto_dump_key)
     eqs = selection._limit_balanced(
         eqs, args.maxeq, selection._eq_balance_bucket
     )
-    show_mask = any(eq.get("mask") is not None for eq in eqs)
-    headers = "RDMA_DEV EQN EQ_ADDR EQ_STRUCT ROLE CONS SIZE CQ_CNT EQE VECTOR IRQN IRQ_CPU".split()
-    if show_mask:
-        headers.append("MASK")
     print(
         "  EQ_ADDR is the EQ structure address. EQ_STRUCT shows which struct it is."
     )
     print("  CQ_CNT is the number of CQs linked to this EQ.")
-    table = Table(headers)
-    rdma_labels = _device_rdma_labels(report)
+    table = Table(
+        "RDMA_DEV EQN EQ_ADDR EQ_STRUCT ROLE CONS SIZE CQ_CNT EQE VECTOR IRQN IRQ_CPU".split()
+    )
     for eq in eqs:
-        row = [
+        table.row(
             _record_device_label(eq, rdma_labels, fallback=False) or "-",
             eq.get("eqn"),
             eq.get("address"),
@@ -517,15 +505,16 @@ def _render_eqs(report: Dict[str, Any], args: argparse.Namespace) -> None:
             eq.get("vector"),
             eq.get("irqn"),
             selection._first_not_none(eq.get("irq_cpu"), "-"),
-        ]
-        if show_mask:
-            row.append(selection._first_not_none(eq.get("mask"), "-"))
-        table.row(*row)
+        )
     table.write()
     print()
 
 
-def _render_qps(report: Dict[str, Any], args: argparse.Namespace) -> None:
+def _render_qps(
+    report: Dict[str, Any],
+    args: argparse.Namespace,
+    rdma_labels: Dict[str, str],
+) -> None:
     print("Queue pairs")
     if not report.get("qps"):
         print(
@@ -546,15 +535,8 @@ def _render_qps(report: Dict[str, Any], args: argparse.Namespace) -> None:
         "RDMA_DEV QPN HW_QPN MLX5_IB_QP CREATOR QP_TYPE STATE SEND_CQN RECV_CQN "
         "SQ_SZ RQ_SZ SQ_PC SQ_CC RQ_PC RQ_CC".split()
     )
-    rdma_labels = _device_rdma_labels(report)
-    qps = [
-        qp
-        for qp in report.get("qps", [])
-        if selection._qp_matches_filter(qp, args)
-        and selection._qp_record_matches_qpn(qp, args.qpn)
-    ]
-    for qp in selection._limit_items(qps, args.maxqp):
-        row = [
+    for qp in selection._limit_items(report.get("qps", []), args.maxqp):
+        table.row(
             _record_device_label(qp, rdma_labels, fallback=False) or "-",
             qp.get("qpn"),
             qp.get("hw_qpn"),
@@ -570,21 +552,23 @@ def _render_qps(report: Dict[str, Any], args: argparse.Namespace) -> None:
             qp.get("sq_cc"),
             qp.get("rq_pc"),
             qp.get("rq_cc"),
-        ]
-        table.row(*row)
+        )
     table.write()
     print()
 
 
-def _render_dumps(report: Dict[str, Any], args: argparse.Namespace) -> None:
+def _render_dumps(
+    report: Dict[str, Any],
+    args: argparse.Namespace,
+    rdma_labels: Dict[str, str],
+) -> None:
     dumps = report.get("dumps", [])
-    groups: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict(
-        (kind, []) for kind in ("cqe", "eqe", "wqe")
-    )
+    groups: Dict[str, List[Dict[str, Any]]] = {
+        kind: [] for kind in ("cqe", "eqe", "wqe")
+    }
     for dump in dumps:
         groups.setdefault(str(dump.get("kind", "descriptor")), []).append(dump)
 
-    rdma_labels = _device_rdma_labels(report)
     for kind, group in groups.items():
         if not group:
             continue
@@ -601,7 +585,7 @@ def _render_dumps(report: Dict[str, Any], args: argparse.Namespace) -> None:
 def _render_one_dump(
     dump: Dict[str, Any],
     args: argparse.Namespace,
-    rdma_labels: Optional[Dict[str, str]] = None,
+    rdma_labels: Dict[str, str],
 ) -> None:
     kind = str(dump.get("kind", "descriptor"))
     entries = dump.get("entries", [])
@@ -614,7 +598,7 @@ def _render_one_dump(
             f"  selector : {dump.get('selector_name', 'id')}={dump.get('selector')}"
         )
     if dump.get("device"):
-        for label, value in _dump_device_lines(dump, rdma_labels or {}):
+        for label, value in _dump_device_lines(dump, rdma_labels):
             print(f"  {label:<8}: {value}")
     if dump.get("consumer_index") is not None:
         print(f"  consumer : {dump.get('consumer_index')}")
@@ -631,7 +615,7 @@ def _render_one_dump(
         return
     _render_descriptor_entries(
         dump,
-        list(selection._limit_items(entries, entry_cap)),
+        selection._limit_items(entries, entry_cap),
     )
     print()
 
@@ -727,10 +711,11 @@ def _dump_group_legend_lines(
     if kind not in ("cqe", "eqe"):
         return ["  columns  : decoded descriptor metadata."]
 
-    entries = [
-        entry for dump in group for entry in dump.get("entries", []) or []
-    ]
     columns = _DESCRIPTOR_COLUMNS[kind]
+    visible = _visible_descriptor_keys(
+        (entry for dump in group for entry in dump.get("entries", []) or []),
+        columns,
+    )
     parts = [
         f"{header}={description}"
         for header, _key, always, _nonzero, description in columns
@@ -739,9 +724,7 @@ def _dump_group_legend_lines(
     parts.extend(
         f"{header}={description}"
         for header, key, always, nonzero, description in columns
-        if not always
-        and description
-        and _descriptor_column_visible(entries, key, always, nonzero)
+        if not always and description and key in visible
     )
     if kind == "cqe":
         status_line = (
@@ -761,7 +744,7 @@ def _dump_group_legend_lines(
 
 
 def _render_descriptor_entries(
-    dump: Dict[str, Any], entries: List[Dict[str, Any]]
+    dump: Dict[str, Any], entries: Sequence[Dict[str, Any]]
 ) -> None:
     kind = dump.get("kind")
     if kind == "wqe" and _is_rq_wqe_dump(dump):
@@ -770,10 +753,11 @@ def _render_descriptor_entries(
         column_kind = kind if isinstance(kind, str) else ""
     columns = _DESCRIPTOR_COLUMNS.get(column_kind, _DESCRIPTOR_COLUMNS["wqe"])
 
+    visible_keys = _visible_descriptor_keys(entries, columns)
     visible = [
         (header, key)
-        for header, key, always, nonzero, _description in columns
-        if _descriptor_column_visible(entries, key, always, nonzero)
+        for header, key, _always, _nonzero, _description in columns
+        if key in visible_keys
     ]
     table = Table([header for header, _key in visible])
     for entry in entries:
@@ -797,16 +781,22 @@ def _is_zeroish(value: Any) -> bool:
     return text.endswith("(0x0)") or text.endswith("(0)")
 
 
-def _descriptor_column_visible(
-    entries: Sequence[Dict[str, Any]], key: str, always: bool, nonzero: bool
-) -> bool:
-    if always:
-        return True
+def _visible_descriptor_keys(
+    entries: Iterable[Dict[str, Any]], columns: Sequence[Tuple[Any, ...]]
+) -> Set[str]:
+    visible = {
+        key
+        for _header, key, always, _nonzero, _description in columns
+        if always
+    }
     for entry in entries:
-        value = entry.get(key)
-        if value is not None and (not nonzero or not _is_zeroish(value)):
-            return True
-    return False
+        for _header, key, _always, nonzero, _description in columns:
+            if key in visible:
+                continue
+            value = entry.get(key)
+            if value is not None and (not nonzero or not _is_zeroish(value)):
+                visible.add(key)
+    return visible
 
 
 def _descriptor_cell(entry: Dict[str, Any], key: str) -> Any:

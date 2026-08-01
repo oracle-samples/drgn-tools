@@ -32,34 +32,32 @@ def mlx5_netdev(mdev: Object) -> Object:
 
 
 def mlx5_core_ib_device(mdev: Object) -> Object:
-    """Return the primary RDMA device for an mlx5 core device."""
+    """Return the mlx5 RDMA device for an mlx5 core device."""
 
     prog = mdev.prog_
     protocol = prog.constant("MLX5_INTERFACE_PROTOCOL_IB")
     ib_adev = mdev.priv.adev[protocol]
     if not ib_adev:
-        return NULL(prog, "struct ib_device *")
+        return NULL(prog, "struct mlx5_ib_dev *")
 
     mlx5_ib = cast("struct mlx5_ib_dev *", ib_adev.adev.dev.driver_data)
     if not mlx5_ib:
-        return NULL(prog, "struct ib_device *")
-    return mlx5_ib.ib_dev.address_of_()
-
-
-def _for_each_driver_device(driver: Object) -> Iterator[Object]:
-    for knode in list_for_each_entry(
-        "struct klist_node",
-        driver.driver.p.klist_devices.k_list.address_of_(),
-        "n_node",
-    ):
-        dev_priv = container_of(knode, "struct device_private", "knode_driver")
-        yield dev_priv.device
+        return NULL(prog, "struct mlx5_ib_dev *")
+    return mlx5_ib
 
 
 def for_each_mlx5_core_dev(prog: Program) -> Iterator[Object]:
     """Iterate over every device bound to an mlx5 core driver."""
 
-    for device in _for_each_driver_device(prog["mlx5_core_driver"]):
+    driver = prog["mlx5_core_driver"]
+    for knode in list_for_each_entry(
+        "struct klist_node",
+        driver.driver.p.klist_devices.k_list.address_of_(),
+        "n_node",
+    ):
+        device = container_of(
+            knode, "struct device_private", "knode_driver"
+        ).device
         pdev = container_of(device, "struct pci_dev", "dev")
         yield cast("struct mlx5_core_dev *", pdev.dev.driver_data)
 
@@ -91,7 +89,7 @@ class DeviceRecord:
         self.rdma_ibdev = None
 
     def to_dict(self) -> Dict[str, Any]:
-        record: Dict[str, Any] = {
+        return {
             "mdev": self.mdev_address,
             "netdevs": self.netdevs,
             "summary": self.summary,
@@ -99,13 +97,6 @@ class DeviceRecord:
             "capabilities": self.capabilities,
             "counts": self.counts,
         }
-        if self.rdma_name is not None:
-            record["rdma_name"] = self.rdma_name
-        if self.rdma_port is not None:
-            record["rdma_port"] = self.rdma_port
-        if self.rdma_ibdev is not None:
-            record["rdma_ibdev"] = self.rdma_ibdev
-        return record
 
 
 # Linux/netdev/mlx5 object helpers
@@ -144,8 +135,6 @@ def _device_matches_selector(device: DeviceRecord, selector: str) -> bool:
     candidates = {
         device.mdev_address.lower(),
         str(device.rdma_name or "").lower(),
-        str(device.summary.get("pci_bdf", "")).lower(),
-        str(device.summary.get("rdma_name", "")).lower(),
     }
     bdf = _pci_bdf_from_mdev(device.mdev)
     if bdf:
@@ -187,16 +176,8 @@ def _collect_netdev_summary(netdev: Object) -> Dict[str, Any]:
         "operstate": int(netdev.operstate),
         "carrier": _netdev_carrier_state(netdev),
         "ip_addresses": _netdev_ip_addresses(netdev),
-        "num_tx_queues": int(
-            netdev.real_num_tx_queues
-            if has_member(netdev, "real_num_tx_queues")
-            else netdev.num_tx_queues
-        ),
-        "num_rx_queues": int(
-            netdev.real_num_rx_queues
-            if has_member(netdev, "real_num_rx_queues")
-            else netdev.num_rx_queues
-        ),
+        "num_tx_queues": int(netdev.real_num_tx_queues),
+        "num_rx_queues": int(netdev.real_num_rx_queues),
         "stats": stats,
     }
 
@@ -213,23 +194,8 @@ def _netdev_ip_addresses(netdev: Object) -> List[str]:
     return addresses
 
 
-def _collect_mlx5e_priv_summary(priv: Optional[Object]) -> Dict[str, Any]:
-    if priv is None:
-        return {"status": "unavailable"}
-    if has_member(priv, "channels"):
-        channels = priv.channels
-        channels_source = "struct mlx5e_priv.channels"
-    else:
-        channels = priv.channels_info
-        channels_source = "struct mlx5e_priv.channels_info"
-
-    if has_member(channels, "num"):
-        channels_num = int(channels.num)
-    elif has_member(channels, "num_channels"):
-        channels_num = int(channels.num_channels)
-    else:
-        channels_num = int(channels.params.num_channels)
-
+def _collect_mlx5e_priv_summary(priv: Object) -> Dict[str, Any]:
+    channels = priv.channels
     return {
         "address": _hex(int(priv)),
         "mdev": _hex(int(priv.mdev)),
@@ -238,34 +204,20 @@ def _collect_mlx5e_priv_summary(priv: Optional[Object]) -> Dict[str, Any]:
         "stats_nch": int(priv.stats_nch),
         "max_nch": int(priv.max_nch),
         "max_opened_tc": int(priv.max_opened_tc),
-        "tx_ptp_opened": int(priv.tx_ptp_opened)
-        if has_member(priv, "tx_ptp_opened")
-        else None,
+        "tx_ptp_opened": int(priv.tx_ptp_opened),
         "rx_ptp_opened": int(priv.rx_ptp_opened)
         if has_member(priv, "rx_ptp_opened")
         else None,
         "channels": _hex(int(channels.address_)),
-        "channels_source": channels_source,
-        "channels_num": channels_num,
+        "channels_source": "struct mlx5e_priv.channels",
+        "channels_num": int(channels.num),
         "profile": _hex(int(priv.profile)),
     }
 
 
 def _netdev_carrier_state(netdev: Object) -> str:
-    if has_member(netdev, "carrier_up_count") and has_member(
-        netdev, "carrier_down_count"
-    ):
-        up = int(netdev.carrier_up_count.counter)
-        down = int(netdev.carrier_down_count.counter)
-        if up == down == 0:
-            return "unknown"
-        return "up" if up >= down else "down"
-    operstate = int(netdev.operstate)
-    if operstate == 6:
-        return "up"
-    if operstate in (2, 3):
-        return "down"
-    return "unknown"
+    no_carrier = int(netdev.prog_.constant("__LINK_STATE_NOCARRIER"))
+    return "down" if int(netdev.state) & (1 << no_carrier) else "up"
 
 
 def _sum_known(values: Iterable[Optional[int]]) -> Optional[int]:
