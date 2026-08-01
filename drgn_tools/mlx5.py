@@ -559,22 +559,27 @@ class Mlx5Collector:
     def _collect_fw_version(self, mdev: Object) -> str:
         ibdev = self._ibdev_by_mdev.get(int(mdev))
         if ibdev is not None:
-            fw_ver = formatting._format_ib_fw_ver(
-                int(ibdev.ib_dev.attrs.fw_ver)
-            )
-            if fw_ver is not None:
-                return fw_ver
+            try:
+                fw_ver = formatting._format_ib_fw_ver(
+                    int(ibdev.ib_dev.attrs.fw_ver)
+                )
+                if fw_ver is not None:
+                    return fw_ver
+            except FaultError:
+                pass
 
-        iseg = mdev.iseg
-        if not iseg:
-            return "unavailable"
-        return (
-            formatting._format_iseg_fw_revision(
-                int(iseg.fw_rev),
-                int(iseg.cmdif_rev_fw_sub),
-            )
-            or "unavailable"
-        )
+        try:
+            iseg = mdev.iseg
+            if iseg:
+                fw_ver = formatting._format_iseg_fw_revision(
+                    int(iseg.fw_rev),
+                    int(iseg.cmdif_rev_fw_sub),
+                )
+                if fw_ver is not None:
+                    return fw_ver
+        except FaultError:
+            pass
+        return "unavailable"
 
     def _collect_health(self, mdev: Object) -> Dict[str, Any]:
         health = mdev.priv.health

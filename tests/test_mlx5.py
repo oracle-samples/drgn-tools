@@ -366,6 +366,25 @@ def test_plain_summary_skips_placeholder_device_counts():
     assert device.counts == {}
 
 
+def test_fw_version_prefers_ib_cache_and_tolerates_unreadable_iseg():
+    class _UnreadableIseg:
+        @property
+        def fw_rev(self):
+            raise FaultError("missing MMIO page", 0x1000)
+
+    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args(summary=True))
+    mdev = _FakeObject(address_=1, iseg=_UnreadableIseg())
+    collector._ibdev_by_mdev[1] = _FakeObject(
+        ib_dev=_FakeObject(
+            attrs=_FakeObject(fw_ver=(22 << 32) | (34 << 16) | 1014)
+        )
+    )
+
+    assert collector._collect_fw_version(mdev) == "22.34.1014"
+    collector._ibdev_by_mdev.clear()
+    assert collector._collect_fw_version(mdev) == "unavailable"
+
+
 def test_qp_registry_uses_object_addresses_and_qpn_aliases(monkeypatch):
     collector, device = _mapping_collector(monkeypatch)
     port_one = _fake_qp(0x1000, 198)
