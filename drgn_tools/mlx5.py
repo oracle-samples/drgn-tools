@@ -301,10 +301,10 @@ class _QpKey(NamedTuple):
 class _QpIdentity(NamedTuple):
     """QP numbers and the key shared by summary and full collection."""
 
-    key: Optional[_QpKey]
-    qpn: Optional[int]
-    ib_qpn: Optional[int]
-    hw_qpn: Optional[int]
+    key: _QpKey
+    qpn: int
+    ib_qpn: int
+    hw_qpn: int
     aliases: Tuple[int, ...]
 
 
@@ -799,7 +799,6 @@ class Mlx5Collector:
                             and not selection._qp_record_matches_qpn(
                                 record, self.args.qpn
                             )
-                            and identity.key is not None
                         ):
                             self._qps.pop(identity.key, None)
 
@@ -839,13 +838,6 @@ class Mlx5Collector:
                 key=lambda r: formatting._sort_key(r.get("eqn")),
             ),
             "qps": self._report_qps(),
-            "qp_creator_resolution": (
-                _qp_creator_resolution(
-                    entry.record for entry in self._qps.values()
-                )
-                if self._want_qps
-                else None
-            ),
             "dumps": dump_reports,
             "findings": self._analyze_findings(devices, dump_reports),
             "warnings": self.warnings,
@@ -1342,16 +1334,15 @@ class Mlx5Collector:
             "size": wq_summary.get("size"),
             "stride_bytes": wq_summary.get("stride_bytes"),
         }
-        key = _record_key(owner.get("device"), cqn)
-        if key is not None:
-            entry = self._cqs.get(key)
-            if entry is not None:
-                existing = entry.record
-                if owner_name not in existing["owners"]:
-                    existing["owners"].append(owner_name)
-                record = existing
-            else:
-                self._cqs[key] = _RingEntry(record, wq)
+        key = (str(owner["device"]), cqn)
+        entry = self._cqs.get(key)
+        if entry is not None:
+            existing = entry.record
+            if owner_name not in existing["owners"]:
+                existing["owners"].append(owner_name)
+            record = existing
+        else:
+            self._cqs[key] = _RingEntry(record, wq)
         return record
 
     # Event queues and completion queues
@@ -1447,9 +1438,7 @@ class Mlx5Collector:
             "mask": None,
         }
 
-        key = _record_key(device.mdev_address, eqn)
-        if key is None:
-            return record
+        key = (device.mdev_address, eqn)
         entry = self._eqs.get(key)
         if entry is None:
             self._eqs[key] = _EqEntry(record, eq, core)
@@ -1571,9 +1560,7 @@ class Mlx5Collector:
             or int(core_cq.cqe_sz),
         }
 
-        key = _record_key(device.mdev_address, cqn)
-        if key is None:
-            return record
+        key = (device.mdev_address, cqn)
         entry = self._cqs.get(key)
         if entry is None:
             self._cqs[key] = _RingEntry(record, wq)
@@ -1755,9 +1742,7 @@ class Mlx5Collector:
     def _count_summary_qps(self, device: DeviceRecord) -> Optional[int]:
         keys = set()
         for qp, _owner, table_qpn in self._iter_qps_from_device(device):
-            key = _qp_identity(qp, device.mdev_address, table_qpn).key
-            if key is not None:
-                keys.add(key)
+            keys.add(_qp_identity(qp, device.mdev_address, table_qpn).key)
         return len(keys)
 
     def _report_qps(self) -> List[Dict[str, Any]]:
@@ -1871,37 +1856,29 @@ class Mlx5Collector:
             "rq_cc_source": f"{rq_source}.tail" if rq_cc is not None else None,
         }
         key = identity.key
-        if key is not None:
-            entry = self._qps.get(key)
-            if entry is not None:
-                existing = entry.record
-                owners = existing.setdefault("owners", [existing.get("owner")])
-                if source not in owners:
-                    owners.append(source)
-                existing["owner"] = ",".join(str(o) for o in owners if o)
-                existing_aliases: Any = existing.get("qpn_aliases")
-                record_aliases: Any = record.get("qpn_aliases")
-                existing["qpn_aliases"] = selection._qp_aliases(
-                    *(
-                        list(existing_aliases or [])
-                        + list(record_aliases or [])
-                    )
-                )
-                _merge_discovery(existing, record)
-                record = existing
-                stored_sq_wq = (
-                    entry.sq_wq if entry.sq_wq is not None else sq_wq
-                )
-                dump_wq = stored_sq_wq
-                if dump_wq is None:
-                    dump_wq = (
-                        entry.dump_wq if entry.dump_wq is not None else rq_wq
-                    )
-                self._qps[key] = _QpEntry(record, dump_wq, stored_sq_wq)
-            else:
-                self._qps[key] = _QpEntry(
-                    record, sq_wq if sq_wq is not None else rq_wq, sq_wq
-                )
+        entry = self._qps.get(key)
+        if entry is not None:
+            existing = entry.record
+            owners = existing.setdefault("owners", [existing.get("owner")])
+            if source not in owners:
+                owners.append(source)
+            existing["owner"] = ",".join(str(o) for o in owners if o)
+            existing_aliases: Any = existing.get("qpn_aliases")
+            record_aliases: Any = record.get("qpn_aliases")
+            existing["qpn_aliases"] = selection._qp_aliases(
+                *(list(existing_aliases or []) + list(record_aliases or []))
+            )
+            _merge_discovery(existing, record)
+            record = existing
+            stored_sq_wq = entry.sq_wq if entry.sq_wq is not None else sq_wq
+            dump_wq = stored_sq_wq
+            if dump_wq is None:
+                dump_wq = entry.dump_wq if entry.dump_wq is not None else rq_wq
+            self._qps[key] = _QpEntry(record, dump_wq, stored_sq_wq)
+        else:
+            self._qps[key] = _QpEntry(
+                record, sq_wq if sq_wq is not None else rq_wq, sq_wq
+            )
         return record
 
     # Descriptor selection and dumps
@@ -2745,7 +2722,7 @@ class Mlx5Collector:
                     add("HIGH", scope, "rx/tx error counters are non-zero")
                 for channel in netdev.get("channels", []):
                     for queue in selection._channel_queues(channel):
-                        queue_name = _queue_finding_name(queue)
+                        queue_name = str(queue["owner"])
                         wq = queue.get("wq")
                         size = wq.get("size") if isinstance(wq, dict) else None
                         pc = queue.get("pc")
@@ -2881,7 +2858,10 @@ def _validate_args(args: argparse.Namespace) -> None:
         ("--maxwqe", args.maxwqe, defs.MAX_DESCRIPTOR_ENTRIES),
     ):
         if value is not None or option in {"--maxcqe", "--maxeqe", "--maxwqe"}:
-            _validate_cap(option, value, hard_limit)
+            if value < 1:
+                raise ValueError(f"{option} must be >= 1")
+            if value > hard_limit:
+                raise ValueError(f"{option} must be <= {hard_limit}")
     if args.dev and ":" in args.dev and "." in args.dev:
         if not defs._PCI_BDF_RE.match(args.dev):
             raise ValueError("invalid --dev BDF value, expected DDDD:BB:DD.F")
@@ -2915,14 +2895,8 @@ def _shared_known_value(values: Iterable[Optional[int]]) -> Optional[int]:
     return next(iter(known)) if len(known) == 1 else None
 
 
-def _record_key(device: Any, number: Any) -> Optional[Tuple[str, int]]:
-    if device is None or number is None:
-        return None
-    return str(device), int(number)
-
-
 def _qp_identity(
-    qp: Object, device: Any, table_qpn: Optional[int] = None
+    qp: Object, device: str, table_qpn: Optional[int] = None
 ) -> _QpIdentity:
     """Read the small set of fields used to identify a QP."""
 
@@ -3004,25 +2978,6 @@ def _qp_creator(qp: Object) -> Dict[str, Any]:
     )
 
 
-def _qp_creator_resolution(qps: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-    unresolved = [
-        qp for qp in qps if qp.get("creator_type") not in ("kernel", "user")
-    ]
-    unresolved.sort(
-        key=lambda qp: (
-            str(qp.get("device") or ""),
-            formatting._sort_key(qp.get("qpn")),
-        )
-    )
-    return {
-        "unresolved_count": len(unresolved),
-        "examples": [
-            {"device": qp.get("device"), "qpn": qp.get("qpn")}
-            for qp in unresolved[:5]
-        ],
-    }
-
-
 def _cq_number_from_cq(cq: Optional[Object]) -> Optional[int]:
     if cq is None or not cq:
         return None
@@ -3070,17 +3025,17 @@ def _looks_like_kernel_pointer_value(value: Any) -> bool:
 
 
 def _cq_consumer_index(
-    address_struct: Optional[str],
+    address_struct: str,
     wq_summary: Dict[str, Any],
-    core_cq: Optional[Object],
-) -> Tuple[Optional[int], str, Optional[int]]:
+    core_cq: Object,
+) -> Tuple[Optional[int], str, int]:
     """Choose the CQ consumer counter for its owner.
 
     mlx5_ib polls mlx5_core_cq.cons_index. mlx5e and ASO poll through
     mlx5_cqwq, so use wq.cc; their mcq.cons_index may remain zero.
     """
 
-    core_cons_index = int(core_cq.cons_index) if core_cq is not None else None
+    core_cons_index = int(core_cq.cons_index)
     wq_cc = wq_summary.get("cc")
     if (
         address_struct in ("struct mlx5e_cq", "struct mlx5_aso_cq")
@@ -3088,13 +3043,6 @@ def _cq_consumer_index(
     ):
         return wq_cc, f"{address_struct}.wq.cc", core_cons_index
     return core_cons_index, "struct mlx5_core_cq.cons_index", core_cons_index
-
-
-def _validate_cap(option: str, value: int, hard_limit: int) -> None:
-    if value < 1:
-        raise ValueError(f"{option} must be >= 1")
-    if value > hard_limit:
-        raise ValueError(f"{option} must be <= {hard_limit}")
 
 
 def _wqe_ctrl_wqebbs(
@@ -3147,15 +3095,6 @@ def _rq_progress_detail(
 def _queue_number(queue_obj: Object, kind: str) -> int:
     number_field = "rqn" if kind in ("rq", "xskrq", "ptp_rq") else "sqn"
     return int(queue_obj.member_(number_field))
-
-
-def _queue_finding_name(queue: Dict[str, Any]) -> str:
-    owner = queue.get("owner")
-    if owner:
-        return str(owner)
-    kind = queue.get("kind") or "queue"
-    number = queue.get("number")
-    return str(kind) if number is None else f"{kind} {number}"
 
 
 def _queue_should_warn_disabled(queue: Dict[str, Any]) -> bool:

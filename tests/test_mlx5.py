@@ -391,17 +391,13 @@ def test_cq_filters_match_only_requested_structure_families():
     ]
 
 
-def test_unresolved_qp_creator_metadata_is_counted_and_not_filterable():
+def test_qp_creator_filters():
     qps = [
         {"device": "mlx5_0", "qpn": 1, "creator_type": "kernel"},
         {"device": "mlx5_0", "qpn": 2, "creator_type": "user"},
         {"device": "mlx5_1", "qpn": 3, "creator_type": None},
     ]
 
-    assert mlx5._qp_creator_resolution(qps) == {
-        "unresolved_count": 1,
-        "examples": [{"device": "mlx5_1", "qpn": 3}],
-    }
     assert selection._qp_matches_filter(qps[0], _args(qp_creators=["kernel"]))
     assert selection._qp_matches_filter(qps[1], _args(qp_creators=["user"]))
     assert not selection._qp_matches_filter(
