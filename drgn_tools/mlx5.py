@@ -60,7 +60,6 @@ from drgn_tools.util import has_member
 
 # Short aliases used throughout this module.
 MAX_DEFAULT_DESCRIPTOR_ENTRIES = defs.MAX_DEFAULT_DESCRIPTOR_ENTRIES
-MAX_DEFAULT_WALK_LIMIT = defs.MAX_DEFAULT_WALK_LIMIT
 DeviceRecord = collect_device.DeviceRecord
 _decode_cqe = decode._decode_cqe
 _decode_eqe = decode._decode_eqe
@@ -177,12 +176,6 @@ class Mlx5(CorelensModule):
                 help=f"Maximum {entry} entries to dump per {target}, default: 32",
             )
         parser.add_argument(
-            "--walk-limit",
-            type=int,
-            default=MAX_DEFAULT_WALK_LIMIT,
-            help="Maximum objects to walk per kernel table/list, default: no cap",
-        )
-        parser.add_argument(
             "--json", action="store_true", help="Emit machine-readable JSON"
         )
 
@@ -219,7 +212,6 @@ def mlx5_report(
     maxcqe: int = MAX_DEFAULT_DESCRIPTOR_ENTRIES,
     maxeqe: int = MAX_DEFAULT_DESCRIPTOR_ENTRIES,
     maxwqe: int = MAX_DEFAULT_DESCRIPTOR_ENTRIES,
-    walk_limit: Optional[int] = MAX_DEFAULT_WALK_LIMIT,
     json_output: bool = False,
 ) -> Dict[str, Any]:
     """Collect, render, and return an mlx5 report."""
@@ -364,7 +356,6 @@ class Mlx5Collector:
         self._wqe_warning_groups: "OrderedDict[Tuple[str, str, str], Dict[str, Any]]" = (
             OrderedDict()
         )
-        self._truncated_walks = False
 
     def _discover_devices(self) -> List[DeviceRecord]:
         devices_by_key: Dict[str, DeviceRecord] = {}
@@ -858,7 +849,6 @@ class Mlx5Collector:
             "dumps": dump_reports,
             "findings": self._analyze_findings(devices, dump_reports),
             "warnings": self.warnings,
-            "truncated_walks": self._truncated_walks,
             "counts": {
                 "devices": len(devices),
                 "netdevs": sum(len(d.netdevs) for d in devices),
@@ -935,11 +925,7 @@ class Mlx5Collector:
         priv: Object,
     ) -> Tuple[Object, int, Object]:
         channels = priv.channels
-        count = self._walk_count(
-            int(channels.num),
-            "mlx5e channel walk",
-            hard_limit=defs.MAX_CHANNELS,
-        )
+        count = min(max(int(channels.num), 0), defs.MAX_CHANNELS)
         return channels, count, channels.c
 
     def _iter_channel_queues(
@@ -953,9 +939,7 @@ class Mlx5Collector:
 
         qos_sqs = channel.qos_sqs
         if qos_sqs:
-            count = self._walk_count(
-                int(channel.qos_sqs_size), "mlx5e qos_sq walk"
-            )
+            count = min(max(int(channel.qos_sqs_size), 0), defs.MAX_QOS_SQS)
             for index in range(count):
                 sq = qos_sqs[index]
                 if sq:
@@ -2872,26 +2856,6 @@ class Mlx5Collector:
     def _warn(self, msg: str) -> None:
         self.warnings.append(msg)
 
-    def _warn_truncated(self, msg: str) -> None:
-        self._truncated_walks = True
-        self._warn(msg)
-
-    def _walk_count(
-        self, total: int, scope: str, hard_limit: int = defs.MAX_WALK_LIMIT
-    ) -> int:
-        limits = [int(total), int(hard_limit)]
-        if self.args.walk_limit is not None:
-            limits.append(int(self.args.walk_limit))
-        count = max(0, min(limits))
-        if int(total) > count:
-            limit = f"sanity-max={hard_limit}"
-            if self.args.walk_limit is not None:
-                limit = f"--walk-limit={self.args.walk_limit}, {limit}"
-            self._warn_truncated(
-                f"{scope}: walk truncated after {count} of {int(total)} entries ({limit})"
-            )
-        return count
-
 
 # Core helper functions
 
@@ -2908,18 +2872,16 @@ def _validate_args(args: argparse.Namespace) -> None:
             + ", ".join(invalid_qp_creators)
         )
     for option, value, hard_limit in (
-        ("--maxqueues", args.maxqueues, defs.MAX_WALK_LIMIT),
-        ("--maxcq", args.maxcq, defs.MAX_WALK_LIMIT),
-        ("--maxeq", args.maxeq, defs.MAX_WALK_LIMIT),
-        ("--maxqp", args.maxqp, defs.MAX_WALK_LIMIT),
+        ("--maxqueues", args.maxqueues, defs.MAX_REPORT_ROWS),
+        ("--maxcq", args.maxcq, defs.MAX_REPORT_ROWS),
+        ("--maxeq", args.maxeq, defs.MAX_REPORT_ROWS),
+        ("--maxqp", args.maxqp, defs.MAX_REPORT_ROWS),
         ("--maxcqe", args.maxcqe, defs.MAX_DESCRIPTOR_ENTRIES),
         ("--maxeqe", args.maxeqe, defs.MAX_DESCRIPTOR_ENTRIES),
         ("--maxwqe", args.maxwqe, defs.MAX_DESCRIPTOR_ENTRIES),
     ):
         if value is not None or option in {"--maxcqe", "--maxeqe", "--maxwqe"}:
             _validate_cap(option, value, hard_limit)
-    if args.walk_limit is not None:
-        _validate_cap("--walk-limit", args.walk_limit, defs.MAX_WALK_LIMIT)
     if args.dev and ":" in args.dev and "." in args.dev:
         if not defs._PCI_BDF_RE.match(args.dev):
             raise ValueError("invalid --dev BDF value, expected DDDD:BB:DD.F")

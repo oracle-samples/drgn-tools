@@ -8,7 +8,6 @@ from typing import Optional
 from drgn import Object
 
 from .compat import _addr
-from .compat import _bounded_count
 from .compat import _first_int_path
 from .compat import _first_member_path
 from .compat import _nonzero_addr
@@ -18,7 +17,6 @@ from .compat import _safe_member
 from .compat import _type_name
 from .defs import DEFAULT_DESCRIPTOR_ENTRY_BYTES
 from .defs import MAX_DESCRIPTOR_ENTRIES
-from .defs import MAX_PLAUSIBLE_RING_ENTRIES
 from .format import _hex
 
 _BENIGN_DESCRIPTOR_STATUSES = {"ok", "ready", "not-ready"}
@@ -33,7 +31,7 @@ _DIRECT_BUFFER_PATHS = (
 def _dump_window_summary(
     max_entries: int, ring_size: Optional[Any] = None
 ) -> Dict[str, int]:
-    count = _bounded_count(max_entries, None, MAX_DESCRIPTOR_ENTRIES)
+    count = max(0, min(int(max_entries), MAX_DESCRIPTOR_ENTRIES))
     size = _safe_int(ring_size)
     if size is not None and size > 0:
         count = min(count, size)
@@ -142,28 +140,6 @@ def _ring_size(
         if size_bytes is not None and size_bytes > 0 and entry_len > 0
         else None
     )
-
-
-def _same_address(left: Any, right: Any) -> bool:
-    left_addr = _addr(left)
-    right_addr = _addr(right)
-    return left_addr is not None and left_addr == right_addr
-
-
-def _plausible_cq_wq(wq: Optional[Object]) -> bool:
-    if wq is None:
-        return False
-    size = _ring_size(wq, DEFAULT_DESCRIPTOR_ENTRY_BYTES)
-    stride = _ring_stride_bytes(wq)
-    if size is None or size <= 0 or size > MAX_PLAUSIBLE_RING_ENTRIES:
-        return False
-    if stride not in (64, 128):
-        return False
-    fbc = _safe_member(wq, "fbc")
-    if fbc is None:
-        fbc = wq
-    frags = _safe_member(fbc, "frags")
-    return _addr(frags) not in (None, 0)
 
 
 def _ring_stride_bytes(wq: Object) -> Optional[int]:

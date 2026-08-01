@@ -131,7 +131,6 @@ def test_dump_ring_reads_a_consumer_centered_window_through_shared_layout_helper
                 name: False
                 for name in "cqs qps dump_wqe dump_cqe queues eth_cqs ib_cqs eqs summary full".split()
             },
-            walk_limit=None,
         ),
     )
     wq = Struct(sz_m1=3, log_stride=6, buf=0x1000)

@@ -213,13 +213,13 @@ def _collect_netdev_summary(netdev: Object) -> Dict[str, Any]:
 
 def _netdev_ip_addresses(netdev: Object) -> List[str]:
     addresses: List[str] = []
-    for helper in (netdev_ipv4s, netdev_ipv6s):
-        for value in helper(netdev):
-            ip = str(value)
-            if ip not in addresses:
-                addresses.append(ip)
-            if len(addresses) >= MAX_NETDEV_IPS:
-                return addresses
+    values = [str(value) for value in netdev_ipv4s(netdev)]
+    values.extend(str(value) for value in netdev_ipv6s(netdev))
+    for ip in values:
+        if ip not in addresses:
+            addresses.append(ip)
+        if len(addresses) >= MAX_NETDEV_IPS:
+            return addresses
     return addresses
 
 

@@ -110,9 +110,8 @@ def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
     }
     if opcode in responder_opcodes:
         byte_count_display = byte_count
-    elif (
-        opcode == _constant(prog, "MLX5_CQE_REQ")
-        and req_opcode == _constant(prog, "MLX5_OPCODE_RDMA_READ")
+    elif opcode == _constant(prog, "MLX5_CQE_REQ") and req_opcode == _constant(
+        prog, "MLX5_OPCODE_RDMA_READ"
     ):
         byte_count_display = byte_count
     decoded = {

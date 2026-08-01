@@ -120,7 +120,6 @@ def render_report(report: Dict[str, Any], args: argparse.Namespace) -> None:
         f"eqe={report_selection.get('maxeqe')} "
         f"wqe={report_selection.get('maxwqe')}"
     )
-    print(f"  walk    : {_max_display(report_selection.get('walk_limit'))}")
     print()
 
     counts = report.get("counts", {})
@@ -140,8 +139,6 @@ def render_report(report: Dict[str, Any], args: argparse.Namespace) -> None:
         f"{_findings_summary_line(report.get('findings', []))} (collected scope only)"
     )
     print(f"  - warnings     : {len(report.get('warnings', []))}")
-    if report.get("truncated_walks"):
-        print("  - truncated    : yes")
     print()
 
     _render_devices(report, args)
