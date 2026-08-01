@@ -35,6 +35,7 @@ from typing import Union
 
 from drgn import cast
 from drgn import container_of
+from drgn import FaultError
 from drgn import Object
 from drgn import Program
 from drgn import ProgramFlags
@@ -2988,7 +2989,7 @@ def _cq_number_from_cq(cq: Optional[Object]) -> Optional[int]:
 def _mlx5_ib_wq_wrid_at_counter(
     wq: Optional[Object], wqe_counter: int
 ) -> Tuple[Optional[int], Optional[int]]:
-    if wq is None or not wq:
+    if wq is None:
         return None, None
     wqe_cnt = int(wq.wqe_cnt)
     if wqe_cnt <= 0:
@@ -3006,16 +3007,20 @@ def _mlx5_ib_gsi_saved_wr_id(prog: Program, wr_cqe: Any) -> Optional[int]:
     addr = int(wr_cqe)
     if not _looks_like_kernel_pointer_value(addr):
         return None
-    cqe = Object(prog, "struct ib_cqe *", value=addr)
-    done = int(cqe.done)
+    # Unused WR-ID slots can contain the all-ones sentinel. It resembles a
+    # kernel pointer but must not be dereferenced.
+    if addr == 0xFFFFFFFFFFFFFFFF:
+        return None
     try:
+        cqe = Object(prog, "struct ib_cqe *", value=addr)
+        done = int(cqe.done)
         symbol_name = prog.symbol(done).name
-    except LookupError:
+        if symbol_name != "handle_single_completion":
+            return None
+        gsi_wr = container_of(cqe, "struct mlx5_ib_gsi_wr", "cqe")
+        return int(gsi_wr.wc.wr_id)
+    except (FaultError, LookupError):
         return None
-    if symbol_name != "handle_single_completion":
-        return None
-    gsi_wr = container_of(cqe, "struct mlx5_ib_gsi_wr", "cqe")
-    return int(gsi_wr.wc.wr_id)
 
 
 def _looks_like_kernel_pointer_value(value: Any) -> bool:
