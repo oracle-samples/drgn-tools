@@ -11,13 +11,37 @@ from drgn import Object
 from drgn import ObjectAbsentError
 from drgn import OutOfBoundsError
 
-from .compat import _addr
-from .compat import _safe_int
-from .compat import _safe_member
 from .defs import MAX_DESCRIPTOR_ENTRIES
 from .format import _hex
 
 _BENIGN_DESCRIPTOR_STATUSES = {"ok", "ready", "not-ready"}
+_MEMBER_ERRORS = (LookupError, FaultError, ObjectAbsentError, TypeError)
+_VALUE_ERRORS = (FaultError, ObjectAbsentError, TypeError, ValueError)
+
+
+def _safe_member(obj: Optional[Object], name: str) -> Optional[Object]:
+    if obj is None:
+        return None
+    try:
+        return obj.member_(name)
+    except _MEMBER_ERRORS:
+        return None
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return value if isinstance(value, int) else int(value)
+    except _VALUE_ERRORS:
+        return None
+
+
+def _addr(obj: Any) -> Optional[int]:
+    value = _safe_int(obj)
+    if value is not None:
+        return value
+    return _safe_int(getattr(obj, "address_", None))
 
 
 def _dump_window_summary(
