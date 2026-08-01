@@ -102,7 +102,6 @@ def _args(**overrides):
         maxcqe=mlx5.MAX_DEFAULT_DESCRIPTOR_ENTRIES,
         maxeqe=mlx5.MAX_DEFAULT_DESCRIPTOR_ENTRIES,
         maxwqe=mlx5.MAX_DEFAULT_DESCRIPTOR_ENTRIES,
-        walk_limit=mlx5.MAX_DEFAULT_WALK_LIMIT,
     )
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -297,7 +296,6 @@ def test_cli_report_modes_selectors_and_limits():
         (["--summary", "--full"], SystemExit),
         (["--qp-creator", "unknown"], SystemExit),
         (["--maxcq", "0"], ValueError),
-        (["--walk-limit", "0"], ValueError),
     ),
 )
 def test_invalid_cli_values_are_rejected(arguments, expected_error):
@@ -331,14 +329,6 @@ def test_default_report_mode_and_explicit_overrides(monkeypatch):
     selected_args = _args(cqs=True)
     selection._resolve_report_sections(selected_args)
     assert not selected_args.summary and selected_args.cqs
-
-
-def test_indexed_walk_limits_report_truncation():
-    collector = mlx5.Mlx5Collector(object(), _args(walk_limit=2))
-
-    assert collector._walk_count(5, "QP table") == 2
-    assert collector._truncated_walks
-    assert "--walk-limit=2" in "\n".join(collector.warnings)
 
 
 @parametrize(
