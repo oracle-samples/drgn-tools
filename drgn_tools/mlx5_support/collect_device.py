@@ -63,16 +63,6 @@ def for_each_mlx5_core_dev(prog: Program) -> Iterator[Object]:
         pdev = container_of(device, "struct pci_dev", "dev")
         yield cast("struct mlx5_core_dev *", pdev.dev.driver_data)
 
-    try:
-        sf_driver = prog["mlx5_sf_driver"]
-    except LookupError:
-        return
-
-    for device in _for_each_driver_device(sf_driver):
-        adev = container_of(device, "struct auxiliary_device", "dev")
-        sf_dev = container_of(adev, "struct mlx5_sf_dev", "adev")
-        yield sf_dev.mdev
-
 
 class DeviceRecord:
     """Collected state for one ``struct mlx5_core_dev``."""
