@@ -3,7 +3,6 @@
 """Rules for choosing, filtering, and limiting mlx5 report data."""
 import argparse
 from collections import deque
-from collections import OrderedDict
 from typing import Any
 from typing import Callable
 from typing import Deque
@@ -14,12 +13,15 @@ from typing import Optional
 from typing import Sequence
 from typing import Set
 from typing import Tuple
+from typing import TypeVar
 
 from .format import _short_struct
 
 DEFAULT_REPORT_MODE = "full"
 
-_EQ_AUTO_DUMP_ROLE_RANK = {"completion": 0, "async": 1, "cmd": 2, "pages": 3}
+_T = TypeVar("_T")
+
+_EQ_AUTO_DUMP_ROLES = ("completion", "async", "cmd", "pages")
 _EXPLICIT_SECTION_FLAGS = """
 queues summary full cqs ib_cqs eth_cqs eqs qps dump_cqe dump_eqe dump_wqe
 """.split()
@@ -143,8 +145,14 @@ def _cq_filter_structs(args: argparse.Namespace) -> List[str]:
 
 
 def _cq_matches_filter(cq: Dict[str, Any], args: argparse.Namespace) -> bool:
-    wanted = _cq_filter_structs(args)
-    return not wanted or _short_struct(cq.get("address_struct")) in wanted
+    ib_cqs = getattr(args, "ib_cqs", False)
+    eth_cqs = getattr(args, "eth_cqs", False)
+    if not ib_cqs and not eth_cqs:
+        return True
+    struct_name = _short_struct(cq.get("address_struct"))
+    return (ib_cqs and struct_name == "mlx5_ib_cq") or (
+        eth_cqs and struct_name == "mlx5e_cq"
+    )
 
 
 def _cq_balance_bucket(cq: Dict[str, Any]) -> Tuple[str, str, str]:
@@ -162,13 +170,13 @@ def _qp_matches_filter(qp: Dict[str, Any], args: argparse.Namespace) -> bool:
 
 def _eq_auto_dump_role_rank(eq: Dict[str, Any]) -> int:
     role_text = str(eq.get("role") or "")
-    return min(
+    return next(
         (
             rank
-            for role, rank in _EQ_AUTO_DUMP_ROLE_RANK.items()
+            for rank, role in enumerate(_EQ_AUTO_DUMP_ROLES)
             if role in role_text
         ),
-        default=len(_EQ_AUTO_DUMP_ROLE_RANK),
+        len(_EQ_AUTO_DUMP_ROLES),
     )
 
 
@@ -176,8 +184,7 @@ def _eq_item_auto_dump_key(
     item: Tuple[Tuple[str, int], Dict[str, Any]]
 ) -> Tuple[int, str, int]:
     key, eq = item
-    role_rank, _device, _eqn = _eq_record_auto_dump_key(eq)
-    return (role_rank, key[0], key[1])
+    return (_eq_auto_dump_role_rank(eq), key[0], key[1])
 
 
 def _eq_record_auto_dump_key(eq: Dict[str, Any]) -> Tuple[int, str, int]:
@@ -208,14 +215,6 @@ def _first_not_none(*values: Any) -> Any:
     return None
 
 
-def _qp_aliases(*values: Any) -> List[int]:
-    aliases: Set[int] = set()
-    for value in values:
-        if value is not None:
-            aliases.add(int(value))
-    return sorted(aliases)
-
-
 def _qp_record_matches_qpn(record: Dict[str, Any], qpn: Optional[int]) -> bool:
     if qpn is None:
         return True
@@ -226,7 +225,6 @@ def _qp_record_matches_qpn(record: Dict[str, Any], qpn: Optional[int]) -> bool:
             record.get("qpn"),
             record.get("ib_qpn"),
             record.get("hw_qpn"),
-            record.get("table_qpn"),
         )
     return target in (int(alias) for alias in aliases if alias is not None)
 
@@ -238,24 +236,23 @@ def _limit_items(
 
 
 def _limit_balanced(
-    items: Sequence[Any],
+    items: List[_T],
     max_items: Optional[int],
-    bucket_key: Callable[[Any], Any],
-) -> List[Any]:
+    bucket_key: Callable[[_T], Any],
+) -> List[_T]:
     if max_items is None:
-        return list(items)
-    buckets: "OrderedDict[Any, Deque[Any]]" = OrderedDict()
+        return items
+    buckets: Dict[Any, Deque[_T]] = {}
     for item in items:
         buckets.setdefault(bucket_key(item), deque()).append(item)
 
-    selected: List[Any] = []
-    while buckets and len(selected) < max_items:
-        for key, values in list(buckets.items()):
-            selected.append(values.popleft())
-            if not values:
-                buckets.pop(key, None)
-            if len(selected) >= max_items:
-                break
+    selected: List[_T] = []
+    round_robin = deque(buckets.values())
+    while round_robin and len(selected) < max_items:
+        values = round_robin.popleft()
+        selected.append(values.popleft())
+        if values:
+            round_robin.append(values)
     return selected
 
 

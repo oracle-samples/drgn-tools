@@ -21,18 +21,16 @@ def _byte(raw: bytes, offset: int) -> Optional[int]:
     return raw[offset] if offset < len(raw) else None
 
 
-def _constant(prog: Program, name: str) -> int:
-    return int(prog.constant(name))
-
-
 def _enum_name(
     prog: Program,
-    value: int,
+    value: Optional[int],
     *,
     representative: Optional[str] = None,
     type_name: Optional[str] = None,
     prefix: str = "",
-) -> str:
+) -> Optional[str]:
+    if value is None:
+        return None
     key = (representative, type_name, prefix)
     tables = prog.cache.setdefault("_mlx5_enum_tables", {})
     names = tables.get(key)
@@ -58,17 +56,9 @@ def _enum_name(
     return names.get(value) or f"unknown({value})"
 
 
-def _enum_label(
-    prog: Program,
-    value: Optional[int],
-    representative: str,
-    prefix: str,
-) -> Optional[str]:
-    if value is None:
+def _enum_label(value: Optional[int], name: Optional[str]) -> Optional[str]:
+    if value is None or name is None:
         return None
-    name = _enum_name(
-        prog, value, representative=representative, prefix=prefix
-    )
     rendered = _hex(value)
     return rendered if name.startswith("unknown(") else f"{name}({rendered})"
 
@@ -76,79 +66,60 @@ def _enum_label(
 def _enum_type_label(
     prog: Program, value: Optional[int], type_name: str
 ) -> Optional[str]:
-    if value is None:
-        return None
     return _enum_name(prog, value, type_name=type_name)
 
 
 def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
     op_own = _byte(raw, 63)
     opcode = (op_own >> 4) if op_own is not None else None
-    owner = (
-        op_own & _constant(prog, "MLX5_CQE_OWNER_MASK")
-        if op_own is not None
-        else None
+    opcode_name = _enum_name(
+        prog,
+        opcode,
+        representative="MLX5_CQE_REQ",
+        prefix="MLX5_CQE_",
     )
+    owner = op_own & 1 if op_own is not None else None
     srqn_word = _read_be(raw, 32, 4)
     sop_drop_qpn = _read_be(raw, 56, 4)
     req_opcode = (
         (sop_drop_qpn >> 24)
-        if opcode == _constant(prog, "MLX5_CQE_REQ")
-        and sop_drop_qpn is not None
+        if opcode_name == "REQ" and sop_drop_qpn is not None
         else None
+    )
+    req_opcode_name = _enum_name(
+        prog,
+        req_opcode,
+        representative="MLX5_OPCODE_NOP",
+        prefix="MLX5_OPCODE_",
     )
     byte_count = _read_be(raw, 44, 4)
     byte_count_display = None
-    responder_opcodes = {
-        _constant(prog, name)
-        for name in (
-            "MLX5_CQE_RESP_WR_IMM",
-            "MLX5_CQE_RESP_SEND",
-            "MLX5_CQE_RESP_SEND_IMM",
-            "MLX5_CQE_RESP_SEND_INV",
-        )
-    }
-    if opcode in responder_opcodes:
-        byte_count_display = byte_count
-    elif opcode == _constant(prog, "MLX5_CQE_REQ") and req_opcode == _constant(
-        prog, "MLX5_OPCODE_RDMA_READ"
-    ):
+    if opcode_name in (
+        "RESP_WR_IMM",
+        "RESP_SEND",
+        "RESP_SEND_IMM",
+        "RESP_SEND_INV",
+    ) or (opcode_name == "REQ" and req_opcode_name == "RDMA_READ"):
         byte_count_display = byte_count
     decoded = {
         "owner_bit": owner,
         "opcode_value": opcode,
-        "opcode_display": _enum_label(
-            prog, opcode, "MLX5_CQE_REQ", "MLX5_CQE_"
-        ),
-        "req_opcode_display": _enum_label(
-            prog, req_opcode, "MLX5_OPCODE_NOP", "MLX5_OPCODE_"
-        ),
+        "opcode_display": _enum_label(opcode, opcode_name),
+        "req_opcode_display": _enum_label(req_opcode, req_opcode_name),
         "wqe_id": _read_be(raw, 2, 2),
         "srqn": (srqn_word & 0xFFFFFF) if srqn_word is not None else None,
         "byte_count_display": byte_count_display,
         "qpn": (sop_drop_qpn & 0xFFFFFF) if sop_drop_qpn is not None else None,
         "wqe_counter": _read_be(raw, 60, 2),
     }
-    error_opcodes = {
-        _constant(prog, name)
-        for name in (
-            "MLX5_CQE_SIG_ERR",
-            "MLX5_CQE_REQ_ERR",
-            "MLX5_CQE_RESP_ERR",
-        )
-    }
-    if opcode in error_opcodes:
+    if opcode_name in ("SIG_ERR", "REQ_ERR", "RESP_ERR"):
         syndrome_value = _byte(raw, 55)
         vendor_syndrome = _byte(raw, 54)
-        syndrome_name = (
-            _enum_name(
-                prog,
-                syndrome_value,
-                representative="MLX5_CQE_SYNDROME_LOCAL_LENGTH_ERR",
-                prefix="MLX5_CQE_SYNDROME_",
-            )
-            if syndrome_value is not None
-            else None
+        syndrome_name = _enum_name(
+            prog,
+            syndrome_value,
+            representative="MLX5_CQE_SYNDROME_LOCAL_LENGTH_ERR",
+            prefix="MLX5_CQE_SYNDROME_",
         )
         decoded.update(
             {
@@ -158,12 +129,7 @@ def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
                 if syndrome_name is None
                 or not syndrome_name.startswith("unknown(")
                 else None,
-                "syndrome_display": _enum_label(
-                    prog,
-                    syndrome_value,
-                    "MLX5_CQE_SYNDROME_LOCAL_LENGTH_ERR",
-                    "MLX5_CQE_SYNDROME_",
-                ),
+                "syndrome_display": _enum_label(syndrome_value, syndrome_name),
                 "error_qpn": (sop_drop_qpn & 0xFFFFFF)
                 if sop_drop_qpn is not None
                 else None,
@@ -174,29 +140,19 @@ def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
 
 def _decode_eqe(prog: Program, raw: bytes) -> Dict[str, Any]:
     event_type = _byte(raw, 1)
-    event_name = (
-        _enum_name(
-            prog,
-            event_type,
-            representative="MLX5_EVENT_TYPE_COMP",
-            prefix="MLX5_EVENT_TYPE_",
-        )
-        if event_type is not None
-        else None
+    event_name = _enum_name(
+        prog,
+        event_type,
+        representative="MLX5_EVENT_TYPE_COMP",
+        prefix="MLX5_EVENT_TYPE_",
     )
     sub_type = _byte(raw, 3)
     owner_byte = _byte(raw, 63)
-    owner = (
-        owner_byte & _constant(prog, "MLX5_CQE_OWNER_MASK")
-        if owner_byte is not None
-        else None
-    )
+    owner = owner_byte & 1 if owner_byte is not None else None
     decoded = {
         "owner_bit": owner,
         "type_value": event_type,
-        "type_display": _enum_label(
-            prog, event_type, "MLX5_EVENT_TYPE_COMP", "MLX5_EVENT_TYPE_"
-        ),
+        "type_display": _enum_label(event_type, event_name),
         "sub_type": _hex(sub_type),
     }
     if event_name == "COMP":
@@ -205,15 +161,11 @@ def _decode_eqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         syndrome_value = _byte(raw, 43)
         decoded["cqn"] = _read_be(raw, 32, 4)
         decoded["syndrome"] = _hex(syndrome_value)
-        syndrome_name = (
-            _enum_name(
-                prog,
-                syndrome_value,
-                representative="MLX5_CQ_ERROR_SYNDROME_CQ_OVERRUN",
-                prefix="MLX5_CQ_ERROR_SYNDROME_",
-            )
-            if syndrome_value is not None
-            else None
+        syndrome_name = _enum_name(
+            prog,
+            syndrome_value,
+            representative="MLX5_CQ_ERROR_SYNDROME_CQ_OVERRUN",
+            prefix="MLX5_CQ_ERROR_SYNDROME_",
         )
         decoded["syndrome_name"] = (
             syndrome_name
@@ -222,12 +174,9 @@ def _decode_eqe(prog: Program, raw: bytes) -> Dict[str, Any]:
             else None
         )
         decoded["syndrome_display"] = _enum_label(
-            prog,
-            syndrome_value,
-            "MLX5_CQ_ERROR_SYNDROME_CQ_OVERRUN",
-            "MLX5_CQ_ERROR_SYNDROME_",
+            syndrome_value, syndrome_name
         )
-    elif event_name in {
+    elif event_name in (
         "PATH_MIG",
         "COMM_EST",
         "SQ_DRAINED",
@@ -238,7 +187,7 @@ def _decode_eqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         "SRQ_CATAS_ERROR",
         "SRQ_LAST_WQE",
         "SRQ_RQ_LIMIT",
-    }:
+    ):
         decoded["resource_type"] = _hex(_byte(raw, 52))
         decoded["resource_id"] = _read_be(raw, 56, 4)
     elif event_name == "PAGE_REQUEST":
@@ -270,10 +219,14 @@ def _decode_wqe(prog: Program, raw: bytes) -> Dict[str, Any]:
     )
     qpn = qpn_ds >> 8 if qpn_ds is not None else None
     ds = qpn_ds & 0x3F if qpn_ds is not None else None
+    opcode_name = _enum_name(
+        prog,
+        opcode,
+        representative="MLX5_OPCODE_NOP",
+        prefix="MLX5_OPCODE_",
+    )
     return {
-        "opcode_display": _enum_label(
-            prog, opcode, "MLX5_OPCODE_NOP", "MLX5_OPCODE_"
-        ),
+        "opcode_display": _enum_label(opcode, opcode_name),
         "wqe_index": wqe_index,
         "qpn": qpn,
         "ds": ds,

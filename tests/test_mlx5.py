@@ -10,7 +10,6 @@ from drgn import FaultError
 from drgn_tools import mlx5
 from drgn_tools.mlx5_support import selection
 from drgn_tools.mlx5_support.collect_device import DeviceRecord
-from drgn_tools.mlx5_support.render import _render_qps
 from tests.unittest_helpers import load_test_functions
 from tests.unittest_helpers import parametrize
 from tests.unittest_helpers import raises
@@ -47,7 +46,6 @@ class _FakeProgram:
         self._types = {}
         for enumerators in (
             (
-                ("MLX5_CQE_OWNER_MASK", 1),
                 ("MLX5_CQE_REQ", 0),
                 ("MLX5_CQE_RESP_WR_IMM", 1),
                 ("MLX5_CQE_RESP_SEND", 2),
@@ -98,13 +96,13 @@ def _args(**overrides):
         "dev netdev ip cqn eqn qpn sqn rqn maxqueues maxcq maxeq maxqp".split()
     )
     values.update(
-        {
-            name: False
-            for name in """
+        dict.fromkeys(
+            """
         summary full queues cqs ib_cqs eth_cqs eqs qps dump_cqe dump_eqe
         dump_wqe json
-        """.split()
-        },
+        """.split(),
+            False,
+        ),
         _full_report=False,
         qp_creators=[],
         maxcqe=mlx5.MAX_DEFAULT_DESCRIPTOR_ENTRIES,
@@ -127,8 +125,11 @@ def _mapping_collector(monkeypatch):
     )
     device = DeviceRecord(1)
     collector = mlx5.Mlx5Collector(_FAKE_PROG, _args())
+
     collector._collect_wq_summary = (
-        lambda wq: wq if isinstance(wq, dict) else {}
+        lambda wq, _kernel_backed=True: dict(wq)
+        if isinstance(wq, dict)
+        else {}
     )
     return collector, device
 
@@ -159,46 +160,194 @@ def _fake_qp(address=0x1000, hw_qpn=7, **overrides):
     return _FakeObject(**values)
 
 
-def _fake_ibdev(address, qp_list_address):
+def _fake_ibdev(qp_list_address):
     return _FakeObject(
-        address_=address,
         qp_list=_FakeObject(
             address_of_=lambda: _FakeObject(address_=qp_list_address)
         ),
     )
 
 
-def test_summary_qp_count_sums_canonical_ib_device_lists(monkeypatch):
-    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args(summary=True))
-    device = DeviceRecord(1)
-    collector._iter_mlx5_ib_devices = lambda _mdev: iter(
-        (_fake_ibdev(0x1000, 0x1100), _fake_ibdev(0x2000, 0x2200))
+def _fake_ib_wq(wqe_count, **values):
+    return _FakeAggregateObject(
+        address_=0x1000,
+        type_=_FakeObject(type_name=lambda: "struct mlx5_ib_wq"),
+        wqe_cnt=wqe_count,
+        wqe_shift=6,
+        offset=0,
+        **values,
     )
+
+
+def test_ib_wq_summary_uses_only_valid_queue_fields():
+    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args())
+    kernel = collector._collect_wq_summary(
+        _fake_ib_wq(
+            8,
+            head=7,
+            tail=3,
+            cur_post=2,
+            max_post=4,
+            last_poll=1,
+            cur_edge=0x2000,
+            fbc=_FakeObject(address_=0x3000, sz_m1=3, log_sz=2, log_stride=7),
+        )
+    )
+    user = collector._collect_wq_summary(_fake_ib_wq(8), False)
+    empty = collector._collect_wq_summary(_fake_ib_wq(0))
+    fields = itemgetter(
+        "size", "stride_bytes", "fbc", "head", "last_poll", "max_post"
+    )
+
+    assert fields(kernel) == (8, 64, "0x3000", 7, 1, 4)
+    assert fields(user) == (8, 64, None, None, None, None)
+    assert fields(empty) == (0, None, None, None, None, None)
+
+
+def test_summary_qp_count_uses_core_device_ibdev(monkeypatch):
+    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args(summary=True))
+    collector._ibdev_by_mdev[1] = _fake_ibdev(0x1100)
+    counted = []
     monkeypatch.setattr(
         mlx5,
         "list_count_nodes",
-        lambda head: {0x1100: 3, 0x2200: 4}[int(head)],
+        lambda head: counted.append(int(head)) or 3,
     )
 
-    assert collector._count_summary_qps(device) == 7
+    assert collector._count_summary_qps(DeviceRecord(1)) == 3
+    assert collector._count_summary_qps(DeviceRecord(2)) == 0
+    assert counted == [0x1100]
 
 
-def test_summary_qp_count_deduplicates_ib_device_addresses(monkeypatch):
+def test_summary_cq_count_uses_async_eq_table(monkeypatch):
     collector = mlx5.Mlx5Collector(_FAKE_PROG, _args(summary=True))
     device = DeviceRecord(1)
-    collector._iter_mlx5_ib_devices = lambda _mdev: iter(
-        (_fake_ibdev(0x1000, 0x1100), _fake_ibdev(0x1000, 0x1100))
+    tree = _FakeObject(address_=0x2000)
+    tree.address_of_ = lambda: tree
+    async_eq = _FakeObject(cq_table=_FakeObject(tree=tree))
+    device.mdev = _FakeObject(
+        priv=_FakeObject(
+            eq_table=_FakeObject(async_eq=_FakeObject(core=async_eq))
+        )
     )
-    counted_heads = []
+    collector._iter_eq_candidates = lambda _device: iter(
+        ((_FakeObject(), role) for role in ("cmd", "async", "pages"))
+    )
+    monkeypatch.setattr(
+        mlx5,
+        "radix_tree_for_each",
+        lambda head: iter(((7, object()), (9, object())))
+        if int(head) == 0x2000
+        else iter(()),
+    )
 
-    def count_nodes(head):
-        counted_heads.append(int(head))
-        return 3
+    assert collector._count_summary_eqs_and_cqs(device) == (3, 2)
 
-    monkeypatch.setattr(mlx5, "list_count_nodes", count_nodes)
 
-    assert collector._count_summary_qps(device) == 3
-    assert counted_heads == [0x1100]
+def test_eq_collection_caches_layout_metadata(monkeypatch):
+    type_calls = []
+    prog = _FakeObject(
+        type=lambda name: type_calls.append(name) or _FakeObject(size=64)
+    )
+    collector = mlx5.Mlx5Collector(prog, _args())
+    device = DeviceRecord(1)
+    member_checks = []
+    monkeypatch.setattr(
+        mlx5,
+        "has_member",
+        lambda obj, name: member_checks.append((obj, name))
+        or hasattr(obj, name),
+    )
+    monkeypatch.setattr(mlx5, "_irq_affinity_cpus", lambda _prog, _irqn: None)
+
+    def eq(eqn, cq_count):
+        return _FakeObject(
+            address_=0x1000 + eqn,
+            type_=_FakeObject(type_name=lambda: "struct mlx5_eq"),
+            eqn=eqn,
+            irqn=40 + eqn,
+            vecidx=eqn,
+            cons_index=0,
+            fbc=_FakeObject(sz_m1=7),
+            cq_count=cq_count,
+        )
+
+    records = [
+        collector._record_eq(eq(1, 3), device, "completion"),
+        collector._record_eq(eq(2, 4), device, "completion"),
+    ]
+
+    assert [record["cq_count"] for record in records] == [3, 4]
+    assert [record["eqe_size"] for record in records] == [64, 64]
+    assert len(member_checks) == 1
+    assert type_calls == ["struct mlx5_eqe"]
+
+
+def test_channel_linkage_aggregates_cqs_once(monkeypatch):
+    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args())
+    device = DeviceRecord(1)
+    eq = {
+        "device": "0x1",
+        "eqn": 7,
+        "irqn": 42,
+        "vector": 4,
+    }
+    collector._eqs[("0x1", 7)] = mlx5._EqEntry(eq, None)
+    cqs = [
+        {"device": "0x1", "cqn": cqn, "vector": 4, "irqn": 42}
+        for cqn in (10, 11)
+    ]
+    collector._cqs = {
+        ("0x1", cq["cqn"]): mlx5._RingEntry(cq, None) for cq in cqs
+    }
+    channel = {
+        "rx_rq": {"cq": cqs[0]},
+        "tx_sqs": [{"cq": cqs[1]}],
+        "vector": None,
+        "irqn": None,
+        "eqn": None,
+        "irq_desc": None,
+    }
+    device.netdevs = [{"channels": [channel]}]
+    irq_lookups = []
+    monkeypatch.setattr(
+        mlx5,
+        "irq_to_desc",
+        lambda _prog, irqn: irq_lookups.append(irqn)
+        or _FakeObject(address_=0x4200),
+    )
+
+    collector._link_cqs_eqs_and_channels([device])
+
+    assert (channel["vector"], channel["irqn"], channel["eqn"]) == (4, 42, 7)
+    assert channel["irq_desc"] == "0x4200"
+    assert irq_lookups == [42]
+
+
+def test_summary_qos_count_matches_bounded_channel_walk():
+    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args(summary=True))
+    collector._constant = lambda _name: 0
+    channel = _FakeObject(
+        num_tc=2,
+        rq=1,
+        sq=[1, 1],
+        qos_sqs=[1, None, 1, 1],
+        qos_sqs_size=3,
+        xdp=0,
+        xdpsq=_FakeObject(
+            type_=_FakeObject(kind=mlx5.TypeKind.POINTER), sqn=0
+        ),
+        state=[0],
+        icosq=1,
+        async_icosq=1,
+    )
+    channels = _FakeObject(num=1, c=[channel], ptp=None)
+    device = DeviceRecord(1)
+    device.netdevs = [{"_priv_obj": _FakeObject(channels=channels)}]
+
+    walked = list(collector._iter_channel_queues(channel))
+    assert len(walked) == 7
+    assert collector._count_summary_channels_and_queues(device) == (1, 7)
 
 
 def test_plain_summary_skips_placeholder_device_counts():
@@ -217,16 +366,17 @@ def test_plain_summary_skips_placeholder_device_counts():
     assert device.counts == {}
 
 
-def test_qp_registry_keeps_distinct_objects_with_the_same_logical_qpn(
-    monkeypatch,
-):
+def test_qp_registry_uses_object_addresses_and_qpn_aliases(monkeypatch):
     collector, device = _mapping_collector(monkeypatch)
     port_one = _fake_qp(0x1000, 198)
     port_two = _fake_qp(0x2000, 454)
 
-    collector._record_qp(port_one, device, "mlx5_ib_qp_list")
-    collector._record_qp(port_two, device, "mlx5_ib_qp_list")
+    record = collector._record_qp(port_one, device)
+    collector._record_qp(port_two, device)
 
+    assert record is collector._qps[0x1000].record
+    assert record["owner"] == "mlx5_ib_qp_list"
+    assert record["qpn_aliases"] == [1, 198]
     assert len(collector._qps) == 2
     assert {entry.record["qpn"] for entry in collector._qps.values()} == {1}
     assert {entry.record["hw_qpn"] for entry in collector._qps.values()} == {
@@ -235,22 +385,20 @@ def test_qp_registry_keeps_distinct_objects_with_the_same_logical_qpn(
     }
 
 
-def test_qp_registry_merges_sources_aliases_and_preserves_first_work_queue(
+def test_qpn_filter_skips_qp_detail_collection(monkeypatch):
+    collector, device = _mapping_collector(monkeypatch)
+    collector.args.qpn = 9
+    collector._qp_creator = lambda _qp: (_ for _ in ()).throw(
+        AssertionError("filtered QP details should not be read")
+    )
+
+    assert collector._record_qp(_fake_qp(), device) is None
+    assert not collector._qps
+
+
+def test_raw_packet_qp_progress_uses_canonical_embedded_work_queues(
     monkeypatch,
 ):
-    collector, device = _mapping_collector(monkeypatch)
-    first_sq = {"head": 4, "tail": 2}
-    first = collector._record_qp(_fake_qp(sq=first_sq), device, "qp_list")
-    merged = collector._record_qp(_fake_qp(), device, "qp_table", table_qpn=9)
-
-    entry = collector._qps[mlx5._QpKey("0x1", "address", 0x1000)]
-    assert first is merged is entry.record
-    assert entry.record["owners"] == ["qp_list", "qp_table"]
-    assert entry.record["qpn_aliases"] == [1, 7, 9]
-    assert entry.dump_wq is entry.sq_wq is first_sq
-
-
-def test_raw_packet_qp_progress_uses_nested_work_queues(monkeypatch):
     collector, device = _mapping_collector(monkeypatch)
     qp = _fake_qp(
         type=8,
@@ -262,93 +410,81 @@ def test_raw_packet_qp_progress_uses_nested_work_queues(monkeypatch):
         ),
     )
 
-    record = collector._record_qp(qp, device, "qp_list")
+    record = collector._record_qp(qp, device)
+    assert record is not None
 
-    assert (
-        record["sq_pc"],
-        record["sq_cc"],
-        record["rq_pc"],
-        record["rq_cc"],
-    ) == (11, 12, 13, 14)
-    assert (
-        record["sq_pc_source"],
-        record["sq_cc_source"],
-        record["rq_pc_source"],
-        record["rq_cc_source"],
-    ) == (
-        "qp.raw_packet_qp.sq.sq.head",
-        "qp.raw_packet_qp.sq.sq.tail",
-        "qp.raw_packet_qp.rq.rq.head",
-        "qp.raw_packet_qp.rq.rq.tail",
+    progress = "sq_pc sq_cc rq_pc rq_cc".split()
+    assert itemgetter(*progress)(record) == (1, 2, 3, 4)
+    assert itemgetter(*(f"{field}_source" for field in progress))(record) == (
+        "qp.sq.head",
+        "qp.sq.tail",
+        "qp.rq.head",
+        "qp.rq.tail",
     )
 
 
-def test_cq_registry_merges_metadata_and_preserves_first_work_queue(
-    monkeypatch,
-):
+def test_qp_wqe_dump_eligibility(monkeypatch):
+    collector, device = _mapping_collector(monkeypatch)
+    kernel_sq = {"head": 4, "tail": 2, "last_poll": 7, "size": 8}
+    qps = [
+        _fake_qp(address=0x1000, sq=kernel_sq),
+        _fake_qp(address=0x2000, sq={"size": 8}),
+        _fake_qp(address=0x3000, sq={"size": 0}, rq={"size": 8}),
+    ]
+    qps[1].ibqp.res.user = 1
+    for qp in qps:
+        collector._record_qp(qp, device)
+
+    entries = {
+        entry.record["address"]: entry for entry in collector._qps.values()
+    }
+    assert entries["0x1000"].sq_wq is kernel_sq
+    assert all(
+        entries[address].sq_wq is None for address in ("0x2000", "0x3000")
+    )
+    collector.args.qps = True
+    assert {record["address"] for record in collector._report_qps()} == set(
+        entries
+    )
+    assert collector._auto_wqe_qp_dump_keys() == [0x1000]
+
+    dump_arguments = {}
+    collector._dump_ring = lambda *_args, **kwargs: (
+        dump_arguments.update(kwargs) or []
+    )
+    monkeypatch.setattr(mlx5.dumps, "_wq_layout_summary", lambda _wq: {})
+
+    collector._dump_wqe_key(0x1000, 8)
+    assert dump_arguments["consumer_index"] == 7
+    assert [
+        collector._dump_wqe_key(address, 8)["status"]
+        for address in (0x2000, 0x3000)
+    ] == ["unavailable", "unavailable"]
+
+
+def test_cq_registry_stops_after_duplicate_cqn(monkeypatch):
     collector, device = _mapping_collector(monkeypatch)
     key = ("0x1", 7)
-    record = {"owner": "rq0", "owners": ["rq0"], "vector": None}
-    collector._cqs[key] = mlx5._RingEntry(record, None)
-    collector._mlx5e_cq_from_core_cq = lambda *_args: None
-    collector._mlx5_ib_cq_from_core_cq = lambda *_args: None
-    collector._mlx5_aso_cq_from_core_cq = lambda core, _device: core.aso
+    record = {"owner": "rq0", "owners": ["rq0"]}
     first_wq = object()
+    collector._cqs[key] = mlx5._RingEntry(record, first_wq)
+    core_cq = _FakeObject(cqn=7)
 
-    merged = collector._record_core_cq(
-        _FakeObject(
-            address_=0x1000,
-            cqn=7,
-            arm_sn=0,
-            cons_index=0,
-            vector=4,
-            irqn=0,
-            cqe_sz=64,
-            aso=_FakeObject(address_=0x2000, wq=first_wq),
-        ),
-        device,
-        "eq0",
-    )
-    collector._record_core_cq(
-        _FakeObject(
-            address_=0x1000,
-            cqn=7,
-            arm_sn=0,
-            cons_index=0,
-            vector=9,
-            irqn=0,
-            cqe_sz=64,
-            aso=_FakeObject(address_=0x2000, wq=object()),
-        ),
-        device,
-        "eq1",
-    )
+    merged = collector._record_core_cq(core_cq, device, "eq0", table_key=7)
+    collector._record_core_cq(core_cq, device, "eq1", table_key=7)
 
     entry = collector._cqs[key]
     assert merged is entry.record is record
     assert entry.wq is first_wq
     assert record["owners"] == ["rq0", "eq0", "eq1"]
-    assert record["vector"] == 4
+    assert record["owner"] == "rq0;eq0;eq1"
 
 
 def test_cli_report_modes_selectors_and_limits():
     parser = _parser()
     args = parser.parse_args(
-        [
-            "--full",
-            "--ib-cqs",
-            "--eth-cqs",
-            "--qp-creator",
-            "kernel",
-            "--qp-creator",
-            "user",
-            "--cqn",
-            "0x20",
-            "--max-cq",
-            "4",
-            "--max-cqe",
-            "8",
-        ]
+        "--full --ib-cqs --eth-cqs --qp-creator kernel "
+        "--qp-creator user --cqn 0x20 --max-cq 4 --max-cqe 8".split()
     )
 
     assert args.full and args.ib_cqs and args.eth_cqs
@@ -425,100 +561,55 @@ def test_automatic_wqe_queue_selection_is_scoped_to_device():
     )
 
 
-def test_cq_filters_match_only_requested_structure_families():
+@parametrize(
+    ("filters", "expected"),
+    (
+        ({}, [True, True, True]),
+        ({"ib_cqs": True}, [True, False, False]),
+        ({"eth_cqs": True}, [False, True, False]),
+        ({"ib_cqs": True, "eth_cqs": True}, [True, True, False]),
+    ),
+)
+def test_cq_filters_match_only_requested_structure_families(filters, expected):
     cqs = [
         {"address_struct": "struct mlx5_ib_cq"},
         {"address_struct": "struct mlx5e_cq"},
         {"address_struct": "struct mlx5_core_cq"},
     ]
 
-    assert all(selection._cq_matches_filter(cq, _args()) for cq in cqs)
     assert [
-        selection._cq_matches_filter(cq, _args(ib_cqs=True)) for cq in cqs
-    ] == [
-        True,
-        False,
-        False,
-    ]
-    assert [
-        selection._cq_matches_filter(cq, _args(eth_cqs=True)) for cq in cqs
-    ] == [
-        False,
-        True,
-        False,
-    ]
-    assert [
-        selection._cq_matches_filter(cq, _args(ib_cqs=True, eth_cqs=True))
-        for cq in cqs
-    ] == [
-        True,
-        True,
-        False,
-    ]
+        selection._cq_matches_filter(cq, _args(**filters)) for cq in cqs
+    ] == expected
 
 
 def test_qp_creator_filters():
-    qps = [
-        {"device": "mlx5_0", "qpn": 1, "creator_type": "kernel"},
-        {"device": "mlx5_0", "qpn": 2, "creator_type": "user"},
-        {"device": "mlx5_1", "qpn": 3, "creator_type": None},
-    ]
-
-    assert selection._qp_matches_filter(qps[0], _args(qp_creators=["kernel"]))
-    assert selection._qp_matches_filter(qps[1], _args(qp_creators=["user"]))
-    assert not selection._qp_matches_filter(
-        qps[2], _args(qp_creators=["kernel", "user"])
+    cases = (
+        ("kernel", ["kernel"]),
+        ("user", ["user"]),
+        (None, ["kernel", "user"]),
     )
+    assert [
+        selection._qp_matches_filter(
+            {"creator_type": creator}, _args(qp_creators=filters)
+        )
+        for creator, filters in cases
+    ] == [True, True, False]
 
 
 def test_balanced_limits_round_robin_and_fully_drain_uneven_buckets():
     rows = [
-        {"device": "mlx5_0", "id": 1},
-        {"device": "mlx5_0", "id": 2},
-        {"device": "mlx5_0", "id": 3},
-        {"device": "mlx5_1", "id": 4},
-        {"device": "mlx5_1", "id": 5},
-        {"device": "mlx5_2", "id": 6},
+        {"device": f"mlx5_{device}", "id": id_}
+        for id_, device in enumerate((0, 0, 0, 1, 1, 2), 1)
     ]
 
     bucket = itemgetter("device")
+    assert selection._limit_balanced(rows, None, bucket) is rows
     assert [
         row["id"] for row in selection._limit_balanced(rows, 4, bucket)
     ] == [1, 4, 6, 2]
     assert [
         row["id"] for row in selection._limit_balanced(rows, len(rows), bucket)
     ] == [1, 4, 6, 2, 5, 3]
-
-
-@parametrize(
-    "filter_args",
-    ({"qpn": 20}, {"qp_creators": ["kernel"]}),
-    ids=("qpn", "creator"),
-)
-def test_qp_filters_are_applied_before_row_limit(capsys, filter_args):
-    report = {
-        "devices": [],
-        "qps": [
-            {
-                "device": "mlx5_0",
-                "qpn": 10,
-                "address": "0x1111",
-                "creator_type": "user",
-            },
-            {
-                "device": "mlx5_0",
-                "qpn": 20,
-                "address": "0x2222",
-                "creator_type": "kernel",
-            },
-        ],
-    }
-
-    _render_qps(report, _args(qps=True, maxqp=1, **filter_args))
-    output = capsys.readouterr().out
-
-    assert "0x2222" in output
-    assert "0x1111" not in output
 
 
 def test_findings_are_classified_from_collected_values():
@@ -575,12 +666,6 @@ def test_decode_response_cqe_from_hardware_layout():
     }
 
 
-def test_ib_wq_wrid_lookup_does_not_truth_test_embedded_struct():
-    wq = _FakeAggregateObject(wqe_cnt=8, wrid=range(100, 108))
-
-    assert mlx5._mlx5_ib_wq_wrid_at_counter(wq, 10) == (102, 2)
-
-
 def test_gsi_wrid_lookup_skips_all_ones_sentinel():
     assert (
         mlx5._mlx5_ib_gsi_saved_wr_id(_FAKE_PROG, 0xFFFFFFFFFFFFFFFF) is None
@@ -613,14 +698,14 @@ def test_decode_request_and_error_cqe_fields():
     error[63] = 0xD1
     decoded_error = mlx5._decode_cqe(_FAKE_PROG, bytes(error))
 
-    assert decoded_request["opcode_display"] == "REQ(0x0)"
-    assert decoded_request["req_opcode_display"] == "SEND(0xa)"
-    assert decoded_request["qpn"] == 0x87
-    assert decoded_request["byte_count_display"] is None
-    assert decoded_error["opcode_display"] == "REQ_ERR(0xd)"
-    assert decoded_error["vendor_err_synd"] == "0x9"
-    assert decoded_error["syndrome"] == "0x7"
-    assert decoded_error["error_qpn"] == 0x123456
+    fields = itemgetter(
+        "opcode_display", "req_opcode_display", "qpn", "byte_count_display"
+    )
+    assert fields(decoded_request) == ("REQ(0x0)", "SEND(0xa)", 0x87, None)
+    fields = itemgetter(
+        "opcode_display", "vendor_err_synd", "syndrome", "error_qpn"
+    )
+    assert fields(decoded_error) == ("REQ_ERR(0xd)", "0x9", "0x7", 0x123456)
 
 
 def test_decode_completion_and_error_eqe_fields():
@@ -643,9 +728,11 @@ def test_decode_completion_and_error_eqe_fields():
         "cqn": 0x1234,
     }
     decoded_error = mlx5._decode_eqe(_FAKE_PROG, bytes(error))
-    assert decoded_error["type_display"] == "CQ_ERROR(0x4)"
-    assert decoded_error["cqn"] == 0x100
-    assert decoded_error["syndrome"] == "0xee"
+    assert itemgetter("type_display", "cqn", "syndrome")(decoded_error) == (
+        "CQ_ERROR(0x4)",
+        0x100,
+        "0xee",
+    )
 
 
 def test_decode_send_and_linked_receive_wqes():

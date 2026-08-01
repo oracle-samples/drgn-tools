@@ -22,7 +22,6 @@ from collections import OrderedDict
 from typing import Any
 from typing import Callable
 from typing import Dict
-from typing import Iterable
 from typing import Iterator
 from typing import List
 from typing import NamedTuple
@@ -69,7 +68,7 @@ _decode_rq_wqe = decode._decode_rq_wqe
 _decode_wqe = decode._decode_wqe
 _jsonable = formatting._jsonable
 
-_KeyT = TypeVar("_KeyT", bound=Tuple[Any, ...])
+_KeyT = TypeVar("_KeyT")
 
 
 class Mlx5(CorelensModule):
@@ -244,9 +243,6 @@ def _new_channel_record(
     channel: Object,
     index: Union[int, str],
     cpu: Optional[int] = None,
-    irq_desc: Optional[Object] = None,
-    irqn: Optional[int] = None,
-    vector: Optional[int] = None,
 ) -> Dict[str, Any]:
     napi = channel.napi
     return {
@@ -258,10 +254,10 @@ def _new_channel_record(
         "napi_state": formatting._hex(int(napi.state)),
         "napi_weight": int(napi.weight),
         "napi_poll_owner": int(napi.poll_owner),
-        "irq_desc": formatting._hex(int(irq_desc) if irq_desc else None),
-        "irqn": irqn,
+        "irq_desc": None,
+        "irqn": None,
         "eqn": None,
-        "vector": vector,
+        "vector": None,
         "tx_sqs": [],
         "xdp_sqs": [],
         "icosqs": [],
@@ -277,46 +273,17 @@ class _RingEntry(NamedTuple):
 
 
 class _EqEntry(NamedTuple):
-    """Report record plus EQ and WQ objects used by CQ/EQE walks."""
+    """Report record and EQ used by later CQ/EQE walks."""
 
     record: Dict[str, Any]
-    eq: Object
-    wq: Optional[Object]
+    core: Object
 
 
 class _QpEntry(NamedTuple):
-    """Report record plus queue objects used for WQE and WR-ID reads."""
+    """Report record plus the SQ used for WQE and WR-ID reads."""
 
     record: Dict[str, Any]
-    dump_wq: Optional[Object]
     sq_wq: Optional[Object]
-
-
-class _QpKey(NamedTuple):
-    """Stable internal identity for one mlx5 QP object."""
-
-    device: str
-    kind: str
-    value: int
-
-
-class _QpIdentity(NamedTuple):
-    """QP numbers and the key shared by summary and full collection."""
-
-    key: _QpKey
-    qpn: int
-    ib_qpn: int
-    hw_qpn: int
-    aliases: Tuple[int, ...]
-
-
-def _core_eq(eq: Object) -> Object:
-    type_name = eq.type_.type_name()
-    if type_name == "struct mlx5_eq":
-        return eq
-    if type_name == "struct mlx5_eq_async":
-        return eq.core
-    raise TypeError(f"unsupported mlx5 event queue type: {type_name}")
 
 
 class Mlx5Collector:
@@ -352,9 +319,20 @@ class Mlx5Collector:
         )
         self._cqs: Dict[Tuple[str, int], _RingEntry] = {}
         self._eqs: Dict[Tuple[str, int], _EqEntry] = {}
-        self._qps: Dict[_QpKey, _QpEntry] = {}
+        self._qps: Dict[int, _QpEntry] = {}
         self._mlx5e_queues: Dict[Tuple[str, str, int, str], _RingEntry] = {}
-        self._mlx5_ib_devices_cache: Optional[List[Object]] = None
+        self._ibdev_by_mdev: Dict[int, Object] = {}
+        self._qp_creators: Dict[Tuple[str, int], Dict[str, Any]] = {}
+        self._ib_cq_numbers: Dict[int, int] = {}
+        self._ib_qpt_driver: Optional[int] = None
+        self._qp_has_type: Optional[bool] = None
+        self._qp_has_is_rss: Optional[bool] = None
+        self._cq_event_names: Dict[int, Optional[str]] = {}
+        self._constants: Dict[str, Object] = {}
+        self._txq_state_type: Any = None
+        self._eq_table_has_xarray: Optional[bool] = None
+        self._eq_has_cq_count: Optional[bool] = None
+        self._eqe_size: Optional[int] = None
         self._wqe_warning_groups: "OrderedDict[Tuple[str, str, str], Dict[str, Any]]" = (
             OrderedDict()
         )
@@ -363,13 +341,27 @@ class Mlx5Collector:
         devices_by_key: Dict[str, DeviceRecord] = {}
         saw_netdev = False
 
-        mdevs = list(collect_device.for_each_mlx5_core_dev(self.prog))
-        for mdev in mdevs:
+        for mdev in collect_device.for_each_mlx5_core_dev(self.prog):
             if not mdev:
                 raise ValueError("mlx5 driver device has no mlx5_core_dev")
             mdev_addr = int(mdev)
             key = hex(mdev_addr)
-            devices_by_key[key] = DeviceRecord(mdev)
+            device = devices_by_key[key] = DeviceRecord(mdev)
+            ibdev = collect_device.mlx5_core_ib_device(mdev)
+            if ibdev:
+                ib_mdev = ibdev.mdev
+                if not ib_mdev:
+                    raise ValueError("mlx5_ib_dev.mdev is NULL")
+                if int(ib_mdev) != mdev_addr:
+                    raise ValueError(
+                        "mlx5_ib_dev.mdev does not match its core device"
+                    )
+                device.rdma_name = ibdev.ib_dev.name.string_().decode(
+                    "utf-8", "replace"
+                )
+                device.rdma_port = 1
+                device.rdma_ibdev = formatting._hex(int(ibdev))
+                self._ibdev_by_mdev[mdev_addr] = ibdev
 
             netdev = collect_device.mlx5_netdev(mdev)
             if not netdev:
@@ -387,7 +379,7 @@ class Mlx5Collector:
                 raise ValueError(
                     f"{name}: mlx5e_priv.mdev does not match its core device"
                 )
-            devices_by_key[key].netdevs.append(
+            device.netdevs.append(
                 {
                     "name": name,
                     "driver": netdev_ops,
@@ -399,13 +391,6 @@ class Mlx5Collector:
                     "_priv_obj": priv,
                 }
             )
-
-        for mdev in mdevs:
-            ib_device = collect_device.mlx5_core_ib_device(mdev)
-            if not ib_device:
-                continue
-            ibdev = container_of(ib_device, "struct mlx5_ib_dev", "ib_dev")
-            self._merge_mlx5_ib_device(devices_by_key, ibdev)
 
         if self.args.netdev:
             devices_by_key = {
@@ -427,135 +412,6 @@ class Mlx5Collector:
                 self._warn("no devices found in the mlx5 core drivers")
 
         return list(devices_by_key.values())
-
-    def _merge_mlx5_ib_device(
-        self,
-        devices: Dict[str, DeviceRecord],
-        ibdev: Object,
-        rdma_name: Optional[str] = None,
-    ) -> None:
-        mdev = ibdev.mdev
-        if not mdev:
-            raise ValueError("mlx5_ib_dev.mdev is NULL")
-        mdev_addr = int(mdev)
-        if rdma_name is None:
-            rdma_name = ibdev.ib_dev.name.string_().decode("utf-8", "replace")
-        for (
-            port_mdev_addr,
-            port_num,
-            _port_mdev,
-        ) in self._iter_mlx5_ib_mdev_ports(ibdev, mdev, mdev_addr):
-            key = hex(port_mdev_addr)
-            if key not in devices:
-                raise ValueError(
-                    f"RDMA port {port_num} refers to undiscovered "
-                    f"mlx5_core_dev {hex(port_mdev_addr)}"
-                )
-            self._attach_rdma_identity(
-                devices[key], ibdev, rdma_name, port_num
-            )
-
-    def _attach_rdma_identity(
-        self,
-        device: DeviceRecord,
-        ibdev: Object,
-        rdma_name: Optional[str],
-        rdma_port: Optional[int],
-    ) -> None:
-        if rdma_name and device.rdma_name is None:
-            device.rdma_name = rdma_name
-        if rdma_port is not None:
-            device.rdma_port = device.rdma_port or rdma_port
-        if device.rdma_ibdev is None:
-            device.rdma_ibdev = formatting._hex(int(ibdev))
-
-    def _iter_mlx5_ib_mdev_ports(
-        self, ibdev: Object, primary_mdev: Object, primary_mdev_addr: int
-    ) -> Iterator[Tuple[int, Optional[int], Object]]:
-        seen: Set[int] = set()
-        for (
-            port_mdev_addr,
-            port_num,
-            port_mdev,
-        ) in self._iter_mlx5_ib_port_mdevs(ibdev):
-            if port_mdev_addr in seen:
-                continue
-            seen.add(port_mdev_addr)
-            yield port_mdev_addr, port_num, port_mdev
-        if primary_mdev_addr not in seen:
-            yield primary_mdev_addr, 1, primary_mdev
-
-    def _iter_mlx5_ib_port_mdevs(
-        self, ibdev: Object
-    ) -> Iterator[Tuple[int, int, Object]]:
-        ports = ibdev.port
-        num_ports = int(ibdev.num_ports)
-        for index in range(max(0, min(num_ports, defs.MAX_MLX5_IB_PORTS))):
-            mpi = ports[index].mp.mpi
-            if not mpi:
-                continue
-            port_mdev = mpi.mdev
-            if port_mdev:
-                yield int(port_mdev), index + 1, port_mdev
-
-    def _iter_mlx5_ib_devices(self, mdev_addr: int) -> Iterator[Object]:
-        for ibdev in self._iter_all_mlx5_ib_devices():
-            if int(ibdev.mdev) == mdev_addr:
-                yield ibdev
-
-    def _iter_mlx5_ib_devices_for_fw(self, mdev: Object) -> Iterator[Object]:
-        """Yield direct, multiport, then GUID-matched mlx5 IB devices."""
-
-        mdev_addr = int(mdev)
-        target_guid = int(mdev.sys_image_guid)
-        target_type = int(mdev.coredev_type)
-        direct: List[Object] = []
-        multiport: List[Object] = []
-        guid_match: List[Object] = []
-        for ibdev in self._iter_all_mlx5_ib_devices():
-            ib_mdev = ibdev.mdev
-            if int(ib_mdev) == mdev_addr:
-                direct.append(ibdev)
-                continue
-            if any(
-                port_mdev_addr == mdev_addr
-                for port_mdev_addr, _port_num, _port_mdev in self._iter_mlx5_ib_port_mdevs(
-                    ibdev
-                )
-            ):
-                multiport.append(ibdev)
-                continue
-            if target_guid == 0:
-                continue
-            ib_guid = int(ibdev.sys_image_guid)
-            ib_type = int(ib_mdev.coredev_type)
-            if ib_guid != target_guid:
-                continue
-            if ib_type != target_type:
-                continue
-            guid_match.append(ibdev)
-        yield from direct
-        yield from multiport
-        yield from guid_match
-
-    def _iter_all_mlx5_ib_devices(self) -> Iterator[Object]:
-        if self._mlx5_ib_devices_cache is not None:
-            yield from self._mlx5_ib_devices_cache
-            return
-
-        collected: List[Object] = []
-        for mdev in collect_device.for_each_mlx5_core_dev(self.prog):
-            ib_device = collect_device.mlx5_core_ib_device(mdev)
-            if ib_device:
-                collected.append(
-                    container_of(
-                        ib_device,
-                        "struct mlx5_ib_dev",
-                        "ib_dev",
-                    )
-                )
-        self._mlx5_ib_devices_cache = collected
-        yield from collected
 
     def _filter_devices(
         self, devices: List[DeviceRecord]
@@ -599,44 +455,11 @@ class Mlx5Collector:
                 )
                 netdev["channels_collected"] = True
 
-        if not self._summary_counts_only:
-            device.counts = self._device_counts(device)
-
-    def _device_counts(self, device: DeviceRecord) -> Dict[str, Optional[int]]:
-        netdevs = device.netdevs
-        channels = [
-            channel
-            for netdev in netdevs
-            for channel in netdev.get("channels", [])
-        ]
-        channels_collected = all(
-            netdev.get("channels_collected", False) for netdev in netdevs
-        )
-        channel_count = len(channels) if channels_collected else None
-        queue_count = (
-            sum(
-                1
-                for channel in channels
-                for _ in selection._channel_queues(channel)
-            )
-            if channels_collected
-            else None
-        )
-        counts: Dict[str, Optional[int]] = {
-            "netdevs": len(netdevs),
-            "channels": channel_count,
-            "queues": queue_count,
-            "tx_sqs": None
-            if channel_count is None
-            else sum(len(channel.get("tx_sqs", [])) for channel in channels),
-            "rx_rqs": None
-            if channel_count is None
-            else sum(bool(channel.get("rx_rq")) for channel in channels),
-            "xdp_sqs": None
-            if channel_count is None
-            else sum(len(channel.get("xdp_sqs", [])) for channel in channels),
+    def _set_device_counts(self, devices: Sequence[DeviceRecord]) -> None:
+        object_counts: Dict[str, Dict[str, int]] = {
+            device.mdev_address: {"cqs": 0, "eqs": 0, "qps": 0}
+            for device in devices
         }
-        device_name = device.mdev_address
         for count_name, wanted, records in (
             (
                 "cqs",
@@ -654,12 +477,54 @@ class Mlx5Collector:
                 (entry.record for entry in self._qps.values()),
             ),
         ):
-            counts[count_name] = (
-                sum(record.get("device") == device_name for record in records)
-                if wanted
-                else None
+            if not wanted:
+                continue
+            for record in records:
+                device_name = record.get("device")
+                counts = (
+                    object_counts.get(device_name)
+                    if device_name is not None
+                    else None
+                )
+                if counts is not None:
+                    counts[count_name] += 1
+
+        for device in devices:
+            netdevs = device.netdevs
+            channels_collected = all(
+                netdev.get("channels_collected", False) for netdev in netdevs
             )
-        return counts
+            channel_count = queue_count = 0
+            tx_sqs = rx_rqs = xdp_sqs = 0
+            if channels_collected:
+                for netdev in netdevs:
+                    for channel in netdev.get("channels", []):
+                        tx_count = len(channel.get("tx_sqs", []))
+                        xdp_count = len(channel.get("xdp_sqs", []))
+                        rx_count = bool(channel.get("rx_rq"))
+                        channel_count += 1
+                        queue_count += (
+                            tx_count
+                            + xdp_count
+                            + rx_count
+                            + len(channel.get("xsk_rqs", []))
+                            + len(channel.get("icosqs", []))
+                        )
+                        tx_sqs += tx_count
+                        rx_rqs += rx_count
+                        xdp_sqs += xdp_count
+            device_counts = object_counts[device.mdev_address]
+            device.counts = {
+                "netdevs": len(netdevs),
+                "channels": channel_count if channels_collected else None,
+                "queues": queue_count if channels_collected else None,
+                "tx_sqs": tx_sqs if channels_collected else None,
+                "rx_rqs": rx_rqs if channels_collected else None,
+                "xdp_sqs": xdp_sqs if channels_collected else None,
+                "cqs": device_counts["cqs"] if self._want_cqs else None,
+                "eqs": device_counts["eqs"] if self._want_eqs else None,
+                "qps": device_counts["qps"] if self._want_qps else None,
+            }
 
     def _collect_core_summary(
         self, mdev: Object, device: DeviceRecord
@@ -692,31 +557,13 @@ class Mlx5Collector:
         }
 
     def _collect_fw_version(self, mdev: Object) -> str:
-        for ibdev in self._iter_mlx5_ib_devices_for_fw(mdev):
+        ibdev = self._ibdev_by_mdev.get(int(mdev))
+        if ibdev is not None:
             fw_ver = formatting._format_ib_fw_ver(
                 int(ibdev.ib_dev.attrs.fw_ver)
             )
             if fw_ver is not None:
                 return fw_ver
-        # Upstream fw_rev_maj/min/sub helpers read MMIO through iseg, which is
-        # often unavailable in a vmcore. Some kernels cache these fields; use
-        # them only when the complete version tuple is present.
-        if has_member(mdev, "fw_rev_maj"):
-            fw_ver = formatting._format_fw_revision(
-                int(mdev.fw_rev_maj),
-                int(mdev.fw_rev_min),
-                int(mdev.fw_rev_sub),
-            )
-        elif has_member(mdev.priv, "fw_rev_maj"):
-            fw_ver = formatting._format_fw_revision(
-                int(mdev.priv.fw_rev_maj),
-                int(mdev.priv.fw_rev_min),
-                int(mdev.priv.fw_rev_sub),
-            )
-        else:
-            fw_ver = None
-        if fw_ver is not None:
-            return fw_ver
 
         iseg = mdev.iseg
         if not iseg:
@@ -760,11 +607,7 @@ class Mlx5Collector:
             "embedded_cpu": int(mdev.caps.embedded_cpu),
             "roce_en": int(mdev.roce.roce_en),
             "sriov_max_vfs": int(sriov.max_vfs),
-            "sriov_enabled_vfs": int(
-                sriov.enabled_vfs
-                if has_member(sriov, "enabled_vfs")
-                else sriov.num_vfs
-            ),
+            "sriov_enabled_vfs": int(sriov.num_vfs),
         }
 
     def collect(self) -> Dict[str, Any]:
@@ -784,30 +627,11 @@ class Mlx5Collector:
                 if self._want_cqs:
                     self._collect_cqs_from_eq_tables(device)
                 if self._want_qps:
-                    for qp, source, table_qpn in self._iter_qps_from_device(
-                        device
-                    ):
-                        identity = _qp_identity(
-                            qp, device.mdev_address, table_qpn
-                        )
-                        record = self._record_qp(
-                            qp,
-                            device,
-                            source,
-                            table_qpn=table_qpn,
-                            identity=identity,
-                        )
-                        if (
-                            self.args.qpn is not None
-                            and not selection._qp_record_matches_qpn(
-                                record, self.args.qpn
-                            )
-                        ):
-                            self._qps.pop(identity.key, None)
+                    for qp in self._iter_qps_from_device(device):
+                        self._record_qp(qp, device)
 
             self._link_cqs_eqs_and_channels(devices)
-            for device in devices:
-                device.counts = self._device_counts(device)
+            self._set_device_counts(devices)
 
         dump_reports = self._collect_requested_dumps()
         self._flush_wqe_warning_groups()
@@ -862,10 +686,8 @@ class Mlx5Collector:
     def _collect_summary_counts(self, device: DeviceRecord) -> None:
         """Collect counts without building detailed records."""
 
-        channels, queues, queue_cqns = self._count_summary_channels_and_queues(
-            device
-        )
-        eqs, cqs = self._count_summary_eqs_and_cqs(device, queue_cqns)
+        channels, queues = self._count_summary_channels_and_queues(device)
+        eqs, cqs = self._count_summary_eqs_and_cqs(device)
         device.counts.update(
             {
                 "netdevs": len(device.netdevs),
@@ -882,38 +704,54 @@ class Mlx5Collector:
 
     # Channels, Ethernet queues, and their CQs
 
+    def _constant(self, name: str) -> Object:
+        constant = self._constants.get(name)
+        if constant is None:
+            constant = self.prog.constant(name)
+            self._constants[name] = constant
+        return constant
+
     def _count_summary_channels_and_queues(
         self,
         device: DeviceRecord,
-    ) -> Tuple[Optional[int], Optional[int], Set[int]]:
+    ) -> Tuple[int, int]:
         channel_total = 0
         queue_total = 0
-        cqns: Set[int] = set()
+        xsk_bit = int(self._constant("MLX5E_CHANNEL_STATE_XSK"))
         for netdev in device.netdevs:
-            priv = netdev.get("_priv_obj")
-            if priv is None:
-                return None, None, cqns
+            priv = netdev["_priv_obj"]
             channels_obj, count, channel_array = self._channel_layout(priv)
             for index in range(count):
                 channel = channel_array[index]
                 if not channel:
                     continue
                 channel_total += 1
-                for (
-                    _field,
-                    queue,
-                    _kind,
-                    _role,
-                    _tc,
-                ) in self._iter_channel_queues(channel):
+                queue_total += 3 + max(
+                    0, min(int(channel.num_tc), defs.MAX_TC)
+                )
+                qos_sqs = channel.qos_sqs
+                if qos_sqs:
+                    qos_sqs_size = min(
+                        max(int(channel.qos_sqs_size), 0), defs.MAX_QOS_SQS
+                    )
+                    queue_total += sum(
+                        bool(qos_sqs[index]) for index in range(qos_sqs_size)
+                    )
+                if int(channel.xdp):
                     queue_total += 1
-                    self._add_summary_queue_cqn(queue, cqns)
+                xdpsq = channel.xdpsq
+                if (xdpsq.type_.kind != TypeKind.POINTER or xdpsq) and int(
+                    xdpsq.sqn
+                ):
+                    queue_total += 1
+                if int(channel.state[0]) & (1 << xsk_bit):
+                    queue_total += 2
 
-            ptp_queues = self._count_summary_ptp_queues(channels_obj, cqns)
+            ptp_queues = self._count_summary_ptp_queues(channels_obj)
             if ptp_queues:
                 channel_total += 1
                 queue_total += ptp_queues
-        return channel_total, queue_total, cqns
+        return channel_total, queue_total
 
     def _channel_layout(
         self,
@@ -947,7 +785,7 @@ class Mlx5Collector:
         if (xdpsq.type_.kind != TypeKind.POINTER or xdpsq) and int(xdpsq.sqn):
             yield "xdp_sqs", xdpsq, "xdpsq", "xdp", None
 
-        xsk_bit = int(self.prog.constant("MLX5E_CHANNEL_STATE_XSK"))
+        xsk_bit = int(self._constant("MLX5E_CHANNEL_STATE_XSK"))
         if int(channel.state[0]) & (1 << xsk_bit):
             yield "xsk_rqs", channel.xskrq, "xskrq", "rx", None
             yield "xdp_sqs", channel.xsksq, "xsksq", "xdp", None
@@ -961,55 +799,43 @@ class Mlx5Collector:
             None,
         )
 
-    def _count_summary_ptp_queues(
-        self, channels_obj: Object, cqns: Set[int]
-    ) -> int:
-        ptp, _state = self._ptp_object(channels_obj)
+    def _count_summary_ptp_queues(self, channels_obj: Object) -> int:
+        ptp, state = self._ptp_object(channels_obj)
         if ptp is None:
             return 0
         count = 0
-        rx_bit = int(self.prog.constant("MLX5E_PTP_STATE_RX"))
-        if int(ptp.state[0]) & (1 << rx_bit):
-            rq = ptp.rq
+        rx_bit = int(self._constant("MLX5E_PTP_STATE_RX"))
+        if state & (1 << rx_bit):
             count += 1
-            self._add_summary_queue_cqn(rq, cqns)
-        for _tc, ptpsq in self._iter_ptp_sqs(ptp):
-            count += 1
-            self._add_summary_queue_cqn(ptpsq.txqsq, cqns)
-            cqns.add(int(ptpsq.ts_cq.mcq.cqn))
+        tx_bit = int(self._constant("MLX5E_PTP_STATE_TX"))
+        if state & (1 << tx_bit):
+            count += max(0, min(int(ptp.num_tc), defs.MAX_TC))
         return count
 
     def _ptp_object(
         self, channels_obj: Object
-    ) -> Tuple[Optional[Object], Optional[int]]:
+    ) -> Tuple[Optional[Object], int]:
         ptp = channels_obj.ptp
         if not ptp:
-            return None, None
+            return None, 0
         state = int(ptp.state[0])
         return (None, state) if state == 0 else (ptp, state)
 
-    def _iter_ptp_sqs(self, ptp: Object) -> Iterator[Tuple[int, Object]]:
-        tx_bit = int(self.prog.constant("MLX5E_PTP_STATE_TX"))
-        if not int(ptp.state[0]) & (1 << tx_bit):
+    def _iter_ptp_sqs(
+        self, ptp: Object, state: int
+    ) -> Iterator[Tuple[int, Object]]:
+        tx_bit = int(self._constant("MLX5E_PTP_STATE_TX"))
+        if not state & (1 << tx_bit):
             return
         for tc in range(min(int(ptp.num_tc), defs.MAX_TC)):
             yield tc, ptp.ptpsq[tc]
-
-    def _add_summary_queue_cqn(self, queue: Object, cqns: Set[int]) -> None:
-        cqns.add(int(queue.cq.mcq.cqn))
 
     def _collect_channels(
         self,
         device: DeviceRecord,
         netdev_record: Dict[str, Any],
-        priv: Optional[Object],
+        priv: Object,
     ) -> List[Dict[str, Any]]:
-        if priv is None:
-            self._warn(
-                f"{netdev_record.get('name')}: mlx5e_priv unavailable; "
-                "queue walk skipped"
-            )
-            return []
         channels, channel_count, channel_array = self._channel_layout(priv)
 
         result = []
@@ -1041,8 +867,8 @@ class Mlx5Collector:
         record = _new_channel_record(ptp, "ptp")
         record.update({"ptp": True, "state": formatting._hex(state)})
 
-        rx_bit = int(self.prog.constant("MLX5E_PTP_STATE_RX"))
-        if int(ptp.state[0]) & (1 << rx_bit):
+        rx_bit = int(self._constant("MLX5E_PTP_STATE_RX"))
+        if state & (1 << rx_bit):
             record["rx_rq"] = self._collect_queue(
                 device,
                 netdev_record,
@@ -1052,7 +878,7 @@ class Mlx5Collector:
                 role="rx",
             )
 
-        for tc, ptpsq in self._iter_ptp_sqs(ptp):
+        for tc, ptpsq in self._iter_ptp_sqs(ptp, state):
             record["tx_sqs"].append(
                 self._collect_queue(
                     device,
@@ -1090,19 +916,7 @@ class Mlx5Collector:
     ) -> Dict[str, Any]:
         channel_index = int(channel.ix)
         cpu = int(channel.cpu)
-        mcq = channel.icosq.cq.mcq
-        irqn = int(mcq.irqn)
-        vector = int(mcq.vector)
-        irq_desc = irq_to_desc(self.prog, irqn)
-
-        record = _new_channel_record(
-            channel,
-            channel_index,
-            cpu=cpu,
-            irq_desc=irq_desc,
-            irqn=irqn,
-            vector=vector,
-        )
+        record = _new_channel_record(channel, channel_index, cpu=cpu)
 
         for (
             report_field,
@@ -1137,12 +951,14 @@ class Mlx5Collector:
         role: str,
         tc: Optional[int] = None,
     ) -> Dict[str, Any]:
-        qn = _queue_number(queue_obj, kind)
+        is_rq = kind in ("rq", "xskrq", "ptp_rq")
+        number_field = "rqn" if is_rq else "sqn"
+        qn = int(queue_obj.member_(number_field))
         device_name = device.mdev_address
         netdev_name = netdev_record["name"]
         state = int(queue_obj.state)
-        wq, wq_source = self._queue_wq(queue_obj, kind)
-        if kind in ("rq", "xskrq", "ptp_rq"):
+        wq, wq_source = self._queue_wq(queue_obj, is_rq)
+        if is_rq:
             progress = _rq_progress_detail(wq, wq_source)
         else:
             pc = int(queue_obj.pc)
@@ -1168,15 +984,13 @@ class Mlx5Collector:
         }
         cq_record = self._collect_mlx5e_cq(cq, owner)
 
-        txq = queue_obj.txq if has_member(queue_obj, "txq") else None
+        txq = queue_obj.txq if kind in ("sq", "qos_sq", "ptp_sq") else None
         txq_state = int(txq.state) if txq else None
-        state_prefix = (
-            "MLX5E_RQ_STATE_"
-            if kind in ("rq", "xskrq", "ptp_rq")
-            else "MLX5E_SQ_STATE_"
-        )
-        state_type = self.prog.constant(state_prefix + "ENABLED").type_
-        txq_state_type = self.prog.type("enum netdev_queue_state_t")
+        state_prefix = "MLX5E_RQ_STATE_" if is_rq else "MLX5E_SQ_STATE_"
+        enabled_bit = self._constant(state_prefix + "ENABLED")
+        recovering_bit = self._constant(state_prefix + "RECOVERING")
+        if self._txq_state_type is None:
+            self._txq_state_type = self.prog.type("enum netdev_queue_state_t")
 
         record = {
             "kind": kind,
@@ -1188,85 +1002,110 @@ class Mlx5Collector:
             "channel": channel_index,
             "address": formatting._hex(int(queue_obj.address_of_())),
             "number": qn,
-            "number_source": (
-                "queue.rqn"
-                if kind in ("rq", "xskrq", "ptp_rq")
-                else "queue.sqn"
-            ),
+            "number_source": f"queue.{number_field}",
             **progress,
             "state": formatting._hex(state),
             "state_flags": formatting._enum_flags(
-                state, state_type, state_prefix
+                state, enabled_bit.type_, state_prefix
             ),
-            "enabled": _bit_is_set(
-                state,
-                int(self.prog.constant(state_prefix + "ENABLED")),
-            ),
-            "recovering": _bit_is_set(
-                state,
-                int(self.prog.constant(state_prefix + "RECOVERING")),
-            ),
+            "enabled": bool(state & (1 << int(enabled_bit))),
+            "recovering": bool(state & (1 << int(recovering_bit))),
             "txq": formatting._hex(int(txq) if txq else None),
             "txq_state": formatting._hex(txq_state),
             "txq_state_flags": formatting._enum_flags(
-                txq_state, txq_state_type, "__QUEUE_STATE_"
+                txq_state, self._txq_state_type, "__QUEUE_STATE_"
             ),
             "txq_stopped": bool(txq_state) if txq_state is not None else None,
             "wq": self._collect_wq_summary(wq),
             "cq": cq_record,
         }
-        if qn is not None:
-            selector = "rqn" if kind in ("rq", "xskrq", "ptp_rq") else "sqn"
-            key = (str(device_name), selector, qn, record["owner"])
-            self._mlx5e_queues[key] = _RingEntry(record, wq)
+        key = (str(device_name), number_field, qn, record["owner"])
+        self._mlx5e_queues[key] = _RingEntry(record, wq)
         return record
 
-    def _queue_wq(self, queue_obj: Object, kind: str) -> Tuple[Object, str]:
-        if kind not in ("rq", "xskrq", "ptp_rq"):
+    def _queue_wq(self, queue_obj: Object, is_rq: bool) -> Tuple[Object, str]:
+        if not is_rq:
             return queue_obj.wq, "queue.wq"
-        linked = int(
-            self.prog.constant("MLX5_WQ_TYPE_LINKED_LIST_STRIDING_RQ")
-        )
+        linked = int(self._constant("MLX5_WQ_TYPE_LINKED_LIST_STRIDING_RQ"))
         if int(queue_obj.wq_type) == linked:
             return queue_obj.mpwqe.wq, "rq.mpwqe.wq"
         return queue_obj.wqe.wq, "rq.wqe.wq"
 
-    def _collect_wq_summary(self, wq: Optional[Object]) -> Dict[str, Any]:
+    def _collect_wq_summary(
+        self, wq: Optional[Object], kernel_backed: bool = True
+    ) -> Dict[str, Any]:
         if wq is None:
             return {"status": "unavailable"}
         type_name = wq.type_.type_name()
-        supported_types = {
+        supported_types = (
             "struct mlx5_cqwq",
-            "struct mlx5_frag_buf_ctrl",
+            "struct mlx5_ib_cq_buf",
             "struct mlx5_ib_wq",
             "struct mlx5_wq_cyc",
             "struct mlx5_wq_ll",
-        }
+        )
         if type_name not in supported_types:
             raise TypeError(f"unsupported mlx5 work queue type: {type_name}")
 
-        direct_fbc = type_name == "struct mlx5_frag_buf_ctrl"
-        fbc = wq if direct_fbc else wq.fbc
-        field_source = "wq" if direct_fbc else "wq.fbc"
-        sz_m1 = int(fbc.sz_m1)
-        log_sz = int(fbc.log_sz)
-        log_stride = int(fbc.log_stride)
+        ib_wq = type_name == "struct mlx5_ib_wq"
+        ib_cq_buf = type_name == "struct mlx5_ib_cq_buf"
+        size: Optional[int]
+        size_source: Optional[str]
+        sz_m1: Optional[int]
+        log_sz: Optional[int]
+        log_stride: Optional[int]
+        stride_bytes: Optional[int]
+        stride_source: Optional[str]
+        if ib_wq:
+            wqe_count = int(wq.wqe_cnt)
+            wqe_shift: Optional[int] = None
+            if wqe_count > 0:
+                raw_wqe_shift = int(wq.wqe_shift)
+                if 0 <= raw_wqe_shift < 32:
+                    wqe_shift = raw_wqe_shift
+            size = wqe_count
+            size_source = "wq.wqe_cnt"
+            sz_m1 = log_sz = log_stride = None
+            stride_bytes = 1 << wqe_shift if wqe_shift is not None else None
+            stride_source = "wq.wqe_shift" if wqe_shift is not None else None
+            fbc = None
+            if kernel_backed and wqe_count > 0:
+                fbc = wq.fbc
+                sz_m1 = int(fbc.sz_m1)
+                log_sz = int(fbc.log_sz)
+                log_stride = int(fbc.log_stride)
+        else:
+            fbc = wq.fbc
+            field_source = "wq.fbc"
+            sz_m1 = int(fbc.sz_m1)
+            log_sz = int(fbc.log_sz)
+            log_stride = int(fbc.log_stride)
+            if ib_cq_buf:
+                size = int(wq.nent)
+                size_source = "wq.nent"
+                stride_bytes = int(wq.cqe_size)
+                stride_source = "wq.cqe_size"
+            else:
+                size = sz_m1 + 1
+                size_source = f"{field_source}.sz_m1"
+                stride_bytes = 1 << log_stride
+                stride_source = f"{field_source}.log_stride"
         summary = {
             "address": formatting._hex(int(wq.address_)),
-            "size": None if direct_fbc else sz_m1 + 1,
-            "size_source": (None if direct_fbc else f"{field_source}.sz_m1"),
+            "size": size,
+            "size_source": size_source,
             "sz_m1": sz_m1,
             "log_sz": log_sz,
             "log_stride": log_stride,
-            "stride_bytes": 1 << log_stride,
-            "stride_source": f"{field_source}.log_stride",
+            "stride_bytes": stride_bytes,
+            "stride_source": stride_source,
             "pc": None,
             "cc": None,
             "head": None,
             "wqe_counter": None,
             "cur_size": None,
             "db": None,
-            "fbc": formatting._hex(None if direct_fbc else int(fbc.address_)),
+            "fbc": formatting._hex(None if fbc is None else int(fbc.address_)),
         }
         if type_name in (
             "struct mlx5_cqwq",
@@ -1281,20 +1120,31 @@ class Mlx5Collector:
             summary["cur_size"] = int(wq.cur_sz)
             if type_name == "struct mlx5_wq_ll":
                 summary["head"] = int(wq.head)
-        elif type_name == "struct mlx5_ib_wq":
+        elif ib_wq:
             summary.update(
                 {
-                    "head": int(wq.head),
-                    "tail": int(wq.tail),
-                    "wqe_count": int(wq.wqe_cnt),
-                    "cur_post": int(wq.cur_post),
-                    "max_post": int(wq.max_post),
-                    "last_poll": int(wq.last_poll),
+                    "tail": None,
+                    "wqe_count": wqe_count,
+                    "cur_post": None,
+                    "max_post": int(wq.max_post)
+                    if kernel_backed and wqe_count > 0
+                    else None,
+                    "last_poll": None,
                     "offset": int(wq.offset),
-                    "wqe_shift": int(wq.wqe_shift),
-                    "cur_edge": formatting._hex(int(wq.cur_edge)),
+                    "wqe_shift": wqe_shift,
+                    "cur_edge": None,
                 }
             )
+            if kernel_backed and wqe_count > 0:
+                summary.update(
+                    {
+                        "head": int(wq.head),
+                        "tail": int(wq.tail),
+                        "cur_post": int(wq.cur_post),
+                        "last_poll": int(wq.last_poll),
+                        "cur_edge": formatting._hex(int(wq.cur_edge)),
+                    }
+                )
         return summary
 
     def _collect_mlx5e_cq(
@@ -1353,46 +1203,34 @@ class Mlx5Collector:
     def _count_summary_eqs_and_cqs(
         self,
         device: DeviceRecord,
-        queue_cqns: Set[int],
-    ) -> Tuple[Optional[int], Optional[int]]:
-        eqs: Dict[Tuple[str, int], Object] = {}
-        for eq, _role, _meta, _vector, _source in self._iter_eq_candidates(
-            device
-        ):
-            core = _core_eq(eq)
-            eqs.setdefault(("eqn", int(core.eqn)), core)
-
-        cqns = set(queue_cqns)
-        cq_table_seen = False
-        for eq in eqs.values():
-            cq_table_seen = True
-            for cq_key, _cq in radix_tree_for_each(
-                eq.cq_table.tree.address_of_()
-            ):
-                cqns.add(int(cq_key))
-        return len(eqs), (len(cqns) if cq_table_seen or cqns else None)
+    ) -> Tuple[int, int]:
+        eq_count = sum(1 for _core, _role in self._iter_eq_candidates(device))
+        async_eq = device.mdev.priv.eq_table.async_eq.core
+        cq_count = sum(
+            1
+            for _key, _cq in radix_tree_for_each(
+                async_eq.cq_table.tree.address_of_()
+            )
+        )
+        return eq_count, cq_count
 
     def _iter_eq_candidates(
         self, device: DeviceRecord
-    ) -> Iterator[Tuple[Object, str, Optional[Object], Optional[int], str]]:
+    ) -> Iterator[Tuple[Object, str]]:
         eq_table = device.mdev.priv.eq_table
         for field, role in (
             ("cmd_eq", "cmd"),
             ("async_eq", "async"),
             ("pages_eq", "pages"),
         ):
-            yield getattr(eq_table, field), role, None, None, "direct"
+            yield getattr(eq_table, field).core, role
 
-        if has_member(eq_table, "comp_eqs"):
-            for vector, entry in xa_for_each(eq_table.comp_eqs):
+        if self._eq_table_has_xarray is None:
+            self._eq_table_has_xarray = has_member(eq_table, "comp_eqs")
+        if self._eq_table_has_xarray:
+            for _vector, entry in xa_for_each(eq_table.comp_eqs):
                 eq_comp = cast("struct mlx5_eq_comp *", entry)
-                yield (
-                    eq_comp.core,
-                    "completion",
-                    eq_comp,
-                    int(vector),
-                    "xarray",
-                )
+                yield eq_comp.core, "completion"
             return
 
         objects = list_for_each_entry(
@@ -1401,32 +1239,31 @@ class Mlx5Collector:
             "list",
         )
         for eq_comp in objects:
-            yield eq_comp.core, "completion", eq_comp, None, "list"
+            yield eq_comp.core, "completion"
 
     def _collect_eqs_from_device(self, device: DeviceRecord) -> None:
-        for eq, role, meta, vector, source in self._iter_eq_candidates(device):
-            record = self._record_eq(eq, device, role)
-            if source == "xarray":
-                record["vector"] = vector
-                record["comp_eq"] = formatting._hex(
-                    int(meta) if meta else None
-                )
+        for core, role in self._iter_eq_candidates(device):
+            self._record_eq(core, device, role)
 
     def _record_eq(
         self,
-        eq: Object,
+        core: Object,
         device: DeviceRecord,
         role: str,
     ) -> Dict[str, Any]:
-        core = _core_eq(eq)
         eqn = int(core.eqn)
         irqn = int(core.irqn)
+        type_name = core.type_.type_name()
+        if self._eq_has_cq_count is None:
+            self._eq_has_cq_count = has_member(core, "cq_count")
+        if self._eqe_size is None:
+            self._eqe_size = self.prog.type("struct mlx5_eqe").size
         record = {
             "eqn": eqn,
-            "address": formatting._hex(int(eq.address_)),
-            "address_struct": eq.type_.type_name(),
+            "address": formatting._hex(int(core.address_)),
+            "address_struct": type_name,
             "core_eq": formatting._hex(int(core.address_)),
-            "core_eq_struct": core.type_.type_name(),
+            "core_eq_struct": type_name,
             "device": device.mdev_address,
             "role": role,
             "irqn": irqn,
@@ -1434,45 +1271,29 @@ class Mlx5Collector:
             "vector": int(core.vecidx),
             "consumer_index": int(core.cons_index),
             "size": int(core.fbc.sz_m1) + 1,
-            "cq_count": int(core.cq_count)
-            if has_member(core, "cq_count")
-            else None,
-            "eqe_size": self.prog.type("struct mlx5_eqe").size,
-            "mask": None,
+            "cq_count": int(core.cq_count) if self._eq_has_cq_count else None,
+            "eqe_size": self._eqe_size,
         }
 
         key = (device.mdev_address, eqn)
         entry = self._eqs.get(key)
-        if entry is None:
-            self._eqs[key] = _EqEntry(record, eq, core)
-            return record
-
-        existing = entry.record
-        if role and role not in str(existing.get("role", "")):
-            existing["role"] = str(existing.get("role")) + "," + role
-        _merge_discovery(existing, record)
-        return existing
+        if entry is not None:
+            return entry.record
+        self._eqs[key] = _EqEntry(record, core)
+        return record
 
     def _collect_cqs_from_eq_tables(self, device: DeviceRecord) -> None:
-        """Collect CQs registered in each EQ's CQ table.
+        """Collect CQs from the device-wide async EQ table.
 
-        Channel walks find mlx5e CQs. RDMA and internal CQs may exist only in
-        the EQ-local cq_table.
+        Channel walks find mlx5e CQs. The async EQ table also contains RDMA
+        and internal CQs.
         """
 
-        for (dev_name, eqn), entry in self._eqs.items():
-            if dev_name != device.mdev_address:
-                continue
-            core = _core_eq(entry.eq)
-            role = entry.record.get("role") or "eq"
-            owner = f"eq_cq_table:{role}:eqn{eqn}"
-            for key, obj in radix_tree_for_each(
-                core.cq_table.tree.address_of_()
-            ):
-                core_cq = cast("struct mlx5_core_cq *", obj)
-                self._record_core_cq(
-                    core_cq, device, owner=owner, table_key=key
-                )
+        core = device.mdev.priv.eq_table.async_eq.core
+        owner = f"eq_cq_table:async:eqn{int(core.eqn)}"
+        for key, obj in radix_tree_for_each(core.cq_table.tree.address_of_()):
+            core_cq = cast("struct mlx5_core_cq *", obj)
+            self._record_core_cq(core_cq, device, owner=owner, table_key=key)
 
     def _record_core_cq(
         self,
@@ -1486,13 +1307,25 @@ class Mlx5Collector:
             raise ValueError(
                 f"CQ table key {table_key} does not match CQN {cqn}"
             )
-        mlx5e_cq = self._mlx5e_cq_from_core_cq(core_cq, device)
+        key = (device.mdev_address, cqn)
+        entry = self._cqs.get(key)
+        if entry is not None:
+            record = entry.record
+            owners = record.setdefault("owners", [record.get("owner")])
+            if owner not in owners:
+                owners.append(owner)
+            record["owner"] = ";".join(str(item) for item in owners if item)
+            return record
+
+        event = self._cq_event_name(core_cq.event)
+        mlx5e_cq = None
         ib_cq = None
-        aso_cq = None
-        if mlx5e_cq is None:
-            ib_cq = self._mlx5_ib_cq_from_core_cq(core_cq)
-            if ib_cq is None:
-                aso_cq = self._mlx5_aso_cq_from_core_cq(core_cq, device)
+        if event == "mlx5e_cq_error_event":
+            mlx5e_cq = container_of(core_cq, "struct mlx5e_cq", "mcq")
+            if int(mlx5e_cq.mdev) != int(device.mdev):
+                raise ValueError("mlx5e CQ belongs to a different core device")
+        elif event == "mlx5_ib_cq_event":
+            ib_cq = container_of(core_cq, "struct mlx5_ib_cq", "mcq")
         address_obj, address_struct = core_cq, "struct mlx5_core_cq"
         wq = None
         netdev = None
@@ -1508,7 +1341,7 @@ class Mlx5Collector:
             size = int(ib_cq.ibcq.cqe) + 1
             stride_bytes = int(ib_cq.cqe_size)
             if not ib_cq.ibcq.uobject:
-                wq = ib_cq.buf.fbc
+                wq = ib_cq.buf
             queue_kind, queue_role = "rdma_cq", "rdma"
         elif mlx5e_cq is not None:
             address_obj, address_struct = mlx5e_cq, "struct mlx5e_cq"
@@ -1519,11 +1352,6 @@ class Mlx5Collector:
             queue_role = mlx5e_owner.get("queue_role")
             event_ctr = int(mlx5e_cq.event_ctr)
             specific_owner = _owner_string(mlx5e_owner)
-        elif aso_cq is not None:
-            address_obj, address_struct = aso_cq, "struct mlx5_aso_cq"
-            wq = aso_cq.wq
-            queue_kind, queue_role = "aso_cq", "internal"
-            specific_owner = f"aso_cq{cqn}" if cqn is not None else "aso_cq"
         owners = (
             [specific_owner, owner]
             if specific_owner and specific_owner != owner
@@ -1563,40 +1391,18 @@ class Mlx5Collector:
             or int(core_cq.cqe_sz),
         }
 
-        key = (device.mdev_address, cqn)
-        entry = self._cqs.get(key)
-        if entry is None:
-            self._cqs[key] = _RingEntry(record, wq)
-            return record
+        self._cqs[key] = _RingEntry(record, wq)
+        return record
 
-        existing = entry.record
-        owners = existing.setdefault("owners", [existing.get("owner")])
-        if owner not in owners:
-            owners.append(owner)
-        existing["owner"] = ";".join(str(item) for item in owners if item)
-        _merge_discovery(existing, record)
-        if wq is not None and entry.wq is None:
-            self._cqs[key] = _RingEntry(existing, wq)
-        return existing
-
-    def _mlx5e_cq_from_core_cq(
-        self, core_cq: Object, device: DeviceRecord
-    ) -> Optional[Object]:
-        comp = collect_device._symbol_for_addr(
-            self.prog, int(core_cq.comp) if core_cq.comp else None
-        )
-        event = collect_device._symbol_for_addr(
-            self.prog, int(core_cq.event) if core_cq.event else None
-        )
-        if (
-            comp != "mlx5e_completion_event"
-            and event != "mlx5e_cq_error_event"
-        ):
+    def _cq_event_name(self, event: Object) -> Optional[str]:
+        if not event:
             return None
-        cq = container_of(core_cq, "struct mlx5e_cq", "mcq")
-        if int(cq.mdev) != int(device.mdev):
-            raise ValueError("mlx5e CQ belongs to a different core device")
-        return cq
+        address = int(event)
+        if address not in self._cq_event_names:
+            self._cq_event_names[address] = collect_device._symbol_for_addr(
+                self.prog, address
+            )
+        return self._cq_event_names[address]
 
     def _mlx5e_core_cq_owner(
         self, cq: Object, core_cq: Object, device: DeviceRecord
@@ -1634,24 +1440,6 @@ class Mlx5Collector:
             "queue_role": "mlx5e",
             "queue_number": cqn,
         }
-
-    def _mlx5_aso_cq_from_core_cq(
-        self, core_cq: Object, device: DeviceRecord
-    ) -> Optional[Object]:
-        if core_cq.comp or core_cq.event:
-            return None
-        cq = container_of(core_cq, "struct mlx5_aso_cq", "mcq")
-        if int(cq.mdev) != int(device.mdev):
-            raise ValueError("ASO CQ belongs to a different core device")
-        return cq
-
-    def _mlx5_ib_cq_from_core_cq(self, core_cq: Object) -> Optional[Object]:
-        event = collect_device._symbol_for_addr(
-            self.prog, int(core_cq.event) if core_cq.event else None
-        )
-        if event != "mlx5_ib_cq_event":
-            return None
-        return container_of(core_cq, "struct mlx5_ib_cq", "mcq")
 
     def _link_cqs_eqs_and_channels(
         self, devices: Sequence[DeviceRecord]
@@ -1702,38 +1490,42 @@ class Mlx5Collector:
         for device in devices:
             for netdev in device.netdevs:
                 for channel in netdev.get("channels", []):
-                    cqs = []
+                    shared_values: Dict[str, Set[int]] = {
+                        field: set() for field in ("vector", "irqn", "eqn")
+                    }
                     for queue in selection._channel_queues(channel):
                         queue_cq = queue.get("cq")
-                        if isinstance(queue_cq, dict) and queue_cq.get(
+                        if not isinstance(queue_cq, dict) or queue_cq.get(
                             "cqn"
-                        ) not in (
-                            None,
-                            0,
+                        ) in (None, 0):
+                            continue
+                        for field, value in (
+                            (
+                                "vector",
+                                selection._first_not_none(
+                                    queue_cq.get("eq_vector"),
+                                    queue_cq.get("vector"),
+                                ),
+                            ),
+                            (
+                                "irqn",
+                                selection._first_not_none(
+                                    queue_cq.get("eq_irqn"),
+                                    queue_cq.get("irqn"),
+                                ),
+                            ),
+                            ("eqn", queue_cq.get("eqn")),
                         ):
-                            cqs.append(queue_cq)
-                    if not cqs:
-                        continue
-                    vector = _shared_known_value(
-                        selection._first_not_none(
-                            cq.get("eq_vector"), cq.get("vector")
-                        )
-                        for cq in cqs
-                    )
-                    irqn = _shared_known_value(
-                        selection._first_not_none(
-                            cq.get("eq_irqn"), cq.get("irqn")
-                        )
-                        for cq in cqs
-                    )
-                    eqn = _shared_known_value(cq.get("eqn") for cq in cqs)
-                    for field, value in (
-                        ("vector", vector),
-                        ("irqn", irqn),
-                        ("eqn", eqn),
-                    ):
+                            if value is not None:
+                                shared_values[field].add(int(value))
+                    shared = {
+                        field: next(iter(values)) if len(values) == 1 else None
+                        for field, values in shared_values.items()
+                    }
+                    for field, value in shared.items():
                         if channel.get(field) is None and value is not None:
                             channel[field] = value
+                    irqn = shared["irqn"]
                     if channel.get("irq_desc") is None and irqn is not None:
                         desc = irq_to_desc(self.prog, irqn)
                         channel["irq_desc"] = formatting._hex(
@@ -1743,15 +1535,10 @@ class Mlx5Collector:
     # RDMA queue pairs
 
     def _count_summary_qps(self, device: DeviceRecord) -> Optional[int]:
-        total = 0
-        seen_ibdevs: Set[int] = set()
-        for ibdev in self._iter_mlx5_ib_devices(int(device.mdev)):
-            ibdev_address = int(ibdev)
-            if ibdev_address in seen_ibdevs:
-                continue
-            seen_ibdevs.add(ibdev_address)
-            total += list_count_nodes(ibdev.qp_list.address_of_())
-        return total
+        ibdev = self._ibdev_by_mdev.get(int(device.mdev))
+        if ibdev is None:
+            return 0
+        return list_count_nodes(ibdev.qp_list.address_of_())
 
     def _report_qps(self) -> List[Dict[str, Any]]:
         if not (
@@ -1770,65 +1557,114 @@ class Mlx5Collector:
             key=lambda record: formatting._sort_key(record.get("qpn")),
         )
 
-    def _iter_qps_from_device(
-        self, device: DeviceRecord
-    ) -> Iterator[Tuple[Object, str, Optional[int]]]:
+    def _iter_qps_from_device(self, device: DeviceRecord) -> Iterator[Object]:
         """Yield every RDMA QP owned by this mlx5 device."""
 
-        for ibdev in self._iter_mlx5_ib_devices(int(device.mdev)):
-            qps = list_for_each_entry(
+        ibdev = self._ibdev_by_mdev.get(int(device.mdev))
+        if ibdev is not None:
+            yield from list_for_each_entry(
                 "struct mlx5_ib_qp",
                 ibdev.qp_list.address_of_(),
                 "qps_list",
             )
-            for qp in qps:
-                yield qp, "mlx5_ib_qp_list", None
+
+    def _qp_creator(self, qp: Object) -> Dict[str, Any]:
+        resource = qp.ibqp.res
+        is_user = bool(resource.user)
+        subject = resource.task if is_user else resource.kern_name
+        creator_type = "user" if is_user else "kernel"
+        key = (creator_type, int(subject) if subject else 0)
+        creator = self._qp_creators.get(key)
+        if creator is not None:
+            return creator
+
+        name = None
+        pid = None
+        if is_user:
+            if subject:
+                name = subject.comm.string_().decode("utf-8", "replace")
+                pid = int(subject.pid)
+            display = f"user:{name}[{pid}]" if subject else "user"
+            source = "struct ib_qp.res.user/task"
+        else:
+            if subject:
+                name = subject.string_().decode("utf-8", "replace")
+            display = f"kernel:{name}" if name else "kernel"
+            source = "struct ib_qp.res.user/kern_name"
+        creator = {
+            "display": display,
+            "type": creator_type,
+            "name": name,
+            "pid": pid,
+            "source": source,
+        }
+        self._qp_creators[key] = creator
+        return creator
+
+    def _ib_cq_number(self, cq: Optional[Object]) -> Optional[int]:
+        if cq is None or not cq:
+            return None
+        address = int(cq)
+        if address not in self._ib_cq_numbers:
+            mlx5_ib_cq = container_of(cq, "struct mlx5_ib_cq", "ibcq")
+            self._ib_cq_numbers[address] = int(mlx5_ib_cq.mcq.cqn)
+        return self._ib_cq_numbers[address]
+
+    def _qp_type(self, qp: Object) -> int:
+        if self._qp_has_type is None:
+            self._qp_has_type = has_member(qp, "type")
+        if self._qp_has_type:
+            return int(qp.type)
+        ib_qp_type = int(qp.ibqp.qp_type)
+        if self._ib_qpt_driver is None:
+            self._ib_qpt_driver = int(self.prog.constant("IB_QPT_DRIVER"))
+        if ib_qp_type == self._ib_qpt_driver:
+            return int(qp.qp_sub_type)
+        return ib_qp_type
 
     def _record_qp(
-        self,
-        qp: Object,
-        device: DeviceRecord,
-        source: str,
-        *,
-        table_qpn: Optional[int] = None,
-        identity: Optional[_QpIdentity] = None,
-    ) -> Dict[str, Any]:
-        identity = identity or _qp_identity(qp, device.mdev_address, table_qpn)
-        qpn = identity.qpn
-        ib_qpn = identity.ib_qpn
-        hw_qpn = identity.hw_qpn
+        self, qp: Object, device: DeviceRecord
+    ) -> Optional[Dict[str, Any]]:
+        ib_qpn = int(qp.ibqp.qp_num)
+        hw_qpn = int(qp.trans_qp.base.mqp.qpn)
+        if self.args.qpn is not None and int(self.args.qpn) not in (
+            ib_qpn,
+            hw_qpn,
+        ):
+            return None
+        aliases = sorted({ib_qpn, hw_qpn})
+
         send_cq = qp.ibqp.send_cq
         recv_cq = qp.ibqp.recv_cq
-        qp_type = _qp_type(qp)
-        if qp_type == int(self.prog.constant("IB_QPT_RAW_PACKET")):
-            sq_wq = qp.raw_packet_qp.sq.sq
-            rq_wq = qp.raw_packet_qp.rq.rq
-            sq_source = "qp.raw_packet_qp.sq.sq"
-            rq_source = "qp.raw_packet_qp.rq.rq"
-        else:
-            sq_wq = qp.sq
-            rq_wq = qp.rq
-            sq_source = "qp.sq"
-            rq_source = "qp.rq"
-        sq_summary = self._collect_wq_summary(sq_wq)
-        rq_summary = self._collect_wq_summary(rq_wq)
+        qp_type = self._qp_type(qp)
+        creator = self._qp_creator(qp)
+        sq_wq = qp.sq
+        rq_wq = qp.rq
+        kernel_backed = creator.get("type") == "kernel"
+        sq_summary = self._collect_wq_summary(sq_wq, kernel_backed)
+        rq_summary = self._collect_wq_summary(rq_wq, kernel_backed)
         sq_pc = sq_summary.get("head")
         sq_cc = sq_summary.get("tail")
         rq_pc = rq_summary.get("head")
         rq_cc = rq_summary.get("tail")
         qp_state = int(qp.state)
-        creator = _qp_creator(qp)
+        if self._qp_has_is_rss is None:
+            self._qp_has_is_rss = has_member(qp, "is_rss")
+        sq_size = sq_summary.get("size")
+        eligible_sq_wq = (
+            sq_wq
+            if kernel_backed and sq_size is not None and int(sq_size) > 0
+            else None
+        )
         record = {
-            "qpn": qpn,
+            "qpn": ib_qpn,
             "ib_qpn": ib_qpn,
             "hw_qpn": hw_qpn,
-            "table_qpn": table_qpn,
-            "qpn_aliases": list(identity.aliases),
+            "qpn_aliases": aliases,
             "address": formatting._hex(int(qp)),
             "address_struct": "struct mlx5_ib_qp",
             "device": device.mdev_address,
-            "owner": source,
-            "owners": [source],
+            "owner": "mlx5_ib_qp_list",
             "creator": creator.get("display"),
             "creator_type": creator.get("type"),
             "creator_name": creator.get("name"),
@@ -1844,49 +1680,26 @@ class Mlx5Collector:
             ),
             "flags": formatting._hex(int(qp.flags)),
             "has_rq": int(qp.has_rq),
-            "is_rss": int(qp.is_rss) if has_member(qp, "is_rss") else None,
+            "is_rss": int(qp.is_rss) if self._qp_has_is_rss else None,
             "max_inline_data": int(qp.max_inline_data),
             "db": formatting._hex(int(qp.db.address_)),
             "buf": formatting._hex(int(qp.buf.address_)),
             "send_cq": formatting._hex(int(send_cq) if send_cq else None),
             "recv_cq": formatting._hex(int(recv_cq) if recv_cq else None),
-            "send_cqn": _cq_number_from_cq(send_cq),
-            "recv_cqn": _cq_number_from_cq(recv_cq),
+            "send_cqn": self._ib_cq_number(send_cq),
+            "recv_cqn": self._ib_cq_number(recv_cq),
             "sq": sq_summary,
             "rq": rq_summary,
             "sq_pc": sq_pc,
             "sq_cc": sq_cc,
             "rq_pc": rq_pc,
             "rq_cc": rq_cc,
-            "sq_pc_source": f"{sq_source}.head" if sq_pc is not None else None,
-            "sq_cc_source": f"{sq_source}.tail" if sq_cc is not None else None,
-            "rq_pc_source": f"{rq_source}.head" if rq_pc is not None else None,
-            "rq_cc_source": f"{rq_source}.tail" if rq_cc is not None else None,
+            "sq_pc_source": "qp.sq.head" if sq_pc is not None else None,
+            "sq_cc_source": "qp.sq.tail" if sq_cc is not None else None,
+            "rq_pc_source": "qp.rq.head" if rq_pc is not None else None,
+            "rq_cc_source": "qp.rq.tail" if rq_cc is not None else None,
         }
-        key = identity.key
-        entry = self._qps.get(key)
-        if entry is not None:
-            existing = entry.record
-            owners = existing.setdefault("owners", [existing.get("owner")])
-            if source not in owners:
-                owners.append(source)
-            existing["owner"] = ",".join(str(o) for o in owners if o)
-            existing_aliases: Any = existing.get("qpn_aliases")
-            record_aliases: Any = record.get("qpn_aliases")
-            existing["qpn_aliases"] = selection._qp_aliases(
-                *(list(existing_aliases or []) + list(record_aliases or []))
-            )
-            _merge_discovery(existing, record)
-            record = existing
-            stored_sq_wq = entry.sq_wq if entry.sq_wq is not None else sq_wq
-            dump_wq = stored_sq_wq
-            if dump_wq is None:
-                dump_wq = entry.dump_wq if entry.dump_wq is not None else rq_wq
-            self._qps[key] = _QpEntry(record, dump_wq, stored_sq_wq)
-        else:
-            self._qps[key] = _QpEntry(
-                record, sq_wq if sq_wq is not None else rq_wq, sq_wq
-            )
+        self._qps[int(qp)] = _QpEntry(record, eligible_sq_wq)
         return record
 
     # Descriptor selection and dumps
@@ -1897,10 +1710,14 @@ class Mlx5Collector:
             qps_by_cq: Dict[Tuple[str, int], List[_QpEntry]] = defaultdict(
                 list
             )
-            for qp_key, qp_entry in self._qps.items():
+            for qp_entry in self._qps.values():
+                if qp_entry.sq_wq is None:
+                    continue
                 send_cqn = qp_entry.record.get("send_cqn")
                 if send_cqn is not None:
-                    qps_by_cq[(qp_key.device, send_cqn)].append(qp_entry)
+                    qps_by_cq[
+                        (str(qp_entry.record["device"]), int(send_cqn))
+                    ].append(qp_entry)
             if self.args.cqn is None:
                 if getattr(self.args, "_auto_select_cqs", False):
                     cq_keys = self._auto_cqe_dump_keys()
@@ -2038,9 +1855,8 @@ class Mlx5Collector:
             "xdp_sq": 4,
             "xdpsq": 4,
             "rdma_cq": 5,
-            "aso_cq": 6,
-            "drop_rq_cq": 7,
-            "core_cq": 8,
+            "drop_rq_cq": 6,
+            "core_cq": 7,
         }
 
         def rank(
@@ -2070,16 +1886,16 @@ class Mlx5Collector:
             )
         ]
 
-    def _auto_wqe_qp_dump_keys(self) -> List[_QpKey]:
+    def _auto_wqe_qp_dump_keys(self) -> List[int]:
         candidates = [
             (key, entry.record)
             for key, entry in self._qps.items()
-            if entry.dump_wq is not None
+            if entry.sq_wq is not None
             and selection._qp_matches_filter(entry.record, self.args)
         ]
 
         def rank(
-            item: Tuple[_QpKey, Dict[str, Any]]
+            item: Tuple[int, Dict[str, Any]]
         ) -> Tuple[int, int, str, int]:
             _key, qp = item
             sq = qp.get("sq")
@@ -2151,7 +1967,7 @@ class Mlx5Collector:
             + "; use --dev to disambiguate",
         )
 
-    def _select_qp_key(self, qpn: int) -> Optional[_QpKey]:
+    def _select_qp_key(self, qpn: int) -> Optional[int]:
         matches = [
             key
             for key, entry in self._qps.items()
@@ -2224,24 +2040,22 @@ class Mlx5Collector:
         entries = self._dump_ring(
             wq,
             max_entries,
-            defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES,
             decode=lambda raw: _decode_cqe(self.prog, raw),
-            known_size=record.get("size"),
-            known_consumer_index=record.get("consumer_index"),
-            cqe_mode=True,
+            ring_size=record.get("size"),
+            consumer_index=record.get("consumer_index"),
             descriptor_kind="cqe",
-            around_consumer=True,
         )
         notes = (
             ["WR_ID is read from matching struct mlx5_ib_qp.sq.wrid[] entries"]
             if self._annotate_ib_cqe_wr_ids(record, entries, qp_candidates)
             else []
         )
-        status = _descriptor_dump_status(entries)
-        if _descriptor_dump_has_errors(entries):
+        status, bad_statuses = _descriptor_dump_summary(entries)
+        wq_layout = dumps._wq_layout_summary(wq)
+        if bad_statuses:
             self._warn(
                 f"CQN {cqn} on {device_name} dump status {status}; "
-                f"wq_layout={dumps._wq_layout_summary(wq)}"
+                f"wq_layout={wq_layout}"
             )
         return {
             "kind": "cqe",
@@ -2250,7 +2064,7 @@ class Mlx5Collector:
             "device": device_name,
             "status": status,
             "cq": _jsonable(record),
-            "wq": dumps._wq_layout_summary(wq),
+            "wq": wq_layout,
             "consumer_index": record.get("consumer_index"),
             "window": dumps._dump_window_summary(
                 max_entries, record.get("size")
@@ -2265,48 +2079,80 @@ class Mlx5Collector:
         entries: List[Dict[str, Any]],
         qp_candidates: List[_QpEntry],
     ) -> int:
-        if (
+        if not entries or (
             formatting._short_struct(cq_record.get("address_struct"))
             != "mlx5_ib_cq"
         ):
             return 0
+        request_opcodes = self.prog.cache.get("_mlx5_cqe_request_opcodes")
+        if request_opcodes is None:
+            request_opcodes = (
+                int(self.prog.constant("MLX5_CQE_REQ")),
+                int(self.prog.constant("MLX5_CQE_REQ_ERR")),
+            )
+            self.prog.cache["_mlx5_cqe_request_opcodes"] = request_opcodes
+        qp_index_by_qpn: Dict[int, Optional[int]] = {}
+        for index, qp_entry in enumerate(qp_candidates):
+            record = qp_entry.record
+            aliases = record.get("qpn_aliases")
+            if not isinstance(aliases, list):
+                aliases = (
+                    record.get("qpn"),
+                    record.get("ib_qpn"),
+                    record.get("hw_qpn"),
+                )
+            for alias in {
+                int(value) for value in aliases if value is not None
+            }:
+                if alias in qp_index_by_qpn:
+                    qp_index_by_qpn[alias] = None
+                else:
+                    qp_index_by_qpn[alias] = index
+        wrid_sources: Dict[int, Tuple[int, Any]] = {}
+        gsi_wr_ids: Dict[int, Optional[int]] = {}
         count = 0
         for entry in entries:
             if entry.get("status") not in ("ok", "ready"):
                 continue
             # mlx5_ib_poll_one() uses wqe_counter directly for send completions
             # and errors. Receive/SRQ completions use different cursor rules.
-            if entry.get("opcode_value") not in (
-                int(self.prog.constant("MLX5_CQE_REQ")),
-                int(self.prog.constant("MLX5_CQE_REQ_ERR")),
-            ):
+            if entry.get("opcode_value") not in request_opcodes:
                 continue
             wqe_ctr = entry.get("wqe_counter")
             if wqe_ctr is None:
                 continue
-            matches = qp_candidates
             cqe_qpn = entry.get("qpn")
-            if len(matches) != 1 and cqe_qpn not in (None, 0):
-                matches = [
-                    qp_entry
-                    for qp_entry in matches
-                    if selection._qp_record_matches_qpn(
-                        qp_entry.record, cqe_qpn
+            if cqe_qpn is None or cqe_qpn == 0:
+                continue
+            qp_index = qp_index_by_qpn.get(int(cqe_qpn))
+            if qp_index is None:
+                continue
+            qp_entry = qp_candidates[qp_index]
+            if qp_index not in wrid_sources:
+                wq = qp_entry.sq_wq
+                if wq is None:
+                    wrid_sources[qp_index] = (0, None)
+                else:
+                    wqe_cnt = int(wq.wqe_cnt)
+                    wrid = wq.wrid if wqe_cnt > 0 else None
+                    wrid_sources[qp_index] = (
+                        wqe_cnt,
+                        wrid if wrid else None,
                     )
-                ]
-            if len(matches) != 1:
+            wqe_cnt, wrid = wrid_sources[qp_index]
+            if wqe_cnt <= 0 or wrid is None:
                 continue
-            qp_entry = matches[0]
-            wr_id, wr_idx = _mlx5_ib_wq_wrid_at_counter(
-                qp_entry.sq_wq, wqe_ctr
-            )
-            if wr_id is None:
-                continue
+            wr_idx = wqe_ctr & (wqe_cnt - 1)
+            wr_id = int(wrid[wr_idx])
             qp_record = qp_entry.record
             if qp_record.get(
                 "creator_type"
             ) == "kernel" and _looks_like_kernel_pointer_value(wr_id):
-                gsi_wr_id = _mlx5_ib_gsi_saved_wr_id(self.prog, wr_id)
+                if wr_id not in gsi_wr_ids:
+                    gsi_wr_ids[wr_id] = _mlx5_ib_gsi_saved_wr_id(
+                        self.prog, wr_id
+                    )
+                gsi_wr_id = gsi_wr_ids[wr_id]
                 if gsi_wr_id is None or _looks_like_kernel_pointer_value(
                     gsi_wr_id
                 ):
@@ -2338,7 +2184,7 @@ class Mlx5Collector:
     ) -> Dict[str, Any]:
         device_name, eqn = key
         entry = self._eqs.get(key)
-        record, eq, wq = entry if entry is not None else ({}, None, None)
+        record, wq = entry if entry is not None else ({}, None)
         if wq is None:
             return {
                 "kind": "eqe",
@@ -2352,18 +2198,17 @@ class Mlx5Collector:
         entries = self._dump_ring(
             wq,
             max_entries,
-            defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES,
             decode=lambda raw: _decode_eqe(self.prog, raw),
-            known_size=record.get("size"),
-            known_consumer_index=record.get("consumer_index"),
+            ring_size=record.get("size"),
+            consumer_index=record.get("consumer_index"),
             descriptor_kind="eqe",
-            around_consumer=True,
         )
-        status = _descriptor_dump_status(entries)
-        if _descriptor_dump_has_errors(entries):
+        status, bad_statuses = _descriptor_dump_summary(entries)
+        wq_layout = dumps._wq_layout_summary(wq)
+        if bad_statuses:
             self._warn(
                 f"EQN {eqn} on {device_name} dump status {status}; "
-                f"wq_layout={dumps._wq_layout_summary(wq)}"
+                f"wq_layout={wq_layout}"
             )
         return {
             "kind": "eqe",
@@ -2372,7 +2217,7 @@ class Mlx5Collector:
             "device": device_name,
             "status": status,
             "eq": _jsonable(record),
-            "wq": dumps._wq_layout_summary(wq),
+            "wq": wq_layout,
             "consumer_index": record.get("consumer_index"),
             "window": dumps._dump_window_summary(
                 max_entries, record.get("size")
@@ -2381,16 +2226,34 @@ class Mlx5Collector:
         }
 
     def _dump_wqe_key(
-        self, key: _QpKey, max_entries: int, auto: bool = False
+        self, key: int, max_entries: int, auto: bool = False
     ) -> Dict[str, Any]:
         entry = self._qps.get(key)
         record = entry.record if entry is not None else {}
-        device_name = str(record.get("device") or key.device)
+        device_name = str(record.get("device") or "")
         qpn = record.get("qpn")
-        wq = entry.dump_wq if entry is not None else None
+        wq = entry.sq_wq if entry is not None else None
         owner = record.get("owner")
         wq_summary = record.get("sq", {})
         if wq is None:
+            notes = []
+            status = "not-found"
+            if entry is not None:
+                status = "unavailable"
+                if record.get("creator_type") == "user":
+                    notes.append(
+                        "User-backed QP WQEs are not available through the "
+                        "kernel work-queue layout"
+                    )
+                elif (
+                    isinstance(wq_summary, dict)
+                    and wq_summary.get("size") == 0
+                ):
+                    notes.append("QP has no send queue to dump")
+                else:
+                    notes.append(
+                        "QP send queue is not available for a kernel WQE dump"
+                    )
             return {
                 "kind": "wqe",
                 "source": "qp",
@@ -2398,22 +2261,25 @@ class Mlx5Collector:
                 "selector": qpn,
                 "device": device_name,
                 "owner": owner,
-                "status": "not-found",
+                "status": status,
                 "qp": _jsonable(record),
+                "notes": notes,
                 "entries": [],
             }
         entries = self._dump_ring(
             wq,
             max_entries,
-            defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES,
             decode=lambda raw: _decode_wqe(self.prog, raw),
-            known_size=wq_summary.get("size")
+            ring_size=wq_summary.get("size")
             if isinstance(wq_summary, dict)
             else None,
-            known_consumer_index=record.get("sq_cc"),
+            consumer_index=wq_summary.get("last_poll")
+            if isinstance(wq_summary, dict)
+            else None,
             variable_wqe_stride=True,
         )
-        status = _descriptor_dump_status(entries)
+        status, bad_statuses = _descriptor_dump_summary(entries)
+        wq_layout = dumps._wq_layout_summary(wq)
         notes = (
             [
                 "SQ head/tail show no outstanding WQEs; entries may be old ring contents"
@@ -2422,14 +2288,14 @@ class Mlx5Collector:
             == 0
             else []
         )
-        if _descriptor_dump_has_errors(entries):
+        if bad_statuses:
             self._warn_wqe_dump_error(
                 selector_name="QPN",
                 selector=qpn,
                 device=device_name,
                 status=status,
-                entries=entries,
-                wq=wq,
+                bad_statuses=bad_statuses,
+                wq_layout=wq_layout,
                 auto=auto,
             )
         return {
@@ -2441,7 +2307,7 @@ class Mlx5Collector:
             "owner": owner,
             "status": status,
             "qp": _jsonable(record),
-            "wq": dumps._wq_layout_summary(wq),
+            "wq": wq_layout,
             "wqe_kind": "ctrl",
             "notes": notes,
             "entries": entries,
@@ -2480,15 +2346,17 @@ class Mlx5Collector:
         entries = self._dump_ring(
             wq,
             max_entries,
-            defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES,
             decode=decode_wqe,
-            known_size=wq_summary.get("size")
+            ring_size=wq_summary.get("size")
             if isinstance(wq_summary, dict)
             else None,
-            known_consumer_index=record.get("cc"),
+            consumer_index=selection._first_not_none(
+                record.get("cc"), record.get("pc")
+            ),
             variable_wqe_stride=not is_rq,
         )
-        status = _descriptor_dump_status(entries)
+        status, bad_statuses = _descriptor_dump_summary(entries)
+        wq_layout = dumps._wq_layout_summary(wq)
         notes = (
             [
                 "queue progress shows no outstanding WQEs; entries may be old ring contents"
@@ -2496,14 +2364,14 @@ class Mlx5Collector:
             if record.get("inflight") == 0
             else []
         )
-        if _descriptor_dump_has_errors(entries):
+        if bad_statuses:
             self._warn_wqe_dump_error(
                 selector_name=selector_name.upper(),
                 selector=number,
                 device=device_name,
                 status=status,
-                entries=entries,
-                wq=wq,
+                bad_statuses=bad_statuses,
+                wq_layout=wq_layout,
                 auto=auto,
             )
         return {
@@ -2515,7 +2383,7 @@ class Mlx5Collector:
             "owner": owner,
             "status": status,
             "queue": _jsonable(record),
-            "wq": dumps._wq_layout_summary(wq),
+            "wq": wq_layout,
             "wqe_kind": "rq" if is_rq else "ctrl",
             "notes": notes,
             "entries": entries,
@@ -2528,26 +2396,18 @@ class Mlx5Collector:
         selector: Any,
         device: str,
         status: str,
-        entries: List[Dict[str, Any]],
-        wq: Object,
+        bad_statuses: Dict[str, int],
+        wq_layout: Dict[str, Any],
         auto: bool,
     ) -> None:
         if not auto:
-            statuses = Counter(
-                str(entry.get("status", "ok")) for entry in entries
-            )
-            bad_statuses = {
-                status: count
-                for status, count in statuses.items()
-                if status not in dumps._BENIGN_DESCRIPTOR_STATUSES
-            }
-            summary = f"statuses={bad_statuses}; {_wq_warning_shape(wq, include_wq=True)}"
+            summary = f"statuses={bad_statuses}; {_wq_warning_shape(wq_layout, include_wq=True)}"
             self._warn(
                 f"{selector_name} {selector} on {device} WQE dump status {status}; {summary}"
             )
             return
 
-        shape = _wq_warning_shape(wq)
+        shape = _wq_warning_shape(wq_layout)
         group_key = (selector_name, status, shape)
         group = self._wqe_warning_groups.setdefault(
             group_key, {"count": 0, "examples": []}
@@ -2575,99 +2435,139 @@ class Mlx5Collector:
         self,
         wq: Object,
         max_entries: int,
-        default_len: int,
         decode: Callable[[bytes], Dict[str, Any]],
-        known_size: Optional[Any] = None,
-        known_consumer_index: Optional[Any] = None,
-        cqe_mode: bool = False,
+        ring_size: Optional[Any],
+        consumer_index: Optional[Any],
         variable_wqe_stride: bool = False,
         descriptor_kind: Optional[str] = None,
-        around_consumer: bool = False,
     ) -> List[Dict[str, Any]]:
-        entries: List[Dict[str, Any]] = []
-        size = int(known_size) if known_size is not None else None
-        if size is None:
-            size = dumps._ring_size(wq, default_len)
-        if size is not None and size <= 0:
+        if ring_size is None:
             return [{"index": None, "status": "size-unavailable"}]
-        consumer_index = (
-            int(known_consumer_index)
-            if known_consumer_index is not None
-            else None
-        )
-        if consumer_index is None:
-            type_name = wq.type_.type_name()
-            if type_name == "struct mlx5_cqwq":
-                consumer_index = int(wq.cc)
-            elif type_name in ("struct mlx5_wq_cyc", "struct mlx5_wq_ll"):
-                consumer_index = int(wq.wqe_ctr)
-            elif type_name == "struct mlx5_ib_wq":
-                consumer_index = int(wq.tail)
-            elif type_name == "struct mlx5_eq":
-                consumer_index = int(wq.cons_index)
-            elif type_name != "struct mlx5_frag_buf_ctrl":
-                raise TypeError(f"unsupported mlx5 ring type: {type_name}")
+        size = int(ring_size)
+        if size <= 0:
+            return [{"index": None, "status": "size-unavailable"}]
         if consumer_index is None:
             return [{"index": None, "status": "consumer-index-unavailable"}]
-        stride = dumps._ring_stride_bytes(wq)
-        read_len = (
-            min(default_len, stride)
-            if stride is not None and stride > 0
-            else default_len
+        consumer = int(consumer_index)
+
+        _fbc_ref, fbc = dumps._read_fbc(wq)
+        if fbc is None:
+            return [{"index": None, "status": "layout-unavailable"}]
+        frags = fbc.frags
+        log_stride = int(fbc.log_stride)
+        log_size = int(fbc.log_sz)
+        log_frag_strides = int(fbc.log_frag_strides)
+        frag_sz_m1 = int(fbc.frag_sz_m1)
+        strides_offset = int(fbc.strides_offset)
+        fbc_size = int(fbc.sz_m1) + 1
+        if (
+            not 0 <= log_stride < 32
+            or not 0 <= log_size < 32
+            or not 0 <= log_frag_strides < 32
+            or fbc_size != 1 << log_size
+            or frag_sz_m1 != (1 << log_frag_strides) - 1
+            or strides_offset < 0
+        ):
+            return [{"index": None, "status": "layout-unavailable"}]
+
+        stride = 1 << log_stride
+        frag_strides = 1 << log_frag_strides
+        if frag_strides * stride != int(self.prog["PAGE_SIZE"]):
+            return [{"index": None, "status": "layout-unavailable"}]
+        if wq.type_.type_name() == "struct mlx5_ib_cq_buf":
+            if (
+                size != int(wq.nent)
+                or stride != int(wq.cqe_size)
+                or size * stride != int(wq.frag_buf.size)
+            ):
+                return [{"index": None, "status": "layout-unavailable"}]
+        elif size != fbc_size:
+            return [{"index": None, "status": "layout-unavailable"}]
+        read_len = min(defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES, stride)
+        cqe_offset = (
+            defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES
+            if descriptor_kind == "cqe" and stride == 128
+            else 0
         )
-        entry_count = min(max_entries, defs.MAX_DESCRIPTOR_ENTRIES)
-        if size is not None:
-            entry_count = min(entry_count, size)
-        cursor = consumer_index - (entry_count // 2 if around_consumer else 0)
+        fragment_cache: Dict[
+            int, Tuple[Optional[int], Optional[int], Optional[bytes]]
+        ] = {}
+        entry_count = min(max_entries, size)
+        around_consumer = descriptor_kind in ("cqe", "eqe")
+        cursor = consumer - (entry_count // 2 if around_consumer else 0)
+        entries: List[Dict[str, Any]] = []
         traversed = 0
 
-        def mark_consumer(entry: Dict[str, Any], absolute_index: int) -> None:
-            if around_consumer and absolute_index == consumer_index:
-                entry["consumer_marker"] = "cons_index"
-
         for _ in range(entry_count):
-            if variable_wqe_stride and size is not None and traversed >= size:
+            if variable_wqe_stride and traversed >= size:
                 break
-            index = cursor % size if size is not None else cursor
-            addr = dumps._ring_entry_address(
-                wq,
-                index,
-                entry_len=default_len,
-                cqe_mode=cqe_mode,
-            )
-            error_status = "address-unavailable" if addr is None else None
-            raw = self.prog.read(addr, read_len) if addr is not None else None
-            if error_status is not None:
+            index = cursor % size
+            adjusted_index = index + strides_offset
+            frag_index = adjusted_index >> log_frag_strides
+            if frag_index not in fragment_cache:
+                base = dumps._fragment_base(frags, frag_index)
+                if base is None:
+                    fragment_cache[frag_index] = (None, None, None)
+                else:
+                    frag_first = frag_index * frag_strides
+                    first = max(strides_offset, frag_first)
+                    end = min(strides_offset + size, frag_first + frag_strides)
+                    byte_offset = (first - frag_first) << log_stride
+                    byte_len = (end - first) << log_stride
+                    read_address = base + byte_offset
+                    try:
+                        fragment = self.prog.read(read_address, byte_len)
+                    except FaultError:
+                        fragment = None
+                    fragment_cache[frag_index] = (
+                        base,
+                        read_address,
+                        fragment,
+                    )
+            cached_base, cached_read_address, cached_fragment = fragment_cache[
+                frag_index
+            ]
+            if cached_fragment is None:
                 entry: Dict[str, Any] = {
                     "index": index,
                     "_absolute_index": cursor,
+                    "status": (
+                        "address-unavailable"
+                        if cached_base is None
+                        else "read-unavailable"
+                    ),
                 }
-                if addr is not None:
-                    entry["address"] = formatting._hex(addr)
-                entry["status"] = error_status
-                mark_consumer(entry, cursor)
+                if around_consumer and cursor == consumer:
+                    entry["consumer_marker"] = "cons_index"
                 entries.append(entry)
                 cursor += 1
                 traversed += 1
                 continue
-            assert raw is not None
+
+            assert cached_base is not None and cached_read_address is not None
+            addr = (
+                cached_base
+                + ((adjusted_index & frag_sz_m1) << log_stride)
+                + cqe_offset
+            )
+            offset = addr - cached_read_address
+            raw = cached_fragment[offset : offset + read_len]
             decoded = decode(raw)
             step = (
-                _wqe_ctrl_wqebbs(decoded, stride, default_len)
-                if variable_wqe_stride
-                else 1
+                _wqe_ctrl_wqebbs(decoded, stride) if variable_wqe_stride else 1
             )
             if variable_wqe_stride:
                 decoded["wqebbs"] = step
             decoded.setdefault("status", "ok")
-            mark_consumer(decoded, cursor)
+            if around_consumer and cursor == consumer:
+                decoded["consumer_marker"] = "cons_index"
             if descriptor_kind is not None:
                 dumps._annotate_owner_status(
                     decoded,
                     cursor,
                     size,
                     descriptor_kind,
-                    consumer_index=consumer_index,
+                    consumer_index=consumer,
                 )
             decoded.update(
                 {
@@ -2681,7 +2581,7 @@ class Mlx5Collector:
             traversed += step
         return entries
 
-    # Findings, warnings, and walk limits
+    # Findings and warnings
 
     def _analyze_findings(
         self,
@@ -2794,7 +2694,11 @@ class Mlx5Collector:
     def _descriptor_findings(
         self, dump_reports: Sequence[Dict[str, Any]]
     ) -> List[Dict[str, str]]:
+        if not dump_reports:
+            return []
         findings = []
+        cqe_errors: Tuple[int, ...] = ()
+        cq_error = None
 
         def add(scope: str, message: str) -> None:
             findings.append(
@@ -2803,20 +2707,24 @@ class Mlx5Collector:
 
         for dump in dump_reports:
             kind = dump.get("kind")
-            selector_name = dump.get("selector_name") or "id"
-            selector = dump.get("selector")
-            scope = dump.get("device") or "mlx5"
-            for entry in dump.get("entries", []) or []:
-                if entry.get("status", "ok") not in ("ok", "ready"):
-                    continue
-                if kind == "cqe" and entry.get("opcode_value") in {
+            if kind == "cqe" and not cqe_errors:
+                cqe_errors = tuple(
                     int(self.prog.constant(name))
                     for name in (
                         "MLX5_CQE_SIG_ERR",
                         "MLX5_CQE_REQ_ERR",
                         "MLX5_CQE_RESP_ERR",
                     )
-                }:
+                )
+            elif kind == "eqe" and cq_error is None:
+                cq_error = int(self.prog.constant("MLX5_EVENT_TYPE_CQ_ERROR"))
+            selector_name = dump.get("selector_name") or "id"
+            selector = dump.get("selector")
+            scope = dump.get("device") or "mlx5"
+            for entry in dump.get("entries", []) or []:
+                if entry.get("status", "ok") not in ("ok", "ready"):
+                    continue
+                if kind == "cqe" and entry.get("opcode_value") in cqe_errors:
                     syndrome = entry.get("syndrome_display") or entry.get(
                         "syndrome"
                     )
@@ -2825,9 +2733,7 @@ class Mlx5Collector:
                         f"CQE error on {selector_name}={selector} index {entry.get('index')}"
                         f" syndrome={syndrome}",
                     )
-                elif kind == "eqe" and entry.get("type_value") == int(
-                    self.prog.constant("MLX5_EVENT_TYPE_CQ_ERROR")
-                ):
+                elif kind == "eqe" and entry.get("type_value") == cq_error:
                     syndrome = entry.get("syndrome_display") or entry.get(
                         "syndrome"
                     )
@@ -2898,116 +2804,6 @@ def _irq_affinity_cpus(prog: Program, irqn: Optional[int]) -> Optional[str]:
     return cpumask_to_cpulist(mask) or None
 
 
-def _shared_known_value(values: Iterable[Optional[int]]) -> Optional[int]:
-    known = {value for value in values if value is not None}
-    return next(iter(known)) if len(known) == 1 else None
-
-
-def _qp_identity(
-    qp: Object, device: str, table_qpn: Optional[int] = None
-) -> _QpIdentity:
-    """Read the small set of fields used to identify a QP."""
-
-    ib_qpn = int(qp.ibqp.qp_num)
-    hw_qpn = int(qp.trans_qp.base.mqp.qpn)
-    key = _QpKey(str(device), "address", int(qp))
-    aliases = tuple(selection._qp_aliases(ib_qpn, ib_qpn, hw_qpn, table_qpn))
-    return _QpIdentity(key, ib_qpn, ib_qpn, hw_qpn, aliases)
-
-
-def _merge_discovery(
-    existing: Dict[str, Any], discovered: Dict[str, Any]
-) -> None:
-    """Combine records for one object found through multiple kernel tables."""
-
-    for name, value in discovered.items():
-        if value in (None, "", []):
-            continue
-        current = existing.get(name)
-        if current in (None, "", []) or current == {"status": "unavailable"}:
-            existing[name] = value
-
-
-def _qp_type(qp: Object) -> int:
-    if has_member(qp, "type"):
-        return int(qp.type)
-    ib_qp_type = int(qp.ibqp.qp_type)
-    if ib_qp_type == int(qp.prog_.constant("IB_QPT_DRIVER")):
-        return int(qp.qp_sub_type)
-    return ib_qp_type
-
-
-def _creator_record(
-    display: str,
-    creator_type: Optional[str],
-    source: Optional[str],
-    *,
-    name: Optional[str] = None,
-    pid: Optional[int] = None,
-) -> Dict[str, Any]:
-    return {
-        "display": display,
-        "type": creator_type,
-        "name": name,
-        "pid": pid,
-        "source": source,
-    }
-
-
-def _qp_creator(qp: Object) -> Dict[str, Any]:
-    resource = qp.ibqp.res
-    if resource.user:
-        task = resource.task
-        if not task:
-            return _creator_record(
-                "user", "user", "struct ib_qp.res.user/task"
-            )
-        comm = task.comm.string_().decode("utf-8", "replace")
-        pid = int(task.pid)
-        return _creator_record(
-            f"user:{comm}[{pid}]",
-            "user",
-            "struct ib_qp.res.user/task",
-            name=comm,
-            pid=pid,
-        )
-
-    kern_name = (
-        resource.kern_name.string_().decode("utf-8", "replace")
-        if resource.kern_name
-        else None
-    )
-    display = f"kernel:{kern_name}" if kern_name else "kernel"
-    return _creator_record(
-        display,
-        "kernel",
-        "struct ib_qp.res.user/kern_name",
-        name=kern_name,
-    )
-
-
-def _cq_number_from_cq(cq: Optional[Object]) -> Optional[int]:
-    if cq is None or not cq:
-        return None
-    mlx5_ib_cq = container_of(cq, "struct mlx5_ib_cq", "ibcq")
-    return int(mlx5_ib_cq.mcq.cqn)
-
-
-def _mlx5_ib_wq_wrid_at_counter(
-    wq: Optional[Object], wqe_counter: int
-) -> Tuple[Optional[int], Optional[int]]:
-    if wq is None:
-        return None, None
-    wqe_cnt = int(wq.wqe_cnt)
-    if wqe_cnt <= 0:
-        return None, None
-    index = wqe_counter & (wqe_cnt - 1)
-    wrid = wq.wrid
-    if not wrid:
-        return None, index
-    return int(wrid[index]), index
-
-
 def _mlx5_ib_gsi_saved_wr_id(prog: Program, wr_cqe: Any) -> Optional[int]:
     if wr_cqe is None:
         return None
@@ -3043,38 +2839,22 @@ def _cq_consumer_index(
 ) -> Tuple[Optional[int], str, int]:
     """Choose the CQ consumer counter for its owner.
 
-    mlx5_ib polls mlx5_core_cq.cons_index. mlx5e and ASO poll through
-    mlx5_cqwq, so use wq.cc; their mcq.cons_index may remain zero.
+    mlx5_ib polls mlx5_core_cq.cons_index. mlx5e polls through mlx5_cqwq,
+    so use wq.cc; its mcq.cons_index may remain zero.
     """
 
     core_cons_index = int(core_cq.cons_index)
     wq_cc = wq_summary.get("cc")
-    if (
-        address_struct in ("struct mlx5e_cq", "struct mlx5_aso_cq")
-        and wq_cc is not None
-    ):
+    if address_struct == "struct mlx5e_cq" and wq_cc is not None:
         return wq_cc, f"{address_struct}.wq.cc", core_cons_index
     return core_cons_index, "struct mlx5_core_cq.cons_index", core_cons_index
 
 
-def _wqe_ctrl_wqebbs(
-    decoded: Dict[str, Any], stride_bytes: Optional[int], default_len: int
-) -> int:
+def _wqe_ctrl_wqebbs(decoded: Dict[str, Any], stride_bytes: int) -> int:
     ds = decoded.get("ds")
     if ds is None or ds <= 0:
         return 1
-    stride = (
-        stride_bytes
-        if stride_bytes is not None and stride_bytes > 0
-        else default_len
-    )
-    if stride <= 0:
-        stride = defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES
-    return max(1, (ds * 16 + stride - 1) // stride)
-
-
-def _bit_is_set(value: Optional[int], bit: int) -> Optional[bool]:
-    return None if value is None else bool(value & (1 << bit))
+    return max(1, (ds * 16 + stride_bytes - 1) // stride_bytes)
 
 
 def _nonnegative_delta(pc: Optional[int], cc: Optional[int]) -> Optional[int]:
@@ -3104,11 +2884,6 @@ def _rq_progress_detail(
 # Linux/netdev/mlx5 object helpers
 
 
-def _queue_number(queue_obj: Object, kind: str) -> int:
-    number_field = "rqn" if kind in ("rq", "xskrq", "ptp_rq") else "sqn"
-    return int(queue_obj.member_(number_field))
-
-
 def _queue_should_warn_disabled(queue: Dict[str, Any]) -> bool:
     number = queue.get("number")
     # Ignore disabled findings for placeholder XDP RQs (queue 0 with a dummy CQ).
@@ -3136,29 +2911,23 @@ def _owner_string(owner: Dict[str, Any]) -> str:
 # Descriptor/ring helpers
 
 
-def _descriptor_dump_status(entries: List[Dict[str, Any]]) -> str:
-    if not entries:
-        return "empty"
-    statuses = [entry.get("status", "ok") for entry in entries]
-    if all(status == statuses[0] for status in statuses):
-        return str(statuses[0])
-    return "partial"
+def _descriptor_dump_summary(
+    entries: List[Dict[str, Any]],
+) -> Tuple[str, Dict[str, int]]:
+    statuses = Counter(str(entry.get("status", "ok")) for entry in entries)
+    status = next(iter(statuses), "empty") if len(statuses) < 2 else "partial"
+    return status, {
+        name: count
+        for name, count in statuses.items()
+        if name not in dumps._BENIGN_DESCRIPTOR_STATUSES
+    }
 
 
-def _descriptor_dump_has_errors(entries: List[Dict[str, Any]]) -> bool:
-    return any(
-        entry.get("status", "ok") not in dumps._BENIGN_DESCRIPTOR_STATUSES
-        for entry in entries
-    )
-
-
-def _wq_warning_shape(wq: Optional[Object], include_wq: bool = False) -> str:
-    layout = dumps._wq_layout_summary(wq)
+def _wq_warning_shape(layout: Dict[str, Any], include_wq: bool = False) -> str:
     fields: Tuple[Tuple[str, str], ...] = (
         ("wq", "wq"),
         ("frags", "frags"),
-        ("direct", "direct"),
-        ("computed_size", "computed_size"),
+        ("fbc_sz_m1", "sz_m1"),
         ("stride", "stride_bytes"),
     )
     if not include_wq:
