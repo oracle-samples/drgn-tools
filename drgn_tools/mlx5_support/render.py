@@ -147,7 +147,7 @@ def render_report(report: Dict[str, Any], args: argparse.Namespace) -> None:
     }
     rdma_labels = _device_rdma_labels(report)
 
-    _render_devices(report, args)
+    _render_devices(report)
     if args.queues or (
         args.dump_wqe
         and (
@@ -173,7 +173,7 @@ def render_report(report: Dict[str, Any], args: argparse.Namespace) -> None:
     _render_warnings(report)
 
 
-def _render_devices(report: Dict[str, Any], args: argparse.Namespace) -> None:
+def _render_devices(report: Dict[str, Any]) -> None:
     print("Device summary")
     table = Table(
         "PCI MLX5_CORE_DEV NETDEVS IPS RDMA_DEV RDMA_PORT STATE HEALTH FW CH CQ EQ QP".split()
@@ -202,30 +202,6 @@ def _render_devices(report: Dict[str, Any], args: argparse.Namespace) -> None:
         )
     table.write()
     print()
-
-    if args._full_report:
-        print("Device details")
-        device_labels = _device_display_labels(report)
-        for device in report.get("devices", []):
-            mdev = device.get("mdev")
-            label = device_labels.get(str(mdev), mdev)
-            print(f"  {label}")
-            _print_kv_block(
-                "summary", device.get("summary", {}) or {}, indent="    "
-            )
-            _print_kv_block("health", device.get("health", {}), indent="    ")
-            _print_kv_block(
-                "capabilities", device.get("capabilities", {}), indent="    "
-            )
-            for netdev in device.get("netdevs", []):
-                print(f"    netdev {netdev.get('name')}")
-                _print_kv_block(
-                    "summary", netdev.get("summary", {}), indent="      "
-                )
-                _print_kv_block(
-                    "priv", netdev.get("priv", {}), indent="      "
-                )
-        print()
 
 
 def _device_ips(device: Dict[str, Any]) -> str:
@@ -834,16 +810,6 @@ def _render_warnings(report: Dict[str, Any]) -> None:
 
 def _max_display(value: Optional[int]) -> str:
     return "all" if value is None else str(value)
-
-
-def _print_kv_block(
-    title: str, data: Dict[str, Any], indent: str = "  "
-) -> None:
-    print(f"{indent}{title}:")
-    for key in sorted(data.keys()):
-        if str(key).startswith("_") or str(key).endswith("_source"):
-            continue
-        print(f"{indent}  {key}: {_display(data[key])}")
 
 
 def _findings_summary_line(findings: List[Dict[str, str]]) -> str:

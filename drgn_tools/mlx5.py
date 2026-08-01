@@ -312,7 +312,6 @@ class Mlx5Collector:
                     "utf-8", "replace"
                 )
                 device.rdma_port = 1
-                device.rdma_ibdev = formatting._hex(int(ibdev))
                 self._ibdev_by_mdev[mdev_addr] = ibdev
 
             netdev = collect_device.mlx5_netdev(mdev)
@@ -323,9 +322,6 @@ class Mlx5Collector:
             if self.args.netdev and name != self.args.netdev:
                 continue
 
-            netdev_ops = collect_device._symbol_for_addr(
-                self.prog, int(netdev.netdev_ops)
-            )
             priv = netdev_priv(netdev, "struct mlx5e_priv")
             if int(priv.mdev) != mdev_addr:
                 raise ValueError(
@@ -334,9 +330,7 @@ class Mlx5Collector:
             device.netdevs.append(
                 {
                     "name": name,
-                    "driver": netdev_ops,
                     "summary": collect_device._collect_netdev_summary(netdev),
-                    "priv": collect_device._collect_mlx5e_priv_summary(priv),
                     "channels": [],
                     "channels_collected": False,
                     "_netdev_obj": netdev,
@@ -397,7 +391,6 @@ class Mlx5Collector:
     def _collect_device_details(self, device: DeviceRecord) -> None:
         device.summary = self._collect_core_summary(device.mdev, device)
         device.health = self._collect_health(device.mdev)
-        device.capabilities = self._collect_capabilities(device.mdev)
 
         for netdev in device.netdevs:
             priv = netdev.get("_priv_obj")
@@ -485,26 +478,11 @@ class Mlx5Collector:
             "mdev": device.mdev_address,
             "rdma_name": device.rdma_name,
             "rdma_port": device.rdma_port,
-            "rdma_ibdev": device.rdma_ibdev,
             "pci_bdf": collect_device._pci_bdf_from_mdev(mdev)
             or "unavailable",
-            "coredev_type": formatting._enum_name(
-                mdev.coredev_type, "MLX5_COREDEV_"
-            ),
             "device_state": formatting._enum_name(
                 mdev.state, "MLX5_DEVICE_STATE_"
             ),
-            "pci_status": formatting._enum_name(
-                mdev.pci_status, "MLX5_PCI_STATUS_"
-            ),
-            "cmd_state": formatting._enum_name(
-                mdev.cmd.state, "MLX5_CMDIF_STATE_"
-            ),
-            "intf_state": formatting._hex(int(mdev.intf_state)),
-            "board_id": mdev.board_id.string_().decode("utf-8", "replace"),
-            "rev_id": int(mdev.rev_id),
-            "sys_image_guid": formatting._hex(int(mdev.sys_image_guid)),
-            "numa_node": int(mdev.priv.numa_node),
             "fw_version": self._collect_fw_version(mdev),
         }
 
@@ -544,27 +522,6 @@ class Mlx5Collector:
             ),
             "fatal_error": fatal_error,
             "miss_counter": miss_counter,
-            "syndrome": formatting._hex(syndrome),
-            "prev_counter": int(health.prev),
-            "flags": formatting._hex(int(health.flags)),
-            "crdump_size": int(health.crdump_size),
-            "health_buffer": formatting._hex(int(health.health)),
-            "health_counter": formatting._hex(int(health.health_counter)),
-            "workqueue": formatting._hex(int(health.wq)),
-        }
-
-    def _collect_capabilities(self, mdev: Object) -> Dict[str, Any]:
-        profile = mdev.profile
-        sriov = mdev.priv.sriov
-        return {
-            "profile_log_max_qp": int(profile.log_max_qp),
-            "profile_num_cmd_caches": int(profile.num_cmd_caches)
-            if has_member(profile, "num_cmd_caches")
-            else None,
-            "embedded_cpu": int(mdev.caps.embedded_cpu),
-            "roce_en": int(mdev.roce.roce_en),
-            "sriov_max_vfs": int(sriov.max_vfs),
-            "sriov_enabled_vfs": int(sriov.num_vfs),
         }
 
     def collect(self) -> Dict[str, Any]:
