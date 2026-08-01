@@ -17,10 +17,8 @@ from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
 
 from .defs import _PCI_BDF_RE
-from .format import _hex
 from drgn_tools.crash_net import netdev_ipv4s
 from drgn_tools.crash_net import netdev_ipv6s
-from drgn_tools.util import has_member
 
 MAX_NETDEV_IPS = 64
 
@@ -70,11 +68,9 @@ class DeviceRecord:
     netdevs: List[Dict[str, Any]]
     summary: Dict[str, Any]
     health: Dict[str, Any]
-    capabilities: Dict[str, Any]
     counts: Dict[str, Optional[int]]
     rdma_name: Optional[str]
     rdma_port: Optional[int]
-    rdma_ibdev: Optional[str]
 
     def __init__(self, mdev: Object) -> None:
         self.mdev = mdev
@@ -82,11 +78,9 @@ class DeviceRecord:
         self.netdevs = []
         self.summary = {}
         self.health = {}
-        self.capabilities = {}
         self.counts = {}
         self.rdma_name = None
         self.rdma_port = None
-        self.rdma_ibdev = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -94,7 +88,6 @@ class DeviceRecord:
             "netdevs": self.netdevs,
             "summary": self.summary,
             "health": self.health,
-            "capabilities": self.capabilities,
             "counts": self.counts,
         }
 
@@ -158,26 +151,11 @@ def _device_has_ip(device: DeviceRecord, selector: str) -> bool:
 def _collect_netdev_summary(netdev: Object) -> Dict[str, Any]:
     stats = {
         field: int(netdev.stats.member_(field))
-        for field in (
-            "rx_packets",
-            "tx_packets",
-            "rx_bytes",
-            "tx_bytes",
-            "rx_dropped",
-            "tx_dropped",
-            "rx_errors",
-            "tx_errors",
-        )
+        for field in ("rx_errors", "tx_errors")
     }
     return {
-        "ifindex": int(netdev.ifindex),
-        "mtu": int(netdev.mtu),
-        "flags": _hex(int(netdev.flags)),
-        "operstate": int(netdev.operstate),
         "carrier": _netdev_carrier_state(netdev),
         "ip_addresses": _netdev_ip_addresses(netdev),
-        "num_tx_queues": int(netdev.real_num_tx_queues),
-        "num_rx_queues": int(netdev.real_num_rx_queues),
         "stats": stats,
     }
 
@@ -192,27 +170,6 @@ def _netdev_ip_addresses(netdev: Object) -> List[str]:
         if len(addresses) >= MAX_NETDEV_IPS:
             return addresses
     return addresses
-
-
-def _collect_mlx5e_priv_summary(priv: Object) -> Dict[str, Any]:
-    channels = priv.channels
-    return {
-        "address": _hex(int(priv)),
-        "mdev": _hex(int(priv.mdev)),
-        "netdev": _hex(int(priv.netdev)),
-        "state": _hex(int(priv.state)),
-        "stats_nch": int(priv.stats_nch),
-        "max_nch": int(priv.max_nch),
-        "max_opened_tc": int(priv.max_opened_tc),
-        "tx_ptp_opened": int(priv.tx_ptp_opened),
-        "rx_ptp_opened": int(priv.rx_ptp_opened)
-        if has_member(priv, "rx_ptp_opened")
-        else None,
-        "channels": _hex(int(channels.address_)),
-        "channels_source": "struct mlx5e_priv.channels",
-        "channels_num": int(channels.num),
-        "profile": _hex(int(priv.profile)),
-    }
 
 
 def _netdev_carrier_state(netdev: Object) -> str:
