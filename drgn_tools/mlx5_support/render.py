@@ -527,24 +527,19 @@ def _render_eqs(report: Dict[str, Any], args: argparse.Namespace) -> None:
 
 def _render_qps(report: Dict[str, Any], args: argparse.Namespace) -> None:
     print("Queue pairs")
-    resolution_warning = _qp_creator_resolution_warning(report)
     if not report.get("qps"):
         print(
             "  No QPs found in the mlx5 QP tables this tool knows how to read."
         )
-        if resolution_warning:
-            print(f"  {resolution_warning}")
         print()
         return
     print("  MLX5_IB_QP is the struct mlx5_ib_qp address.")
     print(
-        "  CREATOR shows who created the QP: kernel, user process, or unresolved."
+        "  CREATOR shows whether the kernel or a user process created the QP."
     )
     print(
         "  SQ/RQ are send/receive queues; PC/CC are producer/consumer counters."
     )
-    if resolution_warning:
-        print(f"  {resolution_warning}")
     if getattr(args, "qp_creators", None):
         print(f"  filter: creator={', '.join(args.qp_creators)}")
     table = Table(
@@ -579,21 +574,6 @@ def _render_qps(report: Dict[str, Any], args: argparse.Namespace) -> None:
         table.row(*row)
     table.write()
     print()
-
-
-def _qp_creator_resolution_warning(report: Dict[str, Any]) -> Optional[str]:
-    resolution = report.get("qp_creator_resolution")
-    if not resolution or not resolution.get("unresolved_count"):
-        return None
-    examples = ", ".join(
-        f"{item.get('device') or 'mlx5'}/QPN {item.get('qpn')}"
-        for item in resolution.get("examples", [])
-    )
-    suffix = f"; examples: {examples}" if examples else ""
-    return (
-        "warning: creator could not be determined for "
-        f"{resolution.get('unresolved_count')} QP(s){suffix}."
-    )
 
 
 def _render_dumps(report: Dict[str, Any], args: argparse.Namespace) -> None:
