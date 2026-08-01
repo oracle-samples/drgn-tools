@@ -42,6 +42,7 @@ from drgn import ProgramFlags
 from drgn import TypeKind
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import cpumask_to_cpulist
+from drgn.helpers.linux.list import list_count_nodes
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.net import netdev_priv
 from drgn.helpers.linux.radixtree import radix_tree_for_each
@@ -598,7 +599,8 @@ class Mlx5Collector:
                 )
                 netdev["channels_collected"] = True
 
-        device.counts = self._device_counts(device)
+        if not self._summary_counts_only:
+            device.counts = self._device_counts(device)
 
     def _device_counts(self, device: DeviceRecord) -> Dict[str, Optional[int]]:
         netdevs = device.netdevs
@@ -1741,10 +1743,15 @@ class Mlx5Collector:
     # RDMA queue pairs
 
     def _count_summary_qps(self, device: DeviceRecord) -> Optional[int]:
-        keys = set()
-        for qp, _owner, table_qpn in self._iter_qps_from_device(device):
-            keys.add(_qp_identity(qp, device.mdev_address, table_qpn).key)
-        return len(keys)
+        total = 0
+        seen_ibdevs: Set[int] = set()
+        for ibdev in self._iter_mlx5_ib_devices(int(device.mdev)):
+            ibdev_address = int(ibdev)
+            if ibdev_address in seen_ibdevs:
+                continue
+            seen_ibdevs.add(ibdev_address)
+            total += list_count_nodes(ibdev.qp_list.address_of_())
+        return total
 
     def _report_qps(self) -> List[Dict[str, Any]]:
         if not (

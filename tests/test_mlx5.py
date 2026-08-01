@@ -159,6 +159,64 @@ def _fake_qp(address=0x1000, hw_qpn=7, **overrides):
     return _FakeObject(**values)
 
 
+def _fake_ibdev(address, qp_list_address):
+    return _FakeObject(
+        address_=address,
+        qp_list=_FakeObject(
+            address_of_=lambda: _FakeObject(address_=qp_list_address)
+        ),
+    )
+
+
+def test_summary_qp_count_sums_canonical_ib_device_lists(monkeypatch):
+    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args(summary=True))
+    device = DeviceRecord(1)
+    collector._iter_mlx5_ib_devices = lambda _mdev: iter(
+        (_fake_ibdev(0x1000, 0x1100), _fake_ibdev(0x2000, 0x2200))
+    )
+    monkeypatch.setattr(
+        mlx5,
+        "list_count_nodes",
+        lambda head: {0x1100: 3, 0x2200: 4}[int(head)],
+    )
+
+    assert collector._count_summary_qps(device) == 7
+
+
+def test_summary_qp_count_deduplicates_ib_device_addresses(monkeypatch):
+    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args(summary=True))
+    device = DeviceRecord(1)
+    collector._iter_mlx5_ib_devices = lambda _mdev: iter(
+        (_fake_ibdev(0x1000, 0x1100), _fake_ibdev(0x1000, 0x1100))
+    )
+    counted_heads = []
+
+    def count_nodes(head):
+        counted_heads.append(int(head))
+        return 3
+
+    monkeypatch.setattr(mlx5, "list_count_nodes", count_nodes)
+
+    assert collector._count_summary_qps(device) == 3
+    assert counted_heads == [0x1100]
+
+
+def test_plain_summary_skips_placeholder_device_counts():
+    collector = mlx5.Mlx5Collector(_FAKE_PROG, _args(summary=True))
+    device = DeviceRecord(1)
+    collector._collect_core_summary = lambda _mdev, _device: {}
+    collector._collect_health = lambda _mdev: {}
+    collector._collect_capabilities = lambda _mdev: {}
+
+    def unexpected_device_counts(_device):
+        raise AssertionError("summary should not calculate placeholder counts")
+
+    collector._device_counts = unexpected_device_counts
+    collector._collect_device_details(device)
+
+    assert device.counts == {}
+
+
 def test_qp_registry_keeps_distinct_objects_with_the_same_logical_qpn(
     monkeypatch,
 ):
