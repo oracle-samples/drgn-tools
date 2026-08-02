@@ -505,6 +505,8 @@ def _render_qps(
         "SQ_SZ RQ_SZ SQ_PC SQ_CC RQ_PC RQ_CC".split()
     )
     for qp in selection._limit_items(report.get("qps", []), args.maxqp):
+        sq = qp.get("sq") or {}
+        rq = qp.get("rq") or {}
         table.row(
             _record_device_label(qp, rdma_labels, fallback=False) or "-",
             qp.get("qpn"),
@@ -515,12 +517,12 @@ def _render_qps(
             qp.get("state_display") or qp.get("state"),
             qp.get("send_cqn"),
             qp.get("recv_cqn"),
-            (qp.get("sq") or {}).get("size"),
-            (qp.get("rq") or {}).get("size"),
-            qp.get("sq_pc"),
-            qp.get("sq_cc"),
-            qp.get("rq_pc"),
-            qp.get("rq_cc"),
+            sq.get("size"),
+            rq.get("size"),
+            sq.get("head"),
+            sq.get("tail"),
+            rq.get("head"),
+            rq.get("tail"),
         )
     table.write()
     print()

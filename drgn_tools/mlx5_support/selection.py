@@ -219,14 +219,11 @@ def _qp_record_matches_qpn(record: Dict[str, Any], qpn: Optional[int]) -> bool:
     if qpn is None:
         return True
     target = int(qpn)
-    aliases = record.get("qpn_aliases")
-    if not isinstance(aliases, list):
-        aliases = (
-            record.get("qpn"),
-            record.get("ib_qpn"),
-            record.get("hw_qpn"),
-        )
-    return target in (int(alias) for alias in aliases if alias is not None)
+    return target in (
+        int(value)
+        for value in (record.get("qpn"), record.get("hw_qpn"))
+        if value is not None
+    )
 
 
 def _limit_items(
