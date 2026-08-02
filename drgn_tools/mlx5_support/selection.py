@@ -159,7 +159,7 @@ def _cq_balance_bucket(cq: Dict[str, Any]) -> Tuple[str, str, str]:
     return (
         str(cq.get("device") or ""),
         str(_short_struct(cq.get("address_struct")) or ""),
-        str(cq.get("queue_kind") or cq.get("owner") or ""),
+        str(cq.get("queue_kind") or ""),
     )
 
 

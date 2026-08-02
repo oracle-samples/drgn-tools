@@ -28,7 +28,6 @@ from typing import List
 from typing import NamedTuple
 from typing import Optional
 from typing import Sequence
-from typing import Set
 from typing import Tuple
 from typing import TypeVar
 from typing import Union
@@ -200,17 +199,9 @@ def _new_channel_record(
     napi = channel.napi
     return {
         "index": index,
-        "address": formatting._hex(int(channel)),
         "cpu": cpu,
-        "napi": formatting._hex(int(napi.address_of_())),
         "napi_id": int(napi.napi_id),
         "napi_state": formatting._hex(int(napi.state)),
-        "napi_weight": int(napi.weight),
-        "napi_poll_owner": int(napi.poll_owner),
-        "irq_desc": None,
-        "irqn": None,
-        "eqn": None,
-        "vector": None,
         "tx_sqs": [],
         "xdp_sqs": [],
         "icosqs": [],
@@ -508,11 +499,6 @@ class Mlx5Collector:
         for device in devices:
             device.summary = self._collect_core_summary(device)
             device.health = collect_device.collect_health(device.mdev)
-            netdev = device.netdev
-            if self._want_channels and netdev is not None:
-                netdev["channels"] = self._collect_channels(
-                    device, netdev, netdev["_priv_obj"]
-                )
 
         if self._summary_counts_only:
             for device in devices:
@@ -522,13 +508,18 @@ class Mlx5Collector:
                 if self._want_eqs:
                     for core, role in self._iter_eq_candidates(device):
                         self._record_eq(core, device, role)
+                netdev = device.netdev
+                if self._want_channels and netdev is not None:
+                    netdev["channels"] = self._collect_channels(
+                        device, netdev, netdev["_priv_obj"]
+                    )
                 if self._want_cqs:
-                    self._collect_cqs_from_eq_tables(device)
+                    for key, core_cq in self._iter_core_cqs(device):
+                        self._record_core_cq(core_cq, device, table_key=key)
                 if self._want_qps:
                     for qp in self._iter_qps_from_device(device):
                         self._record_qp(qp, device)
 
-            self._link_cqs_eqs_and_channels(devices)
             self._set_device_counts(devices)
 
         dump_reports = self._collect_requested_dumps()
@@ -786,9 +777,7 @@ class Mlx5Collector:
                     "netdev": netdev_record.get("name"),
                     "channel": "ptp",
                     "queue_kind": "ptp_ts_cq",
-                    "queue_role": "timestamp",
                     "queue_number": int(timestamp_cq.mcq.cqn),
-                    "tc": tc,
                 },
             )
 
@@ -877,9 +866,7 @@ class Mlx5Collector:
             "netdev": netdev_name,
             "channel": channel_index,
             "queue_kind": kind,
-            "queue_role": role,
             "queue_number": qn,
-            "tc": tc,
         }
         cq_record = self._collect_mlx5e_cq(cq, owner)
 
@@ -1063,37 +1050,21 @@ class Mlx5Collector:
 
         wq = cq.wq
         wq_summary = self._collect_wq_summary(wq)
-        consumer_index, consumer_source, core_cons_index = _cq_consumer_index(
-            "struct mlx5e_cq", wq_summary, mcq
-        )
-        arm_sn_raw = int(mcq.arm_sn)
+        consumer_index = _cq_consumer_index("struct mlx5e_cq", wq_summary, mcq)
         record = {
             "cqn": cqn,
             "address": formatting._hex(int(cq.address_of_())),
             "address_struct": "struct mlx5e_cq",
-            "core_cq": formatting._hex(int(mcq.address_of_())),
-            "core_cq_struct": "struct mlx5_core_cq",
-            "core_cq_source": "struct mlx5e_cq.mcq",
-            "owner": owner_name,
             "owners": [owner_name],
             "device": owner.get("device"),
             "netdev": owner.get("netdev"),
-            "channel": owner.get("channel"),
             "queue_kind": owner.get("queue_kind"),
-            "queue_role": owner.get("queue_role"),
-            "queue_number": owner.get("queue_number"),
             "consumer_index": consumer_index,
-            "consumer_index_source": consumer_source,
-            "core_cons_index": core_cons_index,
-            "wq_cc": wq_summary.get("cc"),
-            "wq_source": "struct mlx5e_cq.wq",
-            "arm_sn": _cq_arm_sn(arm_sn_raw),
-            "arm_sn_raw": arm_sn_raw,
-            "vector": int(mcq.vector),
-            "irqn": int(mcq.irqn),
+            "arm_sn": int(mcq.arm_sn) & 0x3,
             "event_ctr": int(cq.event_ctr),
             "size": wq_summary.get("size"),
             "stride_bytes": wq_summary.get("stride_bytes"),
+            **self._cq_eq_fields(mcq, str(owner["device"])),
         }
         self._cqs[key] = _RingEntry(record, wq)
         return record
@@ -1116,6 +1087,23 @@ class Mlx5Collector:
             async_eq.cq_table.tree.address_of_()
         ):
             yield key, cast("struct mlx5_core_cq *", obj)
+
+    def _cq_eq_fields(
+        self, core_cq: Object, device_name: str
+    ) -> Dict[str, Any]:
+        core = core_cq.eq.core
+        eqn = int(core.eqn)
+        entry = self._eqs.get((device_name, eqn))
+        record = entry.record if entry is not None else {}
+        irqn = int(core.irqn)
+        return {
+            "eqn": eqn,
+            "irqn": irqn,
+            "irq_cpu": record.get("irq_cpu")
+            if entry is not None
+            else _irq_affinity_cpus(self.prog, irqn),
+            "vector": int(core.vecidx),
+        }
 
     def _iter_eq_candidates(
         self, device: DeviceRecord
@@ -1161,8 +1149,6 @@ class Mlx5Collector:
             "eqn": eqn,
             "address": formatting._hex(int(core.address_)),
             "address_struct": type_name,
-            "core_eq": formatting._hex(int(core.address_)),
-            "core_eq_struct": type_name,
             "device": device.mdev_address,
             "role": role,
             "irqn": irqn,
@@ -1181,23 +1167,10 @@ class Mlx5Collector:
         self._eqs[key] = _EqEntry(record, core)
         return record
 
-    def _collect_cqs_from_eq_tables(self, device: DeviceRecord) -> None:
-        """Collect CQs from the device-wide async EQ table.
-
-        Channel walks find mlx5e CQs. The async EQ table also contains RDMA
-        and internal CQs.
-        """
-
-        core = device.mdev.priv.eq_table.async_eq.core
-        owner = f"eq_cq_table:async:eqn{int(core.eqn)}"
-        for key, core_cq in self._iter_core_cqs(device):
-            self._record_core_cq(core_cq, device, owner=owner, table_key=key)
-
     def _record_core_cq(
         self,
         core_cq: Object,
         device: DeviceRecord,
-        owner: str,
         table_key: Optional[int] = None,
     ) -> Dict[str, Any]:
         cqn = int(core_cq.cqn)
@@ -1208,12 +1181,7 @@ class Mlx5Collector:
         key = (device.mdev_address, cqn)
         entry = self._cqs.get(key)
         if entry is not None:
-            record = entry.record
-            owners = record.setdefault("owners", [record.get("owner")])
-            if owner not in owners:
-                owners.append(owner)
-            record["owner"] = ";".join(str(item) for item in owners if item)
-            return record
+            return entry.record
 
         event = self._cq_event_name(core_cq.event)
         mlx5e_cq = None
@@ -1232,61 +1200,42 @@ class Mlx5Collector:
         size = None
         stride_bytes = None
         queue_kind: Optional[str] = "core_cq"
-        queue_role: Optional[str] = "core"
-        queue_number = cqn
         if ib_cq is not None:
             address_obj, address_struct = ib_cq, "struct mlx5_ib_cq"
             size = int(ib_cq.ibcq.cqe) + 1
             stride_bytes = int(ib_cq.cqe_size)
             if not ib_cq.ibcq.uobject:
                 wq = ib_cq.buf
-            queue_kind, queue_role = "rdma_cq", "rdma"
+            queue_kind = "rdma_cq"
         elif mlx5e_cq is not None:
             address_obj, address_struct = mlx5e_cq, "struct mlx5e_cq"
             wq = mlx5e_cq.wq
             mlx5e_owner = self._mlx5e_core_cq_owner(mlx5e_cq, core_cq, device)
             netdev = mlx5e_owner.get("netdev")
             queue_kind = mlx5e_owner.get("queue_kind")
-            queue_role = mlx5e_owner.get("queue_role")
             event_ctr = int(mlx5e_cq.event_ctr)
             specific_owner = _owner_string(mlx5e_owner)
-        owners = (
-            [specific_owner, owner]
-            if specific_owner and specific_owner != owner
-            else [owner]
-        )
+        owners = [specific_owner] if specific_owner else []
         wq_summary = self._collect_wq_summary(wq)
-        consumer_index, consumer_source, core_cons_index = _cq_consumer_index(
+        consumer_index = _cq_consumer_index(
             address_struct, wq_summary, core_cq
         )
-        arm_sn_raw = int(core_cq.arm_sn)
         record = {
             "cqn": cqn,
             "address": formatting._hex(int(address_obj)),
             "address_struct": address_struct,
-            "core_cq": formatting._hex(int(core_cq)),
-            "core_cq_struct": "struct mlx5_core_cq",
-            "owner": ";".join(str(o) for o in owners if o),
             "owners": owners,
             "device": device.mdev_address,
             "netdev": netdev,
-            "channel": None,
             "queue_kind": queue_kind,
-            "queue_role": queue_role,
-            "queue_number": queue_number,
             "consumer_index": consumer_index,
-            "consumer_index_source": consumer_source,
-            "core_cons_index": core_cons_index,
-            "wq_cc": wq_summary.get("cc"),
-            "arm_sn": _cq_arm_sn(arm_sn_raw),
-            "arm_sn_raw": arm_sn_raw,
-            "vector": int(core_cq.vector),
-            "irqn": int(core_cq.irqn),
+            "arm_sn": int(core_cq.arm_sn) & 0x3,
             "event_ctr": event_ctr,
             "size": size or wq_summary.get("size"),
             "stride_bytes": stride_bytes
             or wq_summary.get("stride_bytes")
             or int(core_cq.cqe_sz),
+            **self._cq_eq_fields(core_cq, device.mdev_address),
         }
 
         self._cqs[key] = _RingEntry(record, wq)
@@ -1320,7 +1269,6 @@ class Mlx5Collector:
                     "device": device.mdev_address,
                     "netdev": netdev.get("name"),
                     "queue_kind": "drop_rq_cq",
-                    "queue_role": "drop",
                     "queue_number": cqn,
                 }
             if (
@@ -1336,101 +1284,8 @@ class Mlx5Collector:
             "device": device.mdev_address,
             "netdev": netdev_name,
             "queue_kind": "mlx5e_cq",
-            "queue_role": "mlx5e",
             "queue_number": cqn,
         }
-
-    def _link_cqs_eqs_and_channels(
-        self, devices: Sequence[DeviceRecord]
-    ) -> None:
-        eq_by_vector: Dict[Tuple[str, int], Dict[str, Any]] = {}
-        eq_by_irqn: Dict[Tuple[str, int], Dict[str, Any]] = {}
-        for eq_record in (entry.record for entry in self._eqs.values()):
-            device = eq_record.get("device")
-            if device is None:
-                continue
-            device = str(device)
-            vector = eq_record.get("vector")
-            irqn = eq_record.get("irqn")
-            if vector is not None:
-                eq_by_vector[(device, int(vector))] = eq_record
-            if irqn is not None:
-                eq_by_irqn[(device, int(irqn))] = eq_record
-
-        for cq in (entry.record for entry in self._cqs.values()):
-            device = cq.get("device")
-            if device is None:
-                continue
-            device = str(device)
-            vector = cq.get("vector")
-            irqn = cq.get("irqn")
-            eq: Optional[Dict[str, Any]] = (
-                eq_by_vector.get((device, int(vector)))
-                if vector is not None
-                else None
-            )
-            if irqn is not None:
-                irq_eq = eq_by_irqn.get((device, int(irqn)))
-                # IRQ is the stronger match when vector and IRQ disagree.
-                if irq_eq is not None and (
-                    eq is None or eq.get("irqn") != irqn
-                ):
-                    eq = irq_eq
-            for cq_field, eq_field in (
-                ("eqn", "eqn"),
-                ("eq_role", "role"),
-                ("eq_irqn", "irqn"),
-                ("eq_irq_cpu", "irq_cpu"),
-                ("eq_vector", "vector"),
-                ("eq_address", "address"),
-            ):
-                cq[cq_field] = eq.get(eq_field) if eq is not None else None
-
-        for device in devices:
-            netdev = device.netdev
-            if netdev is not None:
-                for channel in netdev.get("channels", []):
-                    shared_values: Dict[str, Set[int]] = {
-                        field: set() for field in ("vector", "irqn", "eqn")
-                    }
-                    for queue in selection._channel_queues(channel):
-                        queue_cq = queue.get("cq")
-                        if not isinstance(queue_cq, dict) or queue_cq.get(
-                            "cqn"
-                        ) in (None, 0):
-                            continue
-                        for field, value in (
-                            (
-                                "vector",
-                                selection._first_not_none(
-                                    queue_cq.get("eq_vector"),
-                                    queue_cq.get("vector"),
-                                ),
-                            ),
-                            (
-                                "irqn",
-                                selection._first_not_none(
-                                    queue_cq.get("eq_irqn"),
-                                    queue_cq.get("irqn"),
-                                ),
-                            ),
-                            ("eqn", queue_cq.get("eqn")),
-                        ):
-                            if value is not None:
-                                shared_values[field].add(int(value))
-                    shared = {
-                        field: next(iter(values)) if len(values) == 1 else None
-                        for field, values in shared_values.items()
-                    }
-                    for field, value in shared.items():
-                        if channel.get(field) is None and value is not None:
-                            channel[field] = value
-                    irqn = shared["irqn"]
-                    if channel.get("irq_desc") is None and irqn is not None:
-                        desc = irq_to_desc(self.prog, irqn)
-                        channel["irq_desc"] = formatting._hex(
-                            int(desc) if desc else None
-                        )
 
     # RDMA queue pairs
 
@@ -2568,28 +2423,7 @@ class Mlx5Collector:
                         ):
                             if present:
                                 add(severity, scope, message)
-        findings.extend(self._cq_linkage_findings())
         findings.extend(self._descriptor_findings(dump_reports))
-        return findings
-
-    def _cq_linkage_findings(self) -> List[Dict[str, str]]:
-        by_device: Dict[str, List[Any]] = defaultdict(list)
-        for cq in (entry.record for entry in self._cqs.values()):
-            if cq.get("eqn") is not None:
-                continue
-            if all(
-                cq.get(name) is None
-                for name in ("vector", "irqn", "eq_vector", "eq_irqn")
-            ):
-                continue
-            by_device[str(cq.get("device") or "mlx5")].append(cq.get("cqn"))
-        findings = []
-        for device, cqns in sorted(by_device.items()):
-            examples = ", ".join(str(cqn) for cqn in cqns[:5])
-            message = f"{len(cqns)} CQs with vector/IRQ data have no matching EQ linkage (examples: {examples})"
-            findings.append(
-                {"severity": "MED", "scope": device, "message": message}
-            )
         return findings
 
     def _descriptor_findings(
@@ -2686,10 +2520,6 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--{name} must be >= 0")
 
 
-def _cq_arm_sn(raw: Optional[int]) -> Optional[int]:
-    return None if raw is None else int(raw) & 0x3
-
-
 def _irq_affinity_cpus(prog: Program, irqn: Optional[int]) -> Optional[str]:
     if irqn is None:
         return None
@@ -2737,18 +2567,17 @@ def _cq_consumer_index(
     address_struct: str,
     wq_summary: Dict[str, Any],
     core_cq: Object,
-) -> Tuple[Optional[int], str, int]:
+) -> Optional[int]:
     """Choose the CQ consumer counter for its owner.
 
     mlx5_ib polls mlx5_core_cq.cons_index. mlx5e polls through mlx5_cqwq,
     so use wq.cc; its mcq.cons_index may remain zero.
     """
 
-    core_cons_index = int(core_cq.cons_index)
     wq_cc = wq_summary.get("cc")
     if address_struct == "struct mlx5e_cq" and wq_cc is not None:
-        return wq_cc, f"{address_struct}.wq.cc", core_cons_index
-    return core_cons_index, "struct mlx5_core_cq.cons_index", core_cons_index
+        return wq_cc
+    return int(core_cq.cons_index)
 
 
 def _wqe_ctrl_wqebbs(decoded: Dict[str, Any], stride_bytes: int) -> int:
