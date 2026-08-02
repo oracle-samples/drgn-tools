@@ -348,8 +348,8 @@ def _render_queues(
             or selection._first_not_none(queue.get("txq_stopped"), "-"),
             cq.get("cqn"),
             cq.get("eqn"),
-            selection._first_not_none(cq.get("eq_vector"), cq.get("vector")),
-            selection._first_not_none(cq.get("eq_irqn"), cq.get("irqn")),
+            cq.get("vector"),
+            cq.get("irqn"),
         )
     table.write()
     print()
@@ -406,8 +406,8 @@ def _render_cqs(
             selection._first_not_none(cq.get("size"), "-"),
             cq.get("stride_bytes"),
             cq.get("eqn"),
-            selection._first_not_none(cq.get("eq_irqn"), cq.get("irqn")),
-            selection._first_not_none(cq.get("eq_irq_cpu"), "-"),
+            cq.get("irqn"),
+            selection._first_not_none(cq.get("irq_cpu"), "-"),
         )
     table.write()
     print()
@@ -419,10 +419,6 @@ def _cq_info_column(cq: Dict[str, Any]) -> str:
         for owner in cq.get("owners", []) or []
         if owner and not str(owner).startswith("eq_cq_table:")
     ]
-    if not owners:
-        owner = cq.get("owner")
-        if owner and not str(owner).startswith("eq_cq_table:"):
-            owners.append(str(owner))
     if owners:
         if _short_struct(cq.get("address_struct")) == "mlx5e_cq":
             netdev = cq.get("netdev")
@@ -435,10 +431,7 @@ def _cq_info_column(cq: Dict[str, Any]) -> str:
         return ";".join(owners)
     queue_kind = cq.get("queue_kind")
     if queue_kind:
-        queue_number = cq.get("queue_number")
-        if queue_number is not None:
-            return f"{queue_kind}{queue_number}"
-        return str(queue_kind)
+        return f"{queue_kind}{cq.get('cqn')}"
     return "-"
 
 
@@ -606,10 +599,8 @@ def _cqe_path_display(dump: Dict[str, Any]) -> str:
         "-",
     )
     eqn = selection._first_not_none(cq.get("eqn"), "-")
-    irqn = selection._first_not_none(cq.get("eq_irqn"), cq.get("irqn"), "-")
-    irq_cpus = selection._first_not_none(
-        cq.get("eq_irq_cpu"), cq.get("irq_cpu"), "-"
-    )
+    irqn = selection._first_not_none(cq.get("irqn"), "-")
+    irq_cpus = selection._first_not_none(cq.get("irq_cpu"), "-")
     return f"CQN={cqn} EQN={eqn} IRQN={irqn} CPU={irq_cpus}"
 
 
