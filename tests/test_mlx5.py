@@ -209,7 +209,7 @@ class TestMlx5(unittest.TestCase):
         collector = object.__new__(mlx5.Mlx5Collector)
         collector.prog = _Program()
         wq = _EmbeddedWq(wqe_cnt=8, wrid=list(range(100, 108)))
-        qp = mlx5._QpEntry({"qpn_aliases": [7], "creator_type": "user"}, wq)
+        qp = mlx5._QpEntry({"qpn": 7, "hw_qpn": 7, "creator_type": "user"}, wq)
         entries = [
             {
                 "status": "ready",
