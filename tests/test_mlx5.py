@@ -235,18 +235,19 @@ class TestMlx5(unittest.TestCase):
                 raise FaultError("missing MMIO page", 0x1000)
 
         collector = object.__new__(mlx5.Mlx5Collector)
-        collector._ibdev_by_mdev = {
-            1: _Struct(
+        mdev = _Struct(address=1, iseg=UnreadableIseg())
+        device = _Struct(
+            mdev=mdev,
+            ibdev=_Struct(
                 ib_dev=_Struct(
                     attrs=_Struct(fw_ver=(22 << 32) | (34 << 16) | 1014)
                 )
-            )
-        }
-        mdev = _Struct(address=1, iseg=UnreadableIseg())
+            ),
+        )
 
-        self.assertEqual(collector._collect_fw_version(mdev), "22.34.1014")
-        collector._ibdev_by_mdev.clear()
-        self.assertEqual(collector._collect_fw_version(mdev), "unavailable")
+        self.assertEqual(collector._collect_fw_version(device), "22.34.1014")
+        device.ibdev = None
+        self.assertEqual(collector._collect_fw_version(device), "unavailable")
 
 
 if __name__ == "__main__":
