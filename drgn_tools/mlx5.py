@@ -94,9 +94,13 @@ class Mlx5(CorelensModule):
                 "Restrict by RDMA device name, PCI BDF, or mlx5_core_dev address",
             ),
             ("netdev", "Restrict to one netdev name, for example eth0"),
-            ("ip", "Restrict to devices with this netdev IP address"),
         ):
             parser.add_argument(f"--{option}", help=help_text)
+        parser.add_argument(
+            "--ip",
+            type=ipaddress.ip_address,
+            help="Restrict to devices with this netdev IP address",
+        )
         report_mode = parser.add_mutually_exclusive_group()
         for option, help_text in (
             ("summary", "Include only the report and device summary"),
@@ -369,12 +373,8 @@ class Mlx5Collector:
                     priv.netdev
                 )
 
-        ip_selector = getattr(self.args, "ip", None)
-        if ip_selector:
-            try:
-                wanted_ip = str(ipaddress.ip_address(str(ip_selector)))
-            except ValueError:
-                wanted_ip = str(ip_selector)
+        if self.args.ip:
+            wanted_ip = str(self.args.ip)
             filtered = [
                 dev
                 for dev in filtered
@@ -384,7 +384,7 @@ class Mlx5Collector:
             ]
             if not filtered:
                 self._warn(
-                    f"--ip {ip_selector!r} did not match a discovered mlx5 netdev address"
+                    f"--ip {wanted_ip!r} did not match a discovered mlx5 netdev address"
                 )
         return filtered
 
