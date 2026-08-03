@@ -176,19 +176,16 @@ def render_report(report: Dict[str, Any], args: argparse.Namespace) -> None:
 def _render_devices(report: Dict[str, Any]) -> None:
     print("Device summary")
     table = Table(
-        "PCI MLX5_CORE_DEV NETDEVS IPS RDMA_DEV RDMA_PORT STATE HEALTH FW CH CQ EQ QP".split()
+        "PCI MLX5_CORE_DEV NETDEV IPS RDMA_DEV RDMA_PORT STATE HEALTH FW CH CQ EQ QP".split()
     )
     for device in report.get("devices", []):
         summary = device.get("summary", {})
         counts = device.get("counts", {})
-        netdevs = (
-            ",".join(n.get("name", "?") for n in device.get("netdevs", []))
-            or "-"
-        )
+        netdev = device.get("netdev") or {}
         table.row(
             summary.get("pci_bdf"),
             summary.get("mdev"),
-            netdevs,
+            netdev.get("name") or "-",
             _device_ips(device),
             summary.get("rdma_name") or "-",
             summary.get("rdma_port") or "-",
@@ -205,13 +202,11 @@ def _render_devices(report: Dict[str, Any]) -> None:
 
 
 def _device_ips(device: Dict[str, Any]) -> str:
-    ips = list(
-        dict.fromkeys(
-            str(ip)
-            for netdev in device.get("netdevs", []) or []
-            for ip in netdev.get("summary", {}).get("ip_addresses", []) or []
-        )
-    )
+    netdev = device.get("netdev") or {}
+    ips = [
+        str(ip)
+        for ip in netdev.get("summary", {}).get("ip_addresses", []) or []
+    ]
     if len(ips) > 4:
         ips[4:] = [f"+{len(ips) - 4} more"]
     return ",".join(ips) or "-"
@@ -223,19 +218,20 @@ def _device_display_labels(report: Dict[str, Any]) -> Dict[str, str]:
         mdev = device.get("mdev")
         if mdev is None:
             continue
-        netdevs = [
-            str(netdev.get("name"))
-            for netdev in device.get("netdevs", [])
-            if netdev.get("name")
-        ]
+        netdev = device.get("netdev") or {}
+        netdev_name = netdev.get("name")
         summary = device.get("summary", {})
-        labels[str(mdev)] = ",".join(netdevs) or next(
-            (
-                str(summary[key])
-                for key in ("pci_bdf", "mdev")
-                if summary.get(key) not in (None, "", "-")
-            ),
-            str(mdev or "-"),
+        labels[str(mdev)] = (
+            str(netdev_name)
+            if netdev_name
+            else next(
+                (
+                    str(summary[key])
+                    for key in ("pci_bdf", "mdev")
+                    if summary.get(key) not in (None, "", "-")
+                ),
+                str(mdev or "-"),
+            )
         )
     return labels
 
@@ -308,19 +304,21 @@ def _render_queues(
         rdma_dev = (
             _record_device_label(device, rdma_labels, fallback=False) or "-"
         )
-        for netdev in device.get("netdevs", []):
-            for channel in netdev.get("channels", []):
-                for queue in selection._channel_queues(channel):
-                    if not selection._queue_matches_wqe_selector(
-                        queue,
-                        args,
-                        selected_dump_keys=selected_dump_keys,
-                        device_name=device.get("mdev"),
-                    ):
-                        continue
-                    candidates.append(
-                        (netdev.get("name"), rdma_dev, channel, queue)
-                    )
+        netdev = device.get("netdev")
+        if not netdev:
+            continue
+        for channel in netdev.get("channels", []):
+            for queue in selection._channel_queues(channel):
+                if not selection._queue_matches_wqe_selector(
+                    queue,
+                    args,
+                    selected_dump_keys=selected_dump_keys,
+                    device_name=device.get("mdev"),
+                ):
+                    continue
+                candidates.append(
+                    (netdev.get("name"), rdma_dev, channel, queue)
+                )
     for netdev, rdma_dev, channel, queue in selection._limit_balanced(
         candidates,
         args.maxqueues,

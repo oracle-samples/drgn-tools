@@ -84,7 +84,7 @@ class DeviceRecord:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "mdev": self.mdev_address,
-            "netdevs": [] if self.netdev is None else [self.netdev],
+            "netdev": self.netdev,
             "summary": self.summary,
             "health": self.health,
             "counts": self.counts,
