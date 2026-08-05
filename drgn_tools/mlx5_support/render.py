@@ -48,7 +48,6 @@ _DESCRIPTOR_COLUMNS = {
         ("EQE_ADDR", "address", True, False, "EQE slot address"),
         ("STATUS", "status", True, False, "ownership state"),
         ("TYPE", "type_display", True, False, "event type"),
-        ("SUBTYPE", "sub_type", False, True, None),
         ("CQN", "cqn", False, False, "completion queue number"),
         ("SYND", "syndrome_display", False, False, "error syndrome"),
     ),
