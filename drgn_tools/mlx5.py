@@ -271,15 +271,7 @@ class Mlx5Collector:
         self._mlx5e_queues: Dict[Tuple[str, str, int, str], _RingEntry] = {}
         self._qp_creators: Dict[Tuple[str, int], Dict[str, Any]] = {}
         self._ib_cq_numbers: Dict[int, int] = {}
-        self._ib_qpt_driver: Optional[int] = None
-        self._qp_has_type: Optional[bool] = None
-        self._qp_has_is_rss: Optional[bool] = None
         self._cq_event_names: Dict[int, Optional[str]] = {}
-        self._constants: Dict[str, Object] = {}
-        self._txq_state_type: Any = None
-        self._eq_table_has_xarray: Optional[bool] = None
-        self._eq_has_cq_count: Optional[bool] = None
-        self._eqe_size: Optional[int] = None
         self._wqe_warning_groups: "OrderedDict[Tuple[str, str, str], Dict[str, Any]]" = (
             OrderedDict()
         )
@@ -542,13 +534,6 @@ class Mlx5Collector:
 
     # Channels, Ethernet queues, and their CQs
 
-    def _constant(self, name: str) -> Object:
-        constant = self._constants.get(name)
-        if constant is None:
-            constant = self.prog.constant(name)
-            self._constants[name] = constant
-        return constant
-
     def _count_summary_channels_and_queues(
         self,
         device: DeviceRecord,
@@ -601,7 +586,7 @@ class Mlx5Collector:
         if (xdpsq.type_.kind != TypeKind.POINTER or xdpsq) and int(xdpsq.sqn):
             yield "xdp_sqs", xdpsq, "xdpsq", None
 
-        xsk_bit = int(self._constant("MLX5E_CHANNEL_STATE_XSK"))
+        xsk_bit = int(self.prog.constant("MLX5E_CHANNEL_STATE_XSK"))
         if int(channel.state[0]) & (1 << xsk_bit):
             yield "xsk_rqs", channel.xskrq, "xskrq", None
             yield "xdp_sqs", channel.xsksq, "xsksq", None
@@ -626,11 +611,11 @@ class Mlx5Collector:
     def _iter_ptp_queues(
         self, ptp: Object, state: int
     ) -> Iterator[Tuple[str, Object, str, Optional[int], Optional[Object],]]:
-        rx_bit = int(self._constant("MLX5E_PTP_STATE_RX"))
+        rx_bit = int(self.prog.constant("MLX5E_PTP_STATE_RX"))
         if state & (1 << rx_bit):
             yield "rx_rq", ptp.rq, "ptp_rq", None, None
 
-        tx_bit = int(self._constant("MLX5E_PTP_STATE_TX"))
+        tx_bit = int(self.prog.constant("MLX5E_PTP_STATE_TX"))
         if not state & (1 << tx_bit):
             return
         for tc in range(int(ptp.num_tc)):
@@ -759,7 +744,7 @@ class Mlx5Collector:
         linked_rq = False
         if is_rq:
             linked_type = int(
-                self._constant("MLX5_WQ_TYPE_LINKED_LIST_STRIDING_RQ")
+                self.prog.constant("MLX5_WQ_TYPE_LINKED_LIST_STRIDING_RQ")
             )
             linked_rq = int(queue_obj.wq_type) == linked_type
             wq = queue_obj.mpwqe.wq if linked_rq else queue_obj.wqe.wq
@@ -794,10 +779,8 @@ class Mlx5Collector:
         txq = queue_obj.txq if kind in ("sq", "qos_sq", "ptp_sq") else None
         txq_state = int(txq.state) if txq else None
         state_prefix = "MLX5E_RQ_STATE_" if is_rq else "MLX5E_SQ_STATE_"
-        enabled_bit = self._constant(state_prefix + "ENABLED")
-        recovering_bit = self._constant(state_prefix + "RECOVERING")
-        if self._txq_state_type is None:
-            self._txq_state_type = self.prog.type("enum netdev_queue_state_t")
+        enabled_bit = self.prog.constant(state_prefix + "ENABLED")
+        recovering_bit = self.prog.constant(state_prefix + "RECOVERING")
 
         record = {
             "kind": kind,
@@ -815,7 +798,9 @@ class Mlx5Collector:
             "enabled": bool(state & (1 << int(enabled_bit))),
             "recovering": bool(state & (1 << int(recovering_bit))),
             "txq_state_flags": formatting._enum_flags(
-                txq_state, self._txq_state_type, "__QUEUE_STATE_"
+                txq_state,
+                self.prog.type("enum netdev_queue_state_t"),
+                "__QUEUE_STATE_",
             ),
             "txq_stopped": bool(txq_state) if txq_state is not None else None,
             "wq": wq_summary,
@@ -954,9 +939,7 @@ class Mlx5Collector:
         ):
             yield getattr(eq_table, field).core, role
 
-        if self._eq_table_has_xarray is None:
-            self._eq_table_has_xarray = has_member(eq_table, "comp_eqs")
-        if self._eq_table_has_xarray:
+        if has_member(eq_table, "comp_eqs"):
             for _vector, entry in xa_for_each(eq_table.comp_eqs):
                 eq_comp = cast("struct mlx5_eq_comp *", entry)
                 yield eq_comp.core, "completion"
@@ -981,10 +964,6 @@ class Mlx5Collector:
         if key in self._eqs:
             return
         irqn = int(core.irqn)
-        if self._eq_has_cq_count is None:
-            self._eq_has_cq_count = has_member(core, "cq_count")
-        if self._eqe_size is None:
-            self._eqe_size = self.prog.type("struct mlx5_eqe").size
         record = {
             "eqn": eqn,
             "address": formatting._hex(int(core.address_)),
@@ -996,8 +975,10 @@ class Mlx5Collector:
             "vector": int(core.vecidx),
             "consumer_index": int(core.cons_index),
             "size": int(core.fbc.sz_m1) + 1,
-            "cq_count": int(core.cq_count) if self._eq_has_cq_count else None,
-            "eqe_size": self._eqe_size,
+            "cq_count": int(core.cq_count)
+            if has_member(core, "cq_count")
+            else None,
+            "eqe_size": self.prog.type("struct mlx5_eqe").size,
         }
         self._eqs[key] = _EqEntry(record, core)
 
@@ -1165,14 +1146,10 @@ class Mlx5Collector:
         return self._ib_cq_numbers[address]
 
     def _qp_type(self, qp: Object) -> int:
-        if self._qp_has_type is None:
-            self._qp_has_type = has_member(qp, "type")
-        if self._qp_has_type:
+        if has_member(qp, "type"):
             return int(qp.type)
         ib_qp_type = int(qp.ibqp.qp_type)
-        if self._ib_qpt_driver is None:
-            self._ib_qpt_driver = int(self.prog.constant("IB_QPT_DRIVER"))
-        if ib_qp_type == self._ib_qpt_driver:
+        if ib_qp_type == int(self.prog.constant("IB_QPT_DRIVER")):
             return int(qp.qp_sub_type)
         return ib_qp_type
 
@@ -1195,8 +1172,6 @@ class Mlx5Collector:
         sq_summary = self._collect_wq_summary(sq_wq, kernel_backed)
         rq_summary = self._collect_wq_summary(rq_wq, kernel_backed)
         qp_state = int(qp.state)
-        if self._qp_has_is_rss is None:
-            self._qp_has_is_rss = has_member(qp, "is_rss")
         eligible_sq_wq = (
             sq_wq if kernel_backed and int(sq_summary["size"]) > 0 else None
         )
@@ -1219,7 +1194,7 @@ class Mlx5Collector:
             ),
             "flags": formatting._hex(int(qp.flags)),
             "has_rq": int(qp.has_rq),
-            "is_rss": int(qp.is_rss) if self._qp_has_is_rss else None,
+            "is_rss": int(qp.is_rss) if has_member(qp, "is_rss") else None,
             "max_inline_data": int(qp.max_inline_data),
             "db": formatting._hex(int(qp.db.address_)),
             "buf": formatting._hex(int(qp.buf.address_)),
@@ -1616,13 +1591,10 @@ class Mlx5Collector:
             != "mlx5_ib_cq"
         ):
             return 0
-        request_opcodes = self.prog.cache.get("_mlx5_cqe_request_opcodes")
-        if request_opcodes is None:
-            request_opcodes = (
-                int(self.prog.constant("MLX5_CQE_REQ")),
-                int(self.prog.constant("MLX5_CQE_REQ_ERR")),
-            )
-            self.prog.cache["_mlx5_cqe_request_opcodes"] = request_opcodes
+        request_opcodes = (
+            int(self.prog.constant("MLX5_CQE_REQ")),
+            int(self.prog.constant("MLX5_CQE_REQ_ERR")),
+        )
         qp_index_by_qpn: Dict[int, Optional[int]] = {}
         for index, qp_entry in enumerate(qp_candidates):
             record = qp_entry.record
