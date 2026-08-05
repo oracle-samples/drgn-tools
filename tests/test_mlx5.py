@@ -212,7 +212,7 @@ class TestMlx5(unittest.TestCase):
         entries = collector._dump_ring(
             cq_buf,
             max_entries=4,
-            decode=lambda raw: {"value": raw[0]},
+            decode=lambda raw: {"value": raw[0], "owner_bit": 0},
             ring_size=4,
             consumer_index=2,
             descriptor_kind="cqe",
@@ -227,7 +227,7 @@ class TestMlx5(unittest.TestCase):
         entries = collector._dump_ring(
             cq_buf,
             max_entries=4,
-            decode=lambda raw: {"value": raw[0]},
+            decode=lambda raw: {"value": raw[0], "owner_bit": 0},
             ring_size=4,
             consumer_index=2,
             descriptor_kind="cqe",

@@ -16,11 +16,8 @@ from drgn import Object
 from drgn import Program
 from drgn.helpers.linux.list import list_for_each_entry
 
-from .defs import _PCI_BDF_RE
 from drgn_tools.crash_net import netdev_ipv4s
 from drgn_tools.crash_net import netdev_ipv6s
-
-MAX_NETDEV_IPS = 64
 
 
 def mlx5_core_ib_device(mdev: Object) -> Object:
@@ -59,7 +56,7 @@ class DeviceRecord:
 
     mdev: Object
     mdev_address: str
-    pci_bdf: Optional[str]
+    pci_bdf: str
     ibdev: Optional[Object]
     netdev: Optional[Dict[str, Any]]
     summary: Dict[str, Any]
@@ -71,9 +68,7 @@ class DeviceRecord:
         self.mdev = mdev
         self.mdev_address = hex(int(mdev))
         pci_name = mdev.pdev.dev.kobj.name.string_().decode("utf-8", "replace")
-        self.pci_bdf = (
-            pci_name.lower() if _PCI_BDF_RE.match(pci_name) else None
-        )
+        self.pci_bdf = pci_name.lower()
         self.ibdev = None
         self.netdev = None
         self.summary = {}
@@ -123,8 +118,6 @@ def collect_netdev_summary(netdev: Object) -> Dict[str, Any]:
             continue
         seen.add(ip)
         addresses.append(ip)
-        if len(addresses) >= MAX_NETDEV_IPS:
-            break
 
     no_carrier = int(netdev.prog_.constant("__LINK_STATE_NOCARRIER"))
     return {
