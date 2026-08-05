@@ -5,6 +5,7 @@ from typing import Any
 from typing import Dict
 from typing import Optional
 
+from drgn import Object
 from drgn import Program
 
 from .format import _hex
@@ -19,6 +20,10 @@ def _read_be(raw: bytes, offset: int, size: int) -> Optional[int]:
 
 def _byte(raw: bytes, offset: int) -> Optional[int]:
     return raw[offset] if offset < len(raw) else None
+
+
+def _be(field: Object) -> int:
+    return int.from_bytes(field.to_bytes_(), "big")
 
 
 def _enum_name(
@@ -70,29 +75,26 @@ def _enum_type_label(
 
 
 def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
-    op_own = _byte(raw, 63)
-    opcode = (op_own >> 4) if op_own is not None else None
+    cqe = Object.from_bytes_(prog, "struct mlx5_cqe64", raw)
+    op_own = int(cqe.op_own)
+    opcode = op_own >> 4
     opcode_name = _enum_name(
         prog,
         opcode,
         representative="MLX5_CQE_REQ",
         prefix="MLX5_CQE_",
     )
-    owner = op_own & 1 if op_own is not None else None
-    srqn_word = _read_be(raw, 32, 4)
-    sop_drop_qpn = _read_be(raw, 56, 4)
-    req_opcode = (
-        (sop_drop_qpn >> 24)
-        if opcode_name == "REQ" and sop_drop_qpn is not None
-        else None
-    )
+    owner = op_own & 1
+    srqn_word = _be(cqe.srqn)
+    sop_drop_qpn = _be(cqe.sop_drop_qpn)
+    req_opcode = (sop_drop_qpn >> 24) if opcode_name == "REQ" else None
     req_opcode_name = _enum_name(
         prog,
         req_opcode,
         representative="MLX5_OPCODE_NOP",
         prefix="MLX5_OPCODE_",
     )
-    byte_count = _read_be(raw, 44, 4)
+    byte_count = _be(cqe.byte_cnt)
     byte_count_display = None
     if opcode_name in (
         "RESP_WR_IMM",
@@ -106,15 +108,17 @@ def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         "opcode_value": opcode,
         "opcode_display": _enum_label(opcode, opcode_name),
         "req_opcode_display": _enum_label(req_opcode, req_opcode_name),
-        "wqe_id": _read_be(raw, 2, 2),
-        "srqn": (srqn_word & 0xFFFFFF) if srqn_word is not None else None,
+        "wqe_id": _be(cqe.wqe_id),
+        "srqn": srqn_word & 0xFFFFFF,
         "byte_count_display": byte_count_display,
-        "qpn": (sop_drop_qpn & 0xFFFFFF) if sop_drop_qpn is not None else None,
-        "wqe_counter": _read_be(raw, 60, 2),
+        "qpn": sop_drop_qpn & 0xFFFFFF,
+        "wqe_counter": _be(cqe.wqe_counter),
     }
     if opcode_name in ("SIG_ERR", "REQ_ERR", "RESP_ERR"):
-        syndrome_value = _byte(raw, 55)
-        vendor_syndrome = _byte(raw, 54)
+        err_cqe = Object.from_bytes_(prog, "struct mlx5_err_cqe", raw)
+        syndrome_value = int(err_cqe.syndrome)
+        vendor_syndrome = int(err_cqe.vendor_err_synd)
+        error_qpn = _be(err_cqe.s_wqe_opcode_qpn) & 0xFFFFFF
         syndrome_name = _enum_name(
             prog,
             syndrome_value,
@@ -130,9 +134,7 @@ def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
                 or not syndrome_name.startswith("unknown(")
                 else None,
                 "syndrome_display": _enum_label(syndrome_value, syndrome_name),
-                "error_qpn": (sop_drop_qpn & 0xFFFFFF)
-                if sop_drop_qpn is not None
-                else None,
+                "error_qpn": error_qpn,
             }
         )
     return decoded

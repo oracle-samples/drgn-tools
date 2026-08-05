@@ -591,7 +591,7 @@ class Mlx5Collector:
         return channel_total, queue_total
 
     def _iter_channels(self, channels: Object) -> Iterator[Object]:
-        count = min(int(channels.num), defs.MAX_CHANNELS)
+        count = int(channels.num)
         for index in range(count):
             channel = channels.c[index]
             if channel:

@@ -4,50 +4,82 @@
 import unittest
 
 from drgn import FaultError
+from drgn import Object
+from drgn import Program
+from drgn import TypeEnumerator
+from drgn import TypeMember
 
 from drgn_tools import mlx5
 from drgn_tools.mlx5_support.dumps import _annotate_owner_status
 
 
-class _EnumType:
-    def __init__(self, enumerators):
-        self.enumerators = enumerators
+def _test_program():
+    prog = Program()
+    u8 = prog.int_type("u8", 1, False, "little")
+    be16 = prog.int_type("__be16", 2, False, "little")
+    be32 = prog.int_type("__be32", 4, False, "little")
+    types = {
+        "mlx5_cqe64": prog.struct_type(
+            "mlx5_cqe64",
+            64,
+            [
+                TypeMember(be16, "wqe_id", 16),
+                TypeMember(be32, "srqn", 256),
+                TypeMember(be32, "byte_cnt", 352),
+                TypeMember(be32, "sop_drop_qpn", 448),
+                TypeMember(be16, "wqe_counter", 480),
+                TypeMember(u8, "op_own", 504),
+            ],
+        ),
+        "mlx5_err_cqe": prog.struct_type(
+            "mlx5_err_cqe",
+            64,
+            [
+                TypeMember(be32, "srqn", 256),
+                TypeMember(u8, "vendor_err_synd", 432),
+                TypeMember(u8, "syndrome", 440),
+                TypeMember(be32, "s_wqe_opcode_qpn", 448),
+                TypeMember(be16, "wqe_counter", 480),
+                TypeMember(u8, "op_own", 504),
+            ],
+        ),
+    }
+    prog.register_type_finder(
+        "test",
+        lambda prog, kinds, name, filename: types.get(name),
+        enable_index=0,
+    )
 
-
-class _Constant:
-    def __init__(self, value, type_):
-        self.value = value
-        self.type_ = type_
-
-    def __int__(self):
-        return self.value
-
-
-class _Program:
-    def __init__(self):
-        self.cache = {}
-        self.constants = {}
-        groups = (
-            (
-                ("MLX5_CQE_REQ", 0),
-                ("MLX5_CQE_RESP_SEND", 2),
-                ("MLX5_CQE_REQ_ERR", 13),
-            ),
-            (("MLX5_CQE_SYNDROME_LOCAL_LENGTH_ERR", 1),),
-            (("MLX5_OPCODE_NOP", 0), ("MLX5_OPCODE_SEND", 10)),
-            (
-                ("MLX5_EVENT_TYPE_COMP", 0),
-                ("MLX5_EVENT_TYPE_CQ_ERROR", 4),
-            ),
-            (("MLX5_CQ_ERROR_SYNDROME_CQ_OVERRUN", 1),),
+    constants = {}
+    int_type = prog.int_type("int", 4, True, "little")
+    groups = (
+        (
+            ("MLX5_CQE_REQ", 0),
+            ("MLX5_CQE_RESP_SEND", 2),
+            ("MLX5_CQE_REQ_ERR", 13),
+        ),
+        (("MLX5_CQE_SYNDROME_LOCAL_LENGTH_ERR", 1),),
+        (("MLX5_OPCODE_NOP", 0), ("MLX5_OPCODE_SEND", 10)),
+        (
+            ("MLX5_EVENT_TYPE_COMP", 0),
+            ("MLX5_EVENT_TYPE_CQ_ERROR", 4),
+        ),
+        (("MLX5_CQ_ERROR_SYNDROME_CQ_OVERRUN", 1),),
+    )
+    for enumerators in groups:
+        type_ = prog.enum_type(
+            None,
+            int_type,
+            [TypeEnumerator(name, value) for name, value in enumerators],
         )
-        for enumerators in groups:
-            type_ = _EnumType(enumerators)
-            for name, value in enumerators:
-                self.constants[name] = _Constant(value, type_)
-
-    def constant(self, name):
-        return self.constants[name]
+        for name, value in enumerators:
+            constants[name] = Object(prog, type_, value)
+    prog.register_object_finder(
+        "test",
+        lambda prog, name, flags, filename: constants.get(name),
+        enable_index=0,
+    )
+    return prog
 
 
 class _Struct:
@@ -103,7 +135,7 @@ class _MemoryProgram:
 
 class TestMlx5(unittest.TestCase):
     def test_hardware_descriptor_decoding(self):
-        prog = _Program()
+        prog = _test_program()
         cqe = bytearray(64)
         cqe[2:4] = (77).to_bytes(2, "big")
         cqe[44:48] = (1514).to_bytes(4, "big")
@@ -207,7 +239,7 @@ class TestMlx5(unittest.TestCase):
 
     def test_embedded_wq_maps_cqe_to_wr_id(self):
         collector = object.__new__(mlx5.Mlx5Collector)
-        collector.prog = _Program()
+        collector.prog = _test_program()
         wq = _EmbeddedWq(wqe_cnt=8, wrid=list(range(100, 108)))
         qp = mlx5._QpEntry({"qpn": 7, "hw_qpn": 7, "creator_type": "user"}, wq)
         entries = [
