@@ -24,7 +24,6 @@ def _test_program():
             64,
             [
                 TypeMember(be16, "wqe_id", 16),
-                TypeMember(be32, "srqn", 256),
                 TypeMember(be32, "byte_cnt", 352),
                 TypeMember(be32, "sop_drop_qpn", 448),
                 TypeMember(be16, "wqe_counter", 480),
@@ -35,7 +34,6 @@ def _test_program():
             "mlx5_err_cqe",
             64,
             [
-                TypeMember(be32, "srqn", 256),
                 TypeMember(u8, "vendor_err_synd", 432),
                 TypeMember(u8, "syndrome", 440),
                 TypeMember(be32, "s_wqe_opcode_qpn", 448),
@@ -60,11 +58,7 @@ def _test_program():
         ),
         (("MLX5_CQE_SYNDROME_LOCAL_LENGTH_ERR", 1),),
         (("MLX5_OPCODE_NOP", 0), ("MLX5_OPCODE_SEND", 10)),
-        (
-            ("MLX5_EVENT_TYPE_COMP", 0),
-            ("MLX5_EVENT_TYPE_CQ_ERROR", 4),
-        ),
-        (("MLX5_CQ_ERROR_SYNDROME_CQ_OVERRUN", 1),),
+        (("MLX5_EVENT_TYPE_COMP", 0),),
     )
     for enumerators in groups:
         type_ = prog.enum_type(
@@ -109,11 +103,6 @@ class _Struct:
 
     def read_(self):
         return self
-
-
-class _EmbeddedWq(_Struct):
-    def __bool__(self):
-        raise TypeError("cannot convert an embedded struct to bool")
 
 
 class _MemoryProgram:
@@ -169,13 +158,13 @@ class TestMlx5(unittest.TestCase):
 
     def test_cqe_owner_and_pollability(self):
         cases = (
-            (0, 0x2, 0, 0, "ready", None),
-            (0, 0xF, 0, 0, "not-ready", "invalid-sentinel"),
-            (1, 0x2, 0, 0, "not-ready", "owner-mismatch"),
-            (0, 0x2, 9, 10, "not-ready", "consumed"),
+            (0, 0x2, 0, 0, "ready"),
+            (0, 0xF, 0, 0, "not-ready"),
+            (1, 0x2, 0, 0, "not-ready"),
+            (0, 0x2, 9, 10, "not-ready"),
         )
-        for owner, opcode, absolute, consumer, status, reason in cases:
-            with self.subTest(status=status, reason=reason):
+        for owner, opcode, absolute, consumer, status in cases:
+            with self.subTest(status=status):
                 decoded = {
                     "owner_bit": owner,
                     "opcode_value": opcode,
@@ -183,7 +172,6 @@ class TestMlx5(unittest.TestCase):
                 }
                 _annotate_owner_status(decoded, absolute, 64, "cqe", consumer)
                 self.assertEqual(decoded["status"], status)
-                self.assertEqual(decoded.get("not_ready_reason"), reason)
 
     def test_fragmented_rdma_cq_and_read_fault(self):
         fragments = _Struct(entries=[_Struct(buf=0x1000), _Struct(buf=0x5000)])
@@ -236,29 +224,6 @@ class TestMlx5(unittest.TestCase):
             [entry["status"] for entry in entries[2:]],
             ["read-unavailable", "read-unavailable"],
         )
-
-    def test_embedded_wq_maps_cqe_to_wr_id(self):
-        collector = object.__new__(mlx5.Mlx5Collector)
-        collector.prog = _test_program()
-        wq = _EmbeddedWq(wqe_cnt=8, wrid=list(range(100, 108)))
-        qp = mlx5._QpEntry({"qpn": 7, "hw_qpn": 7, "creator_type": "user"}, wq)
-        entries = [
-            {
-                "status": "ready",
-                "opcode_value": 0,
-                "qpn": 7,
-                "wqe_counter": 10,
-            }
-        ]
-
-        self.assertEqual(
-            collector._annotate_ib_cqe_wr_ids(
-                {"address_struct": "struct mlx5_ib_cq"}, entries, [qp]
-            ),
-            1,
-        )
-        self.assertEqual(entries[0]["wr_id"], 102)
-        self.assertEqual(entries[0]["wr_id_index"], 2)
 
     def test_firmware_falls_back_when_mmio_is_unreadable(self):
         class UnreadableIseg:

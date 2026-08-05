@@ -85,7 +85,6 @@ def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         prefix="MLX5_CQE_",
     )
     owner = op_own & 1
-    srqn_word = _be(cqe.srqn)
     sop_drop_qpn = _be(cqe.sop_drop_qpn)
     req_opcode = (sop_drop_qpn >> 24) if opcode_name == "REQ" else None
     req_opcode_name = _enum_name(
@@ -109,7 +108,6 @@ def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         "opcode_display": _enum_label(opcode, opcode_name),
         "req_opcode_display": _enum_label(req_opcode, req_opcode_name),
         "wqe_id": _be(cqe.wqe_id),
-        "srqn": srqn_word & 0xFFFFFF,
         "byte_count_display": byte_count_display,
         "qpn": sop_drop_qpn & 0xFFFFFF,
         "wqe_counter": _be(cqe.wqe_counter),
@@ -128,11 +126,6 @@ def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         decoded.update(
             {
                 "vendor_err_synd": _hex(vendor_syndrome),
-                "syndrome": _hex(syndrome_value),
-                "syndrome_name": syndrome_name
-                if syndrome_name is None
-                or not syndrome_name.startswith("unknown(")
-                else None,
                 "syndrome_display": _enum_label(syndrome_value, syndrome_name),
                 "error_qpn": error_qpn,
             }
@@ -152,30 +145,10 @@ def _decode_eqe(prog: Program, raw: bytes) -> Dict[str, Any]:
     owner = owner_byte & 1 if owner_byte is not None else None
     decoded = {
         "owner_bit": owner,
-        "type_value": event_type,
         "type_display": _enum_label(event_type, event_name),
     }
     if event_name == "COMP":
         decoded["cqn"] = _read_be(raw, 56, 4)
-    elif event_name == "CQ_ERROR":
-        syndrome_value = _byte(raw, 43)
-        decoded["cqn"] = _read_be(raw, 32, 4)
-        decoded["syndrome"] = _hex(syndrome_value)
-        syndrome_name = _enum_name(
-            prog,
-            syndrome_value,
-            representative="MLX5_CQ_ERROR_SYNDROME_CQ_OVERRUN",
-            prefix="MLX5_CQ_ERROR_SYNDROME_",
-        )
-        decoded["syndrome_name"] = (
-            syndrome_name
-            if syndrome_name is None
-            or not syndrome_name.startswith("unknown(")
-            else None
-        )
-        decoded["syndrome_display"] = _enum_label(
-            syndrome_value, syndrome_name
-        )
     return decoded
 
 
