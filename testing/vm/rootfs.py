@@ -43,7 +43,6 @@ def _build_rootfs(
     rpm_list = [
         "drgn",
         "python3",
-        "python3-pip",
         "bash",
         "coreutils",
         "findutils",
@@ -67,18 +66,36 @@ def _build_rootfs(
                 "gcc-toolset-11-binutils-devel",
                 # For RHCK module build (ORC generation)
                 "elfutils-libelf-devel",
+                # For appstream pythons:
+                "python3.12-drgn",
             ]
         )
     elif ol_ver == 9:
         rpm_list.extend(
             [
+                # Required since OL9, fio engine
+                "fio-engine-libaio",
                 # For UEK8 module build
                 "gcc-toolset-14-gcc",
                 "gcc-toolset-14-binutils-devel",
+                # For appstream pythons:
+                "python3.12-drgn",
+                # TODO: python3.14-drgn is still pending
+                # "python3.14-drgn",
             ]
         )
-    if ol_ver >= 9:
-        rpm_list.append("fio-engine-libaio")
+    elif ol_ver == 10:
+        rpm_list.extend(
+            [
+                # Required since OL9, fio engine
+                "fio-engine-libaio",
+                # For appstream pythons:
+                # TODO: python3.14-drgn is still pending
+                # "python3.14-drgn",
+            ]
+        )
+    else:
+        raise ValueError(f"Invalid ol_ver={ol_ver}, we support 8, 9, 10")
     rpms = " ".join(rpm_list)
     install_cmd = inspect.cleandoc(
         f"""
