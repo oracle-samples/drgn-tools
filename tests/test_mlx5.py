@@ -266,7 +266,6 @@ class TestMlx5(unittest.TestCase):
             def fw_rev(self):
                 raise FaultError("missing MMIO page", 0x1000)
 
-        collector = object.__new__(mlx5.Mlx5Collector)
         mdev = _Struct(address=1, iseg=UnreadableIseg())
         device = _Struct(
             mdev=mdev,
@@ -277,9 +276,13 @@ class TestMlx5(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(collector._collect_fw_version(device), "22.34.1014")
+        self.assertEqual(
+            mlx5._mlx5_fw_version(device.mdev, device.ibdev), "22.34.1014"
+        )
         device.ibdev = None
-        self.assertEqual(collector._collect_fw_version(device), "unavailable")
+        self.assertEqual(
+            mlx5._mlx5_fw_version(device.mdev, device.ibdev), "unavailable"
+        )
 
 
 if __name__ == "__main__":
