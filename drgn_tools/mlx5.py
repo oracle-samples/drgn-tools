@@ -71,6 +71,122 @@ _jsonable = formatting._jsonable
 _KeyT = TypeVar("_KeyT")
 
 
+def mlx5_iter_channels(dev: Object) -> Iterator[Object]:
+    """Iterate over the Ethernet channels for an mlx5 core device."""
+
+    netdev = dev.mlx5e_res.uplink_netdev
+    if not netdev:
+        return
+    channels = netdev_priv(netdev, "struct mlx5e_priv").channels
+    for index in range(int(channels.num)):
+        yield channels.c[index]
+
+
+def mlx5_iter_channel_queues(
+    channel: Object,
+) -> Iterator[Tuple[str, Object, str, Optional[int]]]:
+    """Iterate over the queues belonging to an mlx5 Ethernet channel.
+
+    Each tuple contains the report field, queue object, queue kind, and traffic
+    class or queue index.
+    """
+
+    yield "rx_rq", channel.rq, "rq", None
+
+    for tc in range(int(channel.num_tc)):
+        yield "tx_sqs", channel.sq[tc], "sq", tc
+
+    qos_sqs = channel.qos_sqs
+    if qos_sqs:
+        for index in range(int(channel.qos_sqs_size)):
+            sq = qos_sqs[index]
+            if sq:
+                yield "tx_sqs", sq, "qos_sq", index
+
+    if int(channel.xdp):
+        yield "xdp_sqs", channel.rq_xdpsq, "rq_xdpsq", None
+
+    xdpsq = channel.xdpsq
+    if (xdpsq.type_.kind != TypeKind.POINTER or xdpsq) and int(xdpsq.sqn):
+        yield "xdp_sqs", xdpsq, "xdpsq", None
+
+    xsk_bit = int(channel.prog_.constant("MLX5E_CHANNEL_STATE_XSK"))
+    if int(channel.state[0]) & (1 << xsk_bit):
+        yield "xsk_rqs", channel.xskrq, "xskrq", None
+        yield "xdp_sqs", channel.xsksq, "xsksq", None
+
+    yield "icosqs", channel.icosq, "icosq", None
+    yield "icosqs", channel.async_icosq, "async_icosq", None
+
+
+def mlx5_iter_core_cqs(mdev: Object) -> Iterator[Object]:
+    """Iterate over the ``struct mlx5_core_cq`` objects for a device."""
+
+    async_eq = mdev.priv.eq_table.async_eq.core
+    for _key, obj in radix_tree_for_each(async_eq.cq_table.tree.address_of_()):
+        yield cast("struct mlx5_core_cq *", obj)
+
+
+def mlx5_iter_eqs(mdev: Object) -> Iterator[Tuple[Object, str]]:
+    """Iterate over a device's EQs as ``(EQ, role)`` tuples."""
+
+    eq_table = mdev.priv.eq_table
+    for field, role in (
+        ("cmd_eq", "cmd"),
+        ("async_eq", "async"),
+        ("pages_eq", "pages"),
+    ):
+        yield getattr(eq_table, field).core, role
+
+    if has_member(eq_table, "comp_eqs"):
+        for _vector, entry in xa_for_each(eq_table.comp_eqs):
+            eq_comp = cast("struct mlx5_eq_comp *", entry)
+            yield eq_comp.core, "completion"
+        return
+
+    for eq_comp in list_for_each_entry(
+        "struct mlx5_eq_comp",
+        eq_table.comp_eqs_list.address_of_(),
+        "list",
+    ):
+        yield eq_comp.core, "completion"
+
+
+def mlx5_ib_iter_qps(ibdev: Object) -> Iterator[Object]:
+    """Iterate over the ``struct mlx5_ib_qp`` objects for an RDMA device."""
+
+    yield from list_for_each_entry(
+        "struct mlx5_ib_qp",
+        ibdev.qp_list.address_of_(),
+        "qps_list",
+    )
+
+
+def _mlx5_fw_version(mdev: Object, ibdev: Optional[Object]) -> str:
+    if ibdev is not None:
+        try:
+            fw_ver = formatting._format_ib_fw_ver(
+                int(ibdev.ib_dev.attrs.fw_ver)
+            )
+            if fw_ver is not None:
+                return fw_ver
+        except FaultError:
+            pass
+
+    try:
+        iseg = mdev.iseg
+        if iseg:
+            fw_ver = formatting._format_iseg_fw_revision(
+                int(iseg.fw_rev),
+                int(iseg.cmdif_rev_fw_sub),
+            )
+            if fw_ver is not None:
+                return fw_ver
+    except FaultError:
+        pass
+    return "unavailable"
+
+
 class Mlx5(CorelensModule):
     """Inspect mlx5 devices, queues, and descriptors."""
 
@@ -364,32 +480,6 @@ class Mlx5Collector:
                 )
         return filtered
 
-    def _collect_fw_version(self, device: DeviceRecord) -> str:
-        mdev = device.mdev
-        ibdev = device.ibdev
-        if ibdev is not None:
-            try:
-                fw_ver = formatting._format_ib_fw_ver(
-                    int(ibdev.ib_dev.attrs.fw_ver)
-                )
-                if fw_ver is not None:
-                    return fw_ver
-            except FaultError:
-                pass
-
-        try:
-            iseg = mdev.iseg
-            if iseg:
-                fw_ver = formatting._format_iseg_fw_revision(
-                    int(iseg.fw_rev),
-                    int(iseg.cmdif_rev_fw_sub),
-                )
-                if fw_ver is not None:
-                    return fw_ver
-        except FaultError:
-            pass
-        return "unavailable"
-
     def collect(self) -> Dict[str, Any]:
         devices = self._discover_devices()
         devices = self._filter_devices(devices)
@@ -403,7 +493,7 @@ class Mlx5Collector:
                 "device_state": formatting._enum_name(
                     device.mdev.state, "MLX5_DEVICE_STATE_"
                 ),
-                "fw_version": self._collect_fw_version(device),
+                "fw_version": _mlx5_fw_version(device.mdev, device.ibdev),
             }
             device.health = collect_device.collect_health(device.mdev)
 
@@ -416,24 +506,18 @@ class Mlx5Collector:
                 eq_start = len(self._eqs)
                 qp_start = len(self._qps)
                 if self._want_eqs:
-                    for core, role in self._iter_eq_candidates(device):
+                    for core, role in mlx5_iter_eqs(device.mdev):
                         self._record_eq(core, device, role)
                 netdev = device.netdev
                 if self._want_channels and netdev is not None:
-                    netdev["channels"] = self._collect_channels(
-                        device, netdev, netdev["_priv_obj"]
-                    )
+                    netdev["channels"] = self._collect_channels(device, netdev)
                 if self._want_cqs:
-                    for core_cq in self._iter_core_cqs(device):
+                    for core_cq in mlx5_iter_core_cqs(device.mdev):
                         self._record_core_cq(core_cq, device)
                 if self._want_qps:
                     ibdev = device.ibdev
                     if ibdev is not None:
-                        for qp in list_for_each_entry(
-                            "struct mlx5_ib_qp",
-                            ibdev.qp_list.address_of_(),
-                            "qps_list",
-                        ):
+                        for qp in mlx5_ib_iter_qps(ibdev):
                             self._record_qp(qp, device)
 
                 channels = (
@@ -543,10 +627,10 @@ class Mlx5Collector:
             netdev = device.netdev
             priv = netdev["_priv_obj"]
             channels_obj = priv.channels
-            for channel in self._iter_channels(channels_obj):
+            for channel in mlx5_iter_channels(device.mdev):
                 channel_total += 1
                 queue_total += sum(
-                    1 for _queue in self._iter_channel_queues(channel)
+                    1 for _queue in mlx5_iter_channel_queues(channel)
                 )
 
             ptp, state = self._ptp_object(channels_obj)
@@ -557,46 +641,6 @@ class Mlx5Collector:
                 channel_total += 1
                 queue_total += ptp_queues
         return channel_total, queue_total
-
-    def _iter_channels(self, channels: Object) -> Iterator[Object]:
-        count = int(channels.num)
-        for index in range(count):
-            yield channels.c[index]
-
-    def _iter_channel_queues(
-        self, channel: Object
-    ) -> Iterator[Tuple[str, Object, str, Optional[int]]]:
-        yield "rx_rq", channel.rq, "rq", None
-
-        for tc in range(int(channel.num_tc)):
-            yield "tx_sqs", channel.sq[tc], "sq", tc
-
-        qos_sqs = channel.qos_sqs
-        if qos_sqs:
-            for index in range(int(channel.qos_sqs_size)):
-                sq = qos_sqs[index]
-                if sq:
-                    yield "tx_sqs", sq, "qos_sq", index
-
-        if int(channel.xdp):
-            yield "xdp_sqs", channel.rq_xdpsq, "rq_xdpsq", None
-
-        xdpsq = channel.xdpsq
-        if (xdpsq.type_.kind != TypeKind.POINTER or xdpsq) and int(xdpsq.sqn):
-            yield "xdp_sqs", xdpsq, "xdpsq", None
-
-        xsk_bit = int(self.prog.constant("MLX5E_CHANNEL_STATE_XSK"))
-        if int(channel.state[0]) & (1 << xsk_bit):
-            yield "xsk_rqs", channel.xskrq, "xskrq", None
-            yield "xdp_sqs", channel.xsksq, "xsksq", None
-
-        yield "icosqs", channel.icosq, "icosq", None
-        yield (
-            "icosqs",
-            channel.async_icosq,
-            "async_icosq",
-            None,
-        )
 
     def _ptp_object(
         self, channels_obj: Object
@@ -631,12 +675,9 @@ class Mlx5Collector:
         self,
         device: DeviceRecord,
         netdev_record: Dict[str, Any],
-        priv: Object,
     ) -> List[Dict[str, Any]]:
-        channels = priv.channels
-
         result = []
-        for channel in self._iter_channels(channels):
+        for channel in mlx5_iter_channels(device.mdev):
             result.append(
                 self._collect_channel(
                     device,
@@ -644,7 +685,9 @@ class Mlx5Collector:
                     channel,
                 )
             )
-        ptp_record = self._collect_ptp_channel(device, netdev_record, channels)
+        ptp_record = self._collect_ptp_channel(
+            device, netdev_record, netdev_record["_priv_obj"].channels
+        )
         if ptp_record is not None:
             result.append(ptp_record)
         return result
@@ -709,7 +752,7 @@ class Mlx5Collector:
             queue,
             kind,
             tc,
-        ) in self._iter_channel_queues(channel):
+        ) in mlx5_iter_channel_queues(channel):
             queue_record = self._collect_queue(
                 device,
                 netdev_record,
@@ -905,16 +948,9 @@ class Mlx5Collector:
         self,
         device: DeviceRecord,
     ) -> Tuple[int, int]:
-        eq_count = sum(1 for _core, _role in self._iter_eq_candidates(device))
-        cq_count = sum(1 for _cq in self._iter_core_cqs(device))
+        eq_count = sum(1 for _core, _role in mlx5_iter_eqs(device.mdev))
+        cq_count = sum(1 for _cq in mlx5_iter_core_cqs(device.mdev))
         return eq_count, cq_count
-
-    def _iter_core_cqs(self, device: DeviceRecord) -> Iterator[Object]:
-        async_eq = device.mdev.priv.eq_table.async_eq.core
-        for _key, obj in radix_tree_for_each(
-            async_eq.cq_table.tree.address_of_()
-        ):
-            yield cast("struct mlx5_core_cq *", obj)
 
     def _cq_eq_fields(
         self, core_cq: Object, device_name: str
@@ -926,31 +962,6 @@ class Mlx5Collector:
             field: record[field]
             for field in ("eqn", "irqn", "irq_cpu", "vector")
         }
-
-    def _iter_eq_candidates(
-        self, device: DeviceRecord
-    ) -> Iterator[Tuple[Object, str]]:
-        eq_table = device.mdev.priv.eq_table
-        for field, role in (
-            ("cmd_eq", "cmd"),
-            ("async_eq", "async"),
-            ("pages_eq", "pages"),
-        ):
-            yield getattr(eq_table, field).core, role
-
-        if has_member(eq_table, "comp_eqs"):
-            for _vector, entry in xa_for_each(eq_table.comp_eqs):
-                eq_comp = cast("struct mlx5_eq_comp *", entry)
-                yield eq_comp.core, "completion"
-            return
-
-        objects = list_for_each_entry(
-            "struct mlx5_eq_comp",
-            eq_table.comp_eqs_list.address_of_(),
-            "list",
-        )
-        for eq_comp in objects:
-            yield eq_comp.core, "completion"
 
     def _record_eq(
         self,
