@@ -178,35 +178,6 @@ def _decode_eqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         decoded["syndrome_display"] = _enum_label(
             syndrome_value, syndrome_name
         )
-    elif event_name in (
-        "PATH_MIG",
-        "COMM_EST",
-        "SQ_DRAINED",
-        "WQ_CATAS_ERROR",
-        "PATH_MIG_FAILED",
-        "WQ_INVAL_REQ_ERROR",
-        "WQ_ACCESS_ERROR",
-        "SRQ_CATAS_ERROR",
-        "SRQ_LAST_WQE",
-        "SRQ_RQ_LIMIT",
-    ):
-        decoded["resource_type"] = _hex(_byte(raw, 52))
-        decoded["resource_id"] = _read_be(raw, 56, 4)
-    elif event_name == "PAGE_REQUEST":
-        decoded["func_id"] = _read_be(raw, 34, 2)
-        decoded["num_pages"] = _read_be(raw, 36, 4)
-    elif event_name == "NIC_VPORT_CHANGE":
-        decoded["vport_num"] = _read_be(raw, 34, 2)
-    elif event_name == "VHCA_STATE_CHANGE":
-        decoded["func_id"] = _read_be(raw, 34, 2)
-    elif event_name == "PORT_MODULE_EVENT":
-        decoded["module"] = _byte(raw, 33)
-        decoded["module_status"] = _hex(_byte(raw, 35))
-    elif event_name == "OBJECT_CHANGE":
-        decoded["obj_type"] = _hex(_read_be(raw, 34, 2))
-        decoded["obj_id"] = _read_be(raw, 36, 4)
-    if event_name == "PORT_CHANGE":
-        decoded["port"] = _byte(raw, 40)
     return decoded
 
 
