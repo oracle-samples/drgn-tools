@@ -148,14 +148,12 @@ def _decode_eqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         representative="MLX5_EVENT_TYPE_COMP",
         prefix="MLX5_EVENT_TYPE_",
     )
-    sub_type = _byte(raw, 3)
     owner_byte = _byte(raw, 63)
     owner = owner_byte & 1 if owner_byte is not None else None
     decoded = {
         "owner_bit": owner,
         "type_value": event_type,
         "type_display": _enum_label(event_type, event_name),
-        "sub_type": _hex(sub_type),
     }
     if event_name == "COMP":
         decoded["cqn"] = _read_be(raw, 56, 4)
