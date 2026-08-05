@@ -29,7 +29,6 @@ _DESCRIPTOR_COLUMNS = {
         ("REQ_OP", "req_opcode_display", False, False, "request opcode"),
         ("WQE_ID", "wqe_id", False, True, None),
         ("WQE_CTR", "wqe_counter", True, False, "completed WQE counter"),
-        ("WR_ID", "wr_id", False, False, "IB work request id"),
         (
             "BYTE_CNT",
             "byte_count_display",
@@ -38,7 +37,6 @@ _DESCRIPTOR_COLUMNS = {
             "completed byte count",
         ),
         ("QPN", "qpn", True, False, "queue pair number"),
-        ("SRQN", "srqn", False, True, None),
         ("SYND", "syndrome_display", False, False, "error syndrome"),
         ("VENDOR_SYND", "vendor_err_synd", False, False, None),
         ("ERR_QPN", "error_qpn", False, False, None),
@@ -49,7 +47,6 @@ _DESCRIPTOR_COLUMNS = {
         ("STATUS", "status", True, False, "ownership state"),
         ("TYPE", "type_display", True, False, "event type"),
         ("CQN", "cqn", False, False, "completion queue number"),
-        ("SYND", "syndrome_display", False, False, "error syndrome"),
     ),
     "rq_wqe": (
         ("RQ_IDX", "index", True, False, "receive descriptor slot"),

@@ -28,27 +28,18 @@ def _annotate_owner_status(
     owner = int(decoded["owner_bit"])
     expected = (absolute_index // ring_size) & 1
     owner_match = owner == expected
-    decoded["expected_owner"] = expected
-    decoded["owner_match"] = owner_match
-    # Kept for JSON compatibility. This is only the owner-bit comparison, not
-    # whether the CQE can be polled.
-    decoded["owner_ready"] = owner_match
 
     if descriptor_kind == "cqe" and decoded.get("status") == "ok":
         if consumer_index is not None and absolute_index < consumer_index:
             decoded["status"] = "not-ready"
-            decoded["not_ready_reason"] = "consumed"
         elif decoded.get("opcode_value") == 0xF:
             # mlx5_ib initializes empty CQ slots with MLX5_CQE_INVALID (0xf)
             # and checks both the opcode and owner bit before polling.
             decoded["status"] = "not-ready"
-            decoded["not_ready_reason"] = "invalid-sentinel"
         elif not owner_match:
             decoded["status"] = "not-ready"
-            decoded["not_ready_reason"] = "owner-mismatch"
         else:
             decoded["status"] = "ready"
-            decoded.pop("not_ready_reason", None)
         return
 
     if decoded.get("status") == "ok":

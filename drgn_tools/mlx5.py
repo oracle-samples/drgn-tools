@@ -18,7 +18,6 @@ import argparse
 import ipaddress
 import json
 from collections import Counter
-from collections import defaultdict
 from collections import OrderedDict
 from typing import Any
 from typing import Callable
@@ -344,7 +343,7 @@ class _EqEntry(NamedTuple):
 
 
 class _QpEntry(NamedTuple):
-    """Report record plus the SQ used for WQE and WR-ID reads."""
+    """Report record plus the SQ used for WQE dumps."""
 
     record: Dict[str, Any]
     sq_wq: Optional[Object]
@@ -358,7 +357,7 @@ class Mlx5Collector:
         self.args = args
         self.warnings: List[str] = []
         self._want_cqs = bool(args.cqs)
-        self._want_qps = bool(args.qps or args.dump_wqe or args.dump_cqe)
+        self._want_qps = bool(args.qps or args.dump_wqe)
         self._want_channels = bool(
             args.queues
             or args.dump_wqe
@@ -1222,17 +1221,6 @@ class Mlx5Collector:
     def _collect_requested_dumps(self) -> List[Dict[str, Any]]:
         dump_reports: List[Dict[str, Any]] = []
         if self.args.dump_cqe:
-            qps_by_cq: Dict[Tuple[str, int], List[_QpEntry]] = defaultdict(
-                list
-            )
-            for qp_entry in self._qps.values():
-                if qp_entry.sq_wq is None:
-                    continue
-                send_cqn = qp_entry.record.get("send_cqn")
-                if send_cqn is not None:
-                    qps_by_cq[
-                        (str(qp_entry.record["device"]), int(send_cqn))
-                    ].append(qp_entry)
             if self.args.cqn is None:
                 if getattr(self.args, "_auto_select_cqs", False):
                     cq_keys = self._auto_cqe_dump_keys()
@@ -1254,9 +1242,7 @@ class Mlx5Collector:
                     ),
                 )
                 dump_reports.extend(
-                    self._dump_cqe_key(
-                        key, self.args.maxcqe, qps_by_cq.get(key, [])
-                    )
+                    self._dump_cqe_key(key, self.args.maxcqe)
                     for key in cq_keys
                 )
                 if not dump_reports:
@@ -1268,9 +1254,7 @@ class Mlx5Collector:
                     self._cqs, self.args.cqn, "CQN"
                 )
                 dump_reports.append(
-                    self._dump_cqe_key(
-                        key, self.args.maxcqe, qps_by_cq.get(key, [])
-                    )
+                    self._dump_cqe_key(key, self.args.maxcqe)
                     if key is not None
                     else {
                         "kind": "cqe",
@@ -1539,7 +1523,6 @@ class Mlx5Collector:
         self,
         key: Tuple[str, int],
         max_entries: int,
-        qp_candidates: List[_QpEntry],
     ) -> Dict[str, Any]:
         device_name, cqn = key
         entry = self._cqs.get(key)
@@ -1562,11 +1545,6 @@ class Mlx5Collector:
             consumer_index=record.get("consumer_index"),
             descriptor_kind="cqe",
         )
-        notes = (
-            ["WR_ID is read from matching struct mlx5_ib_qp.sq.wrid[] entries"]
-            if self._annotate_ib_cqe_wr_ids(record, entries, qp_candidates)
-            else []
-        )
         status, bad_statuses = _descriptor_dump_summary(entries)
         wq_layout = dumps._wq_layout_summary(wq)
         if bad_statuses:
@@ -1586,107 +1564,9 @@ class Mlx5Collector:
             "window": dumps._dump_window_summary(
                 max_entries, record.get("size")
             ),
-            "notes": notes,
+            "notes": [],
             "entries": entries,
         }
-
-    def _annotate_ib_cqe_wr_ids(
-        self,
-        cq_record: Dict[str, Any],
-        entries: List[Dict[str, Any]],
-        qp_candidates: List[_QpEntry],
-    ) -> int:
-        if not entries or (
-            formatting._short_struct(cq_record.get("address_struct"))
-            != "mlx5_ib_cq"
-        ):
-            return 0
-        request_opcodes = (
-            int(self.prog.constant("MLX5_CQE_REQ")),
-            int(self.prog.constant("MLX5_CQE_REQ_ERR")),
-        )
-        qp_index_by_qpn: Dict[int, Optional[int]] = {}
-        for index, qp_entry in enumerate(qp_candidates):
-            record = qp_entry.record
-            for alias in {
-                int(value)
-                for value in (record.get("qpn"), record.get("hw_qpn"))
-                if value is not None
-            }:
-                if alias in qp_index_by_qpn:
-                    qp_index_by_qpn[alias] = None
-                else:
-                    qp_index_by_qpn[alias] = index
-        wrid_sources: Dict[int, Tuple[int, Any]] = {}
-        gsi_wr_ids: Dict[int, Optional[int]] = {}
-        count = 0
-        for entry in entries:
-            if entry.get("status") not in ("ok", "ready"):
-                continue
-            # mlx5_ib_poll_one() uses wqe_counter directly for send completions
-            # and errors. Receive/SRQ completions use different cursor rules.
-            if entry.get("opcode_value") not in request_opcodes:
-                continue
-            wqe_ctr = entry.get("wqe_counter")
-            if wqe_ctr is None:
-                continue
-            cqe_qpn = entry.get("qpn")
-            if cqe_qpn is None or cqe_qpn == 0:
-                continue
-            qp_index = qp_index_by_qpn.get(int(cqe_qpn))
-            if qp_index is None:
-                continue
-            qp_entry = qp_candidates[qp_index]
-            if qp_index not in wrid_sources:
-                wq = qp_entry.sq_wq
-                if wq is None:
-                    wrid_sources[qp_index] = (0, None)
-                else:
-                    wqe_cnt = int(wq.wqe_cnt)
-                    wrid = wq.wrid if wqe_cnt > 0 else None
-                    wrid_sources[qp_index] = (
-                        wqe_cnt,
-                        wrid if wrid else None,
-                    )
-            wqe_cnt, wrid = wrid_sources[qp_index]
-            if wqe_cnt <= 0 or wrid is None:
-                continue
-            wr_idx = wqe_ctr & (wqe_cnt - 1)
-            wr_id = int(wrid[wr_idx])
-            qp_record = qp_entry.record
-            if qp_record.get(
-                "creator_type"
-            ) == "kernel" and _looks_like_kernel_pointer_value(wr_id):
-                if wr_id not in gsi_wr_ids:
-                    gsi_wr_ids[wr_id] = _mlx5_ib_gsi_saved_wr_id(
-                        self.prog, wr_id
-                    )
-                gsi_wr_id = gsi_wr_ids[wr_id]
-                if gsi_wr_id is None or _looks_like_kernel_pointer_value(
-                    gsi_wr_id
-                ):
-                    continue
-                wr_id = gsi_wr_id
-                wr_id_kind = "gsi_numeric_wr_id"
-                wr_id_source = (
-                    "struct mlx5_ib_gsi_wr.wc.wr_id via sq.wrid[] wr_cqe"
-                )
-            else:
-                wr_id_kind = "numeric_wr_id"
-                wr_id_source = (
-                    "struct mlx5_ib_qp.sq.wrid[wqe_ctr & (wqe_cnt - 1)]"
-                )
-            entry.update(
-                {
-                    "wr_id": wr_id,
-                    "wr_id_kind": wr_id_kind,
-                    "wr_id_index": wr_idx,
-                    "wr_id_queue": "sq",
-                    "wr_id_source": wr_id_source,
-                }
-            )
-            count += 1
-        return count
 
     def _dump_eqe_key(
         self, key: Tuple[str, int], max_entries: int
@@ -2035,7 +1915,6 @@ class Mlx5Collector:
             if cached_fragment is None:
                 entry: Dict[str, Any] = {
                     "index": index,
-                    "_absolute_index": cursor,
                     "status": "read-unavailable",
                 }
                 if around_consumer and cursor == consumer:
@@ -2072,7 +1951,6 @@ class Mlx5Collector:
             decoded.update(
                 {
                     "index": index,
-                    "_absolute_index": cursor,
                     "address": formatting._hex(addr),
                 }
             )
@@ -2178,7 +2056,6 @@ class Mlx5Collector:
             return []
         findings = []
         cqe_errors: Tuple[int, ...] = ()
-        cq_error = None
 
         def add(scope: str, message: str) -> None:
             findings.append(
@@ -2196,8 +2073,6 @@ class Mlx5Collector:
                         "MLX5_CQE_RESP_ERR",
                     )
                 )
-            elif kind == "eqe" and cq_error is None:
-                cq_error = int(self.prog.constant("MLX5_EVENT_TYPE_CQ_ERROR"))
             selector_name = dump.get("selector_name") or "id"
             selector = dump.get("selector")
             scope = dump.get("device") or "mlx5"
@@ -2205,22 +2080,10 @@ class Mlx5Collector:
                 if entry.get("status", "ok") not in ("ok", "ready"):
                     continue
                 if kind == "cqe" and entry.get("opcode_value") in cqe_errors:
-                    syndrome = entry.get("syndrome_display") or entry.get(
-                        "syndrome"
-                    )
                     add(
                         scope,
                         f"CQE error on {selector_name}={selector} index {entry.get('index')}"
-                        f" syndrome={syndrome}",
-                    )
-                elif kind == "eqe" and entry.get("type_value") == cq_error:
-                    syndrome = entry.get("syndrome_display") or entry.get(
-                        "syndrome"
-                    )
-                    add(
-                        scope,
-                        f"EQE reports CQ error on {selector_name}={selector} index {entry.get('index')}"
-                        f" cqn={entry.get('cqn')} syndrome={syndrome}",
+                        f" syndrome={entry.get('syndrome_display')}",
                     )
         return findings
 
@@ -2278,32 +2141,6 @@ def _irq_affinity_cpus(prog: Program, irqn: Optional[int]) -> Optional[str]:
         else irq_data.affinity
     )
     return cpumask_to_cpulist(mask) or None
-
-
-def _mlx5_ib_gsi_saved_wr_id(prog: Program, wr_cqe: Any) -> Optional[int]:
-    addr = int(wr_cqe)
-    if not _looks_like_kernel_pointer_value(addr):
-        return None
-    # Unused WR-ID slots can contain the all-ones sentinel. It resembles a
-    # kernel pointer but must not be dereferenced.
-    if addr == 0xFFFFFFFFFFFFFFFF:
-        return None
-    try:
-        cqe = Object(prog, "struct ib_cqe *", value=addr)
-        done = int(cqe.done)
-        symbol_name = prog.symbol(done).name
-        if symbol_name != "handle_single_completion":
-            return None
-        gsi_wr = container_of(cqe, "struct mlx5_ib_gsi_wr", "cqe")
-        return int(gsi_wr.wc.wr_id)
-    except (FaultError, LookupError):
-        return None
-
-
-def _looks_like_kernel_pointer_value(value: Any) -> bool:
-    # Supported 64-bit vmcores use high canonical kernel addresses. Apply this
-    # only to kernel QPs because userspace may choose any u64 WR_ID.
-    return int(value) >= (1 << 63)
 
 
 def _cq_consumer_index(
