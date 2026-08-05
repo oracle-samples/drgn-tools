@@ -282,11 +282,6 @@ class Mlx5Collector:
 
         for mdev in collect_device.for_each_mlx5_core_dev(self.prog):
             netdev = mdev.mlx5e_res.uplink_netdev
-            name = None
-            if netdev:
-                name = escape_ascii_string(netdev.name.string_())
-                saw_netdev = True
-
             device = DeviceRecord(mdev)
             ibdev = collect_device.mlx5_core_ib_device(mdev)
             if ibdev:
@@ -295,17 +290,16 @@ class Mlx5Collector:
                 )
                 device.ibdev = ibdev
 
-            if not netdev:
-                devices.append(device)
-                continue
-
-            priv = netdev_priv(netdev, "struct mlx5e_priv")
-            device.netdev = {
-                "name": name,
-                "summary": {},
-                "channels": [],
-                "_priv_obj": priv,
-            }
+            if netdev:
+                name = escape_ascii_string(netdev.name.string_())
+                saw_netdev = True
+                priv = netdev_priv(netdev, "struct mlx5e_priv")
+                device.netdev = {
+                    "name": name,
+                    "summary": {},
+                    "channels": [],
+                    "_priv_obj": priv,
+                }
             devices.append(device)
 
         if not saw_netdev:
