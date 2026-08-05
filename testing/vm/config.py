@@ -40,10 +40,6 @@ class KernelCategory(NamedTuple):
         return f"ol{self.ol_ver}-{self.kind.value}-{self.arch}"
 
     @property
-    def slug(self) -> str:
-        return f"ol{self.ol_ver}{self.kind.value}{self.arch}"
-
-    @property
     def rpmbase(self) -> str:
         if self.kind == KernelKind.UEKNEXT:
             return "kernel-ueknext"

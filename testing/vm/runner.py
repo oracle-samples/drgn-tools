@@ -263,7 +263,7 @@ def main() -> None:
             if args.delete_after_test:
                 log.message("Deleting RPM cache and extraction directory")
                 shutil.rmtree(layout.extract_path(kernel.release))
-                shutil.rmtree(layout.yum_cache_dir / kernel.category.slug)
+                shutil.rmtree(layout.yum_cache_dir / kernel.category.name)
         except BaseException as e:
             failures.append(f"{target.name}: {e}")
             if isinstance(e, (SystemExit, KeyboardInterrupt)):

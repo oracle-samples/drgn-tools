@@ -32,7 +32,7 @@ RHCK_YUM = (
 
 
 def _cache_key(category: KernelCategory, kind: str) -> str:
-    return "{}/{}".format(category.slug, kind)
+    return "{}/{}".format(category.name, kind)
 
 
 def _require_cached_file(
@@ -47,7 +47,7 @@ def _require_cached_file(
     if not path.is_file():
         raise RuntimeError(
             "Cached file is missing for {}: {} (disable --skip-rpm-fetch)".format(
-                category.slug, path
+                category.name, path
             )
         )
     return path
@@ -223,7 +223,7 @@ def resolve_kernel(
             continue
         raise RuntimeError(
             "Required RPMs were unavailable for {} ({})".format(
-                category.slug, release
+                category.name, release
             )
         )
     raise RuntimeError(
