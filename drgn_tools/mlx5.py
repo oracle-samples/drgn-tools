@@ -289,9 +289,6 @@ class Mlx5Collector:
         saw_netdev = False
 
         for mdev in collect_device.for_each_mlx5_core_dev(self.prog):
-            if not mdev:
-                raise ValueError("mlx5 driver device has no mlx5_core_dev")
-            mdev_addr = int(mdev)
             netdev = mdev.mlx5e_res.uplink_netdev
             name = None
             if netdev:
@@ -303,13 +300,6 @@ class Mlx5Collector:
             device = DeviceRecord(mdev)
             ibdev = collect_device.mlx5_core_ib_device(mdev)
             if ibdev:
-                ib_mdev = ibdev.mdev
-                if not ib_mdev:
-                    raise ValueError("mlx5_ib_dev.mdev is NULL")
-                if int(ib_mdev) != mdev_addr:
-                    raise ValueError(
-                        "mlx5_ib_dev.mdev does not match its core device"
-                    )
                 device.rdma_name = ibdev.ib_dev.name.string_().decode(
                     "utf-8", "replace"
                 )
@@ -320,10 +310,6 @@ class Mlx5Collector:
                 continue
 
             priv = netdev_priv(netdev, "struct mlx5e_priv")
-            if int(priv.mdev) != mdev_addr:
-                raise ValueError(
-                    f"{name}: mlx5e_priv.mdev does not match its core device"
-                )
             device.netdev = {
                 "name": name,
                 "summary": {},
@@ -357,7 +343,7 @@ class Mlx5Collector:
                 in {
                     dev.mdev_address.lower(),
                     str(dev.rdma_name or "").lower(),
-                    str(dev.pci_bdf or "").lower(),
+                    dev.pci_bdf.lower(),
                 }
             ]
             if not filtered:
@@ -379,8 +365,7 @@ class Mlx5Collector:
                 dev
                 for dev in filtered
                 if dev.netdev is not None
-                and wanted_ip
-                in dev.netdev.get("summary", {}).get("ip_addresses", [])
+                and wanted_ip in dev.netdev["summary"]["ip_addresses"]
             ]
             if not filtered:
                 self._warn(
@@ -423,7 +408,7 @@ class Mlx5Collector:
                 "mdev": device.mdev_address,
                 "rdma_name": device.rdma_name,
                 "rdma_port": 1 if device.ibdev is not None else None,
-                "pci_bdf": device.pci_bdf or "unavailable",
+                "pci_bdf": device.pci_bdf,
                 "device_state": formatting._enum_name(
                     device.mdev.state, "MLX5_DEVICE_STATE_"
                 ),
@@ -448,8 +433,8 @@ class Mlx5Collector:
                         device, netdev, netdev["_priv_obj"]
                     )
                 if self._want_cqs:
-                    for key, core_cq in self._iter_core_cqs(device):
-                        self._record_core_cq(core_cq, device, table_key=key)
+                    for core_cq in self._iter_core_cqs(device):
+                        self._record_core_cq(core_cq, device)
                 if self._want_qps:
                     ibdev = device.ibdev
                     if ibdev is not None:
@@ -461,7 +446,7 @@ class Mlx5Collector:
                             self._record_qp(qp, device)
 
                 channels = (
-                    device.netdev.get("channels", [])
+                    device.netdev["channels"]
                     if self._want_channels and device.netdev is not None
                     else []
                 )
@@ -585,31 +570,26 @@ class Mlx5Collector:
                 ptp_queues = sum(
                     1 for _queue in self._iter_ptp_queues(ptp, state)
                 )
-                if ptp_queues:
-                    channel_total += 1
-                    queue_total += ptp_queues
+                channel_total += 1
+                queue_total += ptp_queues
         return channel_total, queue_total
 
     def _iter_channels(self, channels: Object) -> Iterator[Object]:
         count = int(channels.num)
         for index in range(count):
-            channel = channels.c[index]
-            if channel:
-                yield channel
+            yield channels.c[index]
 
     def _iter_channel_queues(
         self, channel: Object
     ) -> Iterator[Tuple[str, Object, str, Optional[int]]]:
         yield "rx_rq", channel.rq, "rq", None
 
-        num_tc = min(int(channel.num_tc), len(channel.sq))
-        for tc in range(num_tc):
+        for tc in range(int(channel.num_tc)):
             yield "tx_sqs", channel.sq[tc], "sq", tc
 
         qos_sqs = channel.qos_sqs
         if qos_sqs:
-            count = min(int(channel.qos_sqs_size), defs.MAX_QOS_SQS)
-            for index in range(count):
+            for index in range(int(channel.qos_sqs_size)):
                 sq = qos_sqs[index]
                 if sq:
                     yield "tx_sqs", sq, "qos_sq", index
@@ -653,7 +633,7 @@ class Mlx5Collector:
         tx_bit = int(self._constant("MLX5E_PTP_STATE_TX"))
         if not state & (1 << tx_bit):
             return
-        for tc in range(min(int(ptp.num_tc), len(ptp.ptpsq))):
+        for tc in range(int(ptp.num_tc)):
             ptpsq = ptp.ptpsq[tc]
             yield (
                 "tx_sqs",
@@ -721,15 +701,13 @@ class Mlx5Collector:
                 timestamp_cq,
                 {
                     "device": device.mdev_address,
-                    "netdev": netdev_record.get("name"),
+                    "netdev": netdev_record["name"],
                     "channel": "ptp",
                     "queue_kind": "ptp_ts_cq",
                     "queue_number": int(timestamp_cq.mcq.cqn),
                 },
             )
 
-        if record["rx_rq"] is None and not record["tx_sqs"]:
-            return None
         return record
 
     def _collect_channel(
@@ -924,9 +902,9 @@ class Mlx5Collector:
             "address": formatting._hex(int(cq.address_of_())),
             "address_struct": "struct mlx5e_cq",
             "owners": [owner_name],
-            "device": owner.get("device"),
-            "netdev": owner.get("netdev"),
-            "queue_kind": owner.get("queue_kind"),
+            "device": owner["device"],
+            "netdev": owner["netdev"],
+            "queue_kind": owner["queue_kind"],
             "consumer_index": consumer_index,
             "arm_sn": int(mcq.arm_sn) & 0x3,
             "event_ctr": int(cq.event_ctr),
@@ -944,35 +922,25 @@ class Mlx5Collector:
         device: DeviceRecord,
     ) -> Tuple[int, int]:
         eq_count = sum(1 for _core, _role in self._iter_eq_candidates(device))
-        cq_count = sum(1 for _key, _cq in self._iter_core_cqs(device))
+        cq_count = sum(1 for _cq in self._iter_core_cqs(device))
         return eq_count, cq_count
 
-    def _iter_core_cqs(
-        self, device: DeviceRecord
-    ) -> Iterator[Tuple[int, Object]]:
+    def _iter_core_cqs(self, device: DeviceRecord) -> Iterator[Object]:
         async_eq = device.mdev.priv.eq_table.async_eq.core
-        for key, obj in radix_tree_for_each(
+        for _key, obj in radix_tree_for_each(
             async_eq.cq_table.tree.address_of_()
         ):
-            yield key, cast("struct mlx5_core_cq *", obj)
+            yield cast("struct mlx5_core_cq *", obj)
 
     def _cq_eq_fields(
         self, core_cq: Object, device_name: str
     ) -> Dict[str, Any]:
         core = core_cq.eq.core
         eqn = int(core.eqn)
-        entry = self._eqs.get((device_name, eqn))
-        if entry is not None:
-            return {
-                field: entry.record.get(field)
-                for field in ("eqn", "irqn", "irq_cpu", "vector")
-            }
-        irqn = int(core.irqn)
+        record = self._eqs[(device_name, eqn)].record
         return {
-            "eqn": eqn,
-            "irqn": irqn,
-            "irq_cpu": _irq_affinity_cpus(self.prog, irqn),
-            "vector": int(core.vecidx),
+            field: record[field]
+            for field in ("eqn", "irqn", "irq_cpu", "vector")
         }
 
     def _iter_eq_candidates(
@@ -1037,13 +1005,8 @@ class Mlx5Collector:
         self,
         core_cq: Object,
         device: DeviceRecord,
-        table_key: int,
     ) -> None:
         cqn = int(core_cq.cqn)
-        if cqn != table_key:
-            raise ValueError(
-                f"CQ table key {table_key} does not match CQN {cqn}"
-            )
         key = (device.mdev_address, cqn)
         if key in self._cqs:
             return
@@ -1053,8 +1016,6 @@ class Mlx5Collector:
         ib_cq = None
         if event == "mlx5e_cq_error_event":
             mlx5e_cq = container_of(core_cq, "struct mlx5e_cq", "mcq")
-            if int(mlx5e_cq.mdev) != int(device.mdev):
-                raise ValueError("mlx5e CQ belongs to a different core device")
         elif event == "mlx5_ib_cq_event":
             ib_cq = container_of(core_cq, "struct mlx5_ib_cq", "mcq")
         address_obj, address_struct = core_cq, "struct mlx5_core_cq"
@@ -1110,11 +1071,7 @@ class Mlx5Collector:
             return None
         address = int(event)
         if address not in self._cq_event_names:
-            try:
-                name = self.prog.symbol(address).name
-            except LookupError:
-                name = None
-            self._cq_event_names[address] = name
+            self._cq_event_names[address] = self.prog.symbol(address).name
         return self._cq_event_names[address]
 
     def _mlx5e_core_cq_owner(
@@ -1125,22 +1082,16 @@ class Mlx5Collector:
         netdev_name = None
         netdev = device.netdev
         if netdev is not None:
-            priv = netdev.get("_priv_obj")
-            if priv is not None and int(cq) == int(
-                priv.drop_rq.cq.address_of_()
-            ):
+            priv = netdev["_priv_obj"]
+            if int(cq) == int(priv.drop_rq.cq.address_of_()):
                 return {
                     "device": device.mdev_address,
-                    "netdev": netdev.get("name"),
+                    "netdev": netdev["name"],
                     "queue_kind": "drop_rq_cq",
                     "queue_number": cqn,
                 }
-            if (
-                cq_netdev
-                and priv is not None
-                and int(cq_netdev) == int(priv.netdev)
-            ):
-                netdev_name = netdev.get("name")
+            if cq_netdev and int(cq_netdev) == int(priv.netdev):
+                netdev_name = netdev["name"]
         if netdev_name is None and cq_netdev:
             netdev_name = cq_netdev.name.string_().decode("utf-8", "replace")
 
@@ -1173,7 +1124,7 @@ class Mlx5Collector:
                 for entry in self._qps.values()
                 if selection._qp_matches_filter(entry.record, self.args)
             ),
-            key=lambda record: formatting._sort_key(record.get("qpn")),
+            key=lambda record: formatting._sort_key(record["qpn"]),
         )
 
     def _qp_creator(self, qp: Object) -> Dict[str, Any]:
@@ -1205,7 +1156,7 @@ class Mlx5Collector:
         return creator
 
     def _ib_cq_number(self, cq: Optional[Object]) -> Optional[int]:
-        if cq is None or not cq:
+        if not cq:
             return None
         address = int(cq)
         if address not in self._ib_cq_numbers:
@@ -1240,17 +1191,14 @@ class Mlx5Collector:
         creator = self._qp_creator(qp)
         sq_wq = qp.sq
         rq_wq = qp.rq
-        kernel_backed = creator.get("type") == "kernel"
+        kernel_backed = creator["type"] == "kernel"
         sq_summary = self._collect_wq_summary(sq_wq, kernel_backed)
         rq_summary = self._collect_wq_summary(rq_wq, kernel_backed)
         qp_state = int(qp.state)
         if self._qp_has_is_rss is None:
             self._qp_has_is_rss = has_member(qp, "is_rss")
-        sq_size = sq_summary.get("size")
         eligible_sq_wq = (
-            sq_wq
-            if kernel_backed and sq_size is not None and int(sq_size) > 0
-            else None
+            sq_wq if kernel_backed and int(sq_summary["size"]) > 0 else None
         )
         record = {
             "qpn": qpn,
@@ -1259,8 +1207,8 @@ class Mlx5Collector:
             "address_struct": "struct mlx5_ib_qp",
             "device": device.mdev_address,
             "owner": "mlx5_ib_qp_list",
-            "creator": creator.get("display"),
-            "creator_type": creator.get("type"),
+            "creator": creator["display"],
+            "creator_type": creator["type"],
             "type": qp_type,
             "type_display": decode._enum_type_label(
                 self.prog, qp_type, "enum ib_qp_type"
@@ -2032,9 +1980,7 @@ class Mlx5Collector:
             return [{"index": None, "status": "consumer-index-unavailable"}]
         consumer = int(consumer_index)
 
-        _fbc_ref, fbc = dumps._read_fbc(wq)
-        if fbc is None:
-            return [{"index": None, "status": "layout-unavailable"}]
+        fbc = wq.fbc.read_()
         frags = fbc.frags
         log_stride = int(fbc.log_stride)
         log_size = int(fbc.log_sz)
@@ -2071,9 +2017,7 @@ class Mlx5Collector:
             if descriptor_kind == "cqe" and stride == 128
             else 0
         )
-        fragment_cache: Dict[
-            int, Tuple[Optional[int], Optional[int], Optional[bytes]]
-        ] = {}
+        fragment_cache: Dict[int, Tuple[int, int, Optional[bytes]]] = {}
         entry_count = min(max_entries, size)
         around_consumer = descriptor_kind in ("cqe", "eqe")
         cursor = consumer - (entry_count // 2 if around_consumer else 0)
@@ -2088,24 +2032,21 @@ class Mlx5Collector:
             frag_index = adjusted_index >> log_frag_strides
             if frag_index not in fragment_cache:
                 base = dumps._fragment_base(frags, frag_index)
-                if base is None:
-                    fragment_cache[frag_index] = (None, None, None)
-                else:
-                    frag_first = frag_index * frag_strides
-                    first = max(strides_offset, frag_first)
-                    end = min(strides_offset + size, frag_first + frag_strides)
-                    byte_offset = (first - frag_first) << log_stride
-                    byte_len = (end - first) << log_stride
-                    read_address = base + byte_offset
-                    try:
-                        fragment = self.prog.read(read_address, byte_len)
-                    except FaultError:
-                        fragment = None
-                    fragment_cache[frag_index] = (
-                        base,
-                        read_address,
-                        fragment,
-                    )
+                frag_first = frag_index * frag_strides
+                first = max(strides_offset, frag_first)
+                end = min(strides_offset + size, frag_first + frag_strides)
+                byte_offset = (first - frag_first) << log_stride
+                byte_len = (end - first) << log_stride
+                read_address = base + byte_offset
+                try:
+                    fragment = self.prog.read(read_address, byte_len)
+                except FaultError:
+                    fragment = None
+                fragment_cache[frag_index] = (
+                    base,
+                    read_address,
+                    fragment,
+                )
             cached_base, cached_read_address, cached_fragment = fragment_cache[
                 frag_index
             ]
@@ -2113,11 +2054,7 @@ class Mlx5Collector:
                 entry: Dict[str, Any] = {
                     "index": index,
                     "_absolute_index": cursor,
-                    "status": (
-                        "address-unavailable"
-                        if cached_base is None
-                        else "read-unavailable"
-                    ),
+                    "status": "read-unavailable",
                 }
                 if around_consumer and cursor == consumer:
                     entry["consumer_marker"] = "cons_index"
@@ -2126,7 +2063,6 @@ class Mlx5Collector:
                 traversed += 1
                 continue
 
-            assert cached_base is not None and cached_read_address is not None
             addr = (
                 cached_base
                 + ((adjusted_index & frag_sz_m1) << log_stride)
@@ -2363,8 +2299,6 @@ def _irq_affinity_cpus(prog: Program, irqn: Optional[int]) -> Optional[str]:
 
 
 def _mlx5_ib_gsi_saved_wr_id(prog: Program, wr_cqe: Any) -> Optional[int]:
-    if wr_cqe is None:
-        return None
     addr = int(wr_cqe)
     if not _looks_like_kernel_pointer_value(addr):
         return None

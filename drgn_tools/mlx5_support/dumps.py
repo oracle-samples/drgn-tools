@@ -4,53 +4,16 @@
 from typing import Any
 from typing import Dict
 from typing import Optional
-from typing import Tuple
 
-from drgn import FaultError
 from drgn import Object
-from drgn import ObjectAbsentError
-from drgn import OutOfBoundsError
 
-from .defs import MAX_DESCRIPTOR_ENTRIES
 from .format import _hex
 
 _BENIGN_DESCRIPTOR_STATUSES = {"ok", "ready", "not-ready"}
-_MEMBER_ERRORS = (LookupError, FaultError, ObjectAbsentError, TypeError)
-_VALUE_ERRORS = (FaultError, ObjectAbsentError, TypeError, ValueError)
 
 
-def _safe_member(obj: Optional[Object], name: str) -> Optional[Object]:
-    if obj is None:
-        return None
-    try:
-        return obj.member_(name)
-    except _MEMBER_ERRORS:
-        return None
-
-
-def _safe_int(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    try:
-        return value if isinstance(value, int) else int(value)
-    except _VALUE_ERRORS:
-        return None
-
-
-def _addr(obj: Any) -> Optional[int]:
-    value = _safe_int(obj)
-    if value is not None:
-        return value
-    return _safe_int(getattr(obj, "address_", None))
-
-
-def _dump_window_summary(
-    max_entries: int, ring_size: Optional[Any] = None
-) -> Dict[str, int]:
-    count = max(0, min(int(max_entries), MAX_DESCRIPTOR_ENTRIES))
-    size = _safe_int(ring_size)
-    if size is not None and size > 0:
-        count = min(count, size)
+def _dump_window_summary(max_entries: int, ring_size: Any) -> Dict[str, int]:
+    count = min(int(max_entries), int(ring_size))
     before = count // 2
     return {"before": before, "from_consumer": count - before}
 
@@ -58,13 +21,11 @@ def _dump_window_summary(
 def _annotate_owner_status(
     decoded: Dict[str, Any],
     absolute_index: int,
-    ring_size: Optional[int],
+    ring_size: int,
     descriptor_kind: str,
     consumer_index: Optional[int] = None,
 ) -> None:
-    owner = _safe_int(decoded.get("owner_bit"))
-    if owner is None or ring_size is None or ring_size <= 0:
-        return
+    owner = int(decoded["owner_bit"])
     expected = (absolute_index // ring_size) & 1
     owner_match = owner == expected
     decoded["expected_owner"] = expected
@@ -94,63 +55,26 @@ def _annotate_owner_status(
         decoded["status"] = "ready" if owner_match else "not-ready"
 
 
-def _wq_layout_summary(wq: Optional[Object]) -> Dict[str, Any]:
-    if wq is None:
-        return {"status": "unavailable"}
-    fbc_ref, fbc = _read_fbc(wq)
-    summary: Dict[str, Any] = {
-        "wq": _hex(_addr(wq)),
+def _wq_layout_summary(wq: Object) -> Dict[str, Any]:
+    fbc_ref = wq.fbc
+    fbc = fbc_ref.read_()
+    frags = fbc.frags
+    log_stride = int(fbc.log_stride)
+    return {
+        "wq": _hex(int(wq.address_)),
         "wq_type": str(wq.type_),
-        "fbc": _hex(_addr(fbc_ref)),
+        "fbc": _hex(int(fbc_ref.address_)),
+        "frags": _hex(int(frags)),
+        "frag0_buf": _hex(_fragment_base(frags, 0)),
+        "sz_m1": int(fbc.sz_m1),
+        "log_sz": int(fbc.log_sz),
+        "log_stride": log_stride,
+        "stride_bytes": 1 << log_stride,
+        "log_frag_strides": int(fbc.log_frag_strides),
+        "frag_sz_m1": int(fbc.frag_sz_m1),
+        "strides_offset": int(fbc.strides_offset),
     }
-    if fbc is None:
-        summary["status"] = "unavailable"
-        return summary
-    frags = _safe_member(fbc, "frags")
-    log_stride = _safe_int(_safe_member(fbc, "log_stride"))
-    summary.update(
-        {
-            "frags": _hex(_addr(frags)),
-            "frag0_buf": _hex(_fragment_base(frags, 0)),
-            "sz_m1": _safe_int(_safe_member(fbc, "sz_m1")),
-            "log_sz": _safe_int(_safe_member(fbc, "log_sz")),
-            "log_stride": log_stride,
-            "stride_bytes": (1 << log_stride)
-            if log_stride is not None and 0 <= log_stride < 32
-            else None,
-            "log_frag_strides": _safe_int(
-                _safe_member(fbc, "log_frag_strides")
-            ),
-            "frag_sz_m1": _safe_int(_safe_member(fbc, "frag_sz_m1")),
-            "strides_offset": _safe_int(_safe_member(fbc, "strides_offset")),
-        }
-    )
-    return summary
 
 
-def _read_fbc(wq: Object) -> Tuple[Optional[Object], Optional[Object]]:
-    """Return the FBC reference and one cached read of its value."""
-
-    fbc_ref = _safe_member(wq, "fbc")
-    if fbc_ref is None:
-        return None, None
-    try:
-        return fbc_ref, fbc_ref.read_()
-    except (FaultError, ObjectAbsentError, TypeError):
-        return fbc_ref, None
-
-
-def _fragment_base(frags: Optional[Object], index: int) -> Optional[int]:
-    if frags is None:
-        return None
-    try:
-        return int(frags[index].buf) or None
-    except (
-        FaultError,
-        ObjectAbsentError,
-        OutOfBoundsError,
-        LookupError,
-        TypeError,
-        ValueError,
-    ):
-        return None
+def _fragment_base(frags: Object, index: int) -> int:
+    return int(frags[index].buf)
