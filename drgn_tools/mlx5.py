@@ -286,8 +286,6 @@ class Mlx5Collector:
             if netdev:
                 name = escape_ascii_string(netdev.name.string_())
                 saw_netdev = True
-            if self.args.netdev and name != self.args.netdev:
-                continue
 
             device = DeviceRecord(mdev)
             ibdev = collect_device.mlx5_core_ib_device(mdev)
@@ -313,12 +311,7 @@ class Mlx5Collector:
         if not saw_netdev:
             self._warn("no mlx5 uplink netdevs were found")
         if not devices:
-            if self.args.netdev:
-                self._warn(
-                    f"--netdev {self.args.netdev!r} did not match a discovered mlx5 netdev"
-                )
-            else:
-                self._warn("no devices found in the mlx5 core drivers")
+            self._warn("no devices found in the mlx5 core drivers")
 
         return devices
 
@@ -341,6 +334,18 @@ class Mlx5Collector:
             if not filtered:
                 self._warn(
                     f"--dev {self.args.dev!r} did not match a discovered mlx5 device"
+                )
+
+        if self.args.netdev:
+            filtered = [
+                dev
+                for dev in filtered
+                if dev.netdev is not None
+                and dev.netdev["name"] == self.args.netdev
+            ]
+            if not filtered:
+                self._warn(
+                    f"--netdev {self.args.netdev!r} did not match a discovered mlx5 netdev"
                 )
 
         for device in filtered:
