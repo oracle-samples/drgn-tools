@@ -119,10 +119,7 @@ def _queue_matches_wqe_selector(
     if not selected_dump_keys:
         return True
     if queue_number is not None:
-        device = (
-            device_name if device_name is not None else queue.get("device")
-        )
-        device_key = str(device) if device is not None else None
+        device_key = str(device_name) if device_name is not None else None
         return (
             device_key,
             queue_selector,
@@ -203,7 +200,7 @@ def _eq_balance_bucket(eq: Dict[str, Any]) -> Tuple[str, int]:
 
 def _queue_balance_bucket(queue: Dict[str, Any]) -> Tuple[str, str]:
     return (
-        str(queue.get("netdev") or queue.get("device") or ""),
+        str(queue.get("netdev") or ""),
         str(queue.get("kind") or ""),
     )
 

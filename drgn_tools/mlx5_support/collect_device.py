@@ -77,9 +77,15 @@ class DeviceRecord:
         self.rdma_name = None
 
     def to_dict(self) -> Dict[str, Any]:
+        netdev = None
+        if self.netdev is not None:
+            netdev = {
+                field: self.netdev[field]
+                for field in ("name", "summary", "channels")
+            }
         return {
             "mdev": self.mdev_address,
-            "netdev": self.netdev,
+            "netdev": netdev,
             "summary": self.summary,
             "health": self.health,
             "counts": self.counts,

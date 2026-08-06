@@ -123,6 +123,25 @@ class _MemoryProgram:
 
 
 class TestMlx5(unittest.TestCase):
+    def test_queue_counter_progress(self):
+        rq = _Struct(wqe_ctr=7, cur_sz=7)
+        self.assertEqual(
+            mlx5._mlx5e_queue_progress(_Struct(), rq, True),
+            (7, 0, 7),
+        )
+        wrapping_rq = _Struct(wqe_ctr=1, cur_sz=2)
+        self.assertEqual(
+            mlx5._mlx5e_queue_progress(_Struct(), wrapping_rq, True),
+            (1, 0xFFFF, 2),
+        )
+
+        sq = _Struct(pc=1, cc=0xFFFF)
+        self.assertEqual(
+            mlx5._mlx5e_queue_progress(sq, _Struct(), False),
+            (1, 0xFFFF, 2),
+        )
+        self.assertEqual(mlx5._counter_delta(1, 0xFFFFFFFF, 32), 2)
+
     def test_hardware_descriptor_decoding(self):
         prog = _test_program()
         cqe = bytearray(64)
