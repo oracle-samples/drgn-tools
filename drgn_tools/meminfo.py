@@ -508,6 +508,8 @@ def get_all_meminfo(prog: Program) -> Dict[str, int]:
 
     stats["KernelStack"] = global_stats["NR_KERNEL_STACK_KB"]
     stats["PageTables"] = global_stats["NR_PAGETABLE"]
+    if "NR_SECONDARY_PAGETABLE" in global_stats:
+        stats["SecPageTables"] = global_stats["NR_SECONDARY_PAGETABLE"]
     stats["NFS_Unstable"] = 0
     if "NR_UNSTABLE_NFS" in global_stats:
         stats["NFS_Unstable"] = global_stats["NR_UNSTABLE_NFS"]
@@ -576,6 +578,14 @@ def get_all_meminfo(prog: Program) -> Dict[str, int]:
     if b"CMA" in migratetype_names:
         stats["CmaTotal"] = prog["totalcma_pages"].value_()
         stats["CmaFree"] = global_stats["NR_FREE_CMA_PAGES"]
+
+    if "NR_UNACCEPTED" in global_stats:
+        stats["Unaccepted"] = global_stats["NR_UNACCEPTED"]
+    if "NR_BALLOON_PAGES" in global_stats:
+        stats["Balloon"] = global_stats["NR_BALLOON_PAGES"]
+    if "NR_GPU_ACTIVE" in global_stats:
+        stats["GPUActive"] = global_stats["NR_GPU_ACTIVE"]
+        stats["GPUReclaim"] = global_stats["NR_GPU_RECLAIM"]
     return stats
 
 
@@ -616,6 +626,7 @@ def show_all_meminfo(prog: Program) -> None:
         "SUnreclaim",
         "KernelStack",
         "PageTables",
+        "SecPageTables",
         "NFS_Unstable",
         "Bounce",
         "WritebackTmp",
@@ -626,18 +637,23 @@ def show_all_meminfo(prog: Program) -> None:
         "VmallocChunk",
         "Percpu",
         "HardwareCorrupted",
-    ]
-    hugepage_meminfo_items = [
         "AnonHugePages",
         "ShmemHugePages",
         "ShmemPmdMapped",
         "FileHugePages",
         "FilePmdMapped",
+        "CmaTotal",
+        "CmaFree",
+        "Unaccepted",
+        "Balloon",
+        "GPUActive",
+        "GPUReclaim",
     ]
-    cma_meminfo_items = ["CmaTotal", "CmaFree"]
 
     # Output
     for item in basic_meminfo_items:
+        if item not in stats:
+            continue
         if stats[item] == -1:
             continue
 
@@ -651,12 +667,6 @@ def show_all_meminfo(prog: Program) -> None:
             else:
                 print(f"{item + ':': <15} {num_str: >8} kB")
         else:
-            print_val_kb(prog, item, stats[item])
-
-    for item in hugepage_meminfo_items:
-        print_val_kb(prog, item, stats[item])
-    for item in cma_meminfo_items:
-        if item in stats:
             print_val_kb(prog, item, stats[item])
 
     # Report hugepage related meminfo

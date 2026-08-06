@@ -185,6 +185,12 @@ def get_per_node_meminfo(prog: Program, node: Object) -> Dict[str, int]:
     if "NR_UNACCEPTED" in node_zone_stats:
         mm_stats["Unaccepted"] = node_zone_stats["NR_UNACCEPTED"]
 
+    # Since v7.1 commit 2232ba9c7931d ("mm: add gpu active/reclaim per-node stat
+    # counters (v2)")
+    if "NR_GPU_ACTIVE" in node_zone_stats:
+        mm_stats["GPUActive"] = node_zone_stats["NR_GPU_ACTIVE"]
+        mm_stats["GPUReclaim"] = node_zone_stats["NR_GPU_RECLAIM"]
+
     # Collect hugepage info for the default hugepage size in this node.
     node_id = node.node_id.value_()
     hstate = prog["hstates"][prog["default_hstate_idx"]]
