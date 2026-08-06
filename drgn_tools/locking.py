@@ -4,6 +4,7 @@
 Helper for linux kernel locking
 """
 import enum
+from typing import Callable
 from typing import Iterable
 from typing import Optional
 from typing import Tuple
@@ -17,6 +18,7 @@ from drgn import NULL
 from drgn import Object
 from drgn import Program
 from drgn import StackFrame
+from drgn import Type
 from drgn.helpers import ValidationError
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
@@ -32,6 +34,7 @@ from drgn_tools.mm import AddrKind
 from drgn_tools.table import FixedTable
 from drgn_tools.task import get_current_run_time
 from drgn_tools.task import task_lastrun2now
+from drgn_tools.util import has_member
 from drgn_tools.util import per_cpu_owner
 from drgn_tools.util import timestamp_str
 
@@ -206,75 +209,58 @@ def show_lock_waiter(
         print("")
 
 
-def for_each_rwsem_waiter(prog: Program, rwsem: Object) -> Iterable[Object]:
-    """
-    List task waiting on the rw semaphore
-
-    :param prog: drgn program
-    :param rwsem: ``struct rw_semaphore *``
-    :returns: ``struct task_struct *``
-    """
-    for waiter in list_for_each_entry(
-        prog.type("struct rwsem_waiter"), rwsem.wait_list.address_of_(), "list"
-    ):
-        yield waiter.task
+# Represents list_for_each_entry() or validate_list_for_each_entry()
+IterFn = Callable[[Type, Object, str], Iterable[Object]]
 
 
-def for_each_mutex_waiter(prog: Program, mutex: Object) -> Iterable[Object]:
-    """
-    List task waiting on the mutex
-
-    :param prog: drgn program
-    :param mutex: ``struct mutex *``
-    :returns: ``struct task_struct *``
-    """
-    for waiter in list_for_each_entry(
-        prog.type("struct mutex_waiter"), mutex.wait_list.address_of_(), "list"
-    ):
-        yield waiter.task
-
-
-def for_each_rwsem_waiter_careful(
-    prog: Program, rwsem: Object
+def for_each_lock_waiter(
+    lock: Object, iterfn: IterFn = list_for_each_entry
 ) -> Iterable[Object]:
     """
-    List task waiting on the rw semaphore
+    List tasks waiting on the semaphore, rwsem, or mutex
 
-    :param prog: drgn program
-    :param rwsem: ``struct rw_semaphore *``
-    :returns: ``struct task_struct *``
+    Since all three lock types share very similar waiter listing structures,
+    it's possible to implement this helper generically for all of them. In
+    addition, by providing an iterator function, we can also provide a
+    "validating" version of the iteration. This is necessary for us to scan lock
+    pointers in a stack.
+
+    :param lock: ``struct rw_semaphore *`` or ``struct mutex *``
+    :param iterfn: function used to iterate over the list. Use
+        validate_list_each_entry() to create a more careful version that doesn't
+        fall into cycles, useful for testing the hypothesis of whether a pointer
+        even is a mutex to begin with.
+    :returns: iterator of objects of the appropriate waiter type:
+        ``struct mutex_waiter *``, ``struct rwsem_waiter *``,  or
+        ``struct semaphore_waiter *``
     """
-    seen = set()
-    for waiter in validate_list_for_each_entry(
-        prog.type("struct rwsem_waiter"), rwsem.wait_list.address_of_(), "list"
-    ):
-        addr = waiter.value_()
-        if addr in seen:
-            raise ValidationError("circular list")
-        seen.add(addr)
-        yield waiter.task
+    prog = lock.prog_
+    if has_member(lock, "first_waiter"):
+        # Since the following v7.1 commits for semaphore, rwsem, and mutex, all
+        # part of the below series, the locks only store a pointer to the first
+        # waiter, rather than a full list_head.
+        #
+        # Series: https://lore.kernel.org/all/20260305195545.3707590-1-willy@infradead.org/
+        # 1ea4b473504b6 locking/rwsem: Remove the list_head from struct rw_semaphore
+        # b9bdd4b684045 locking/semaphore: Remove the list_head from struct semaphore
+        # 25500ba7e77ce locking/mutex: Remove the list_head from struct mutex
+        first = lock.first_waiter
+        if not first:
+            return
+        yield first
+        list_head = first.list.address_of_()
+        type_ = first.type_.type
+    else:
+        type_to_waiter = {
+            "mutex": "struct mutex_waiter",
+            "semaphore": "struct semaphore_waiter",
+            "rw_semaphore": "struct rwsem_waiter",
+        }
+        list_head = lock.wait_list.address_of_()
+        type_ = prog.type(type_to_waiter[lock.type_.type.tag])
 
-
-def for_each_mutex_waiter_careful(
-    prog: Program,
-    mutex: Object,
-) -> Iterable[Object]:
-    """
-    List task waiting on the mutex
-
-    :param prog: drgn program
-    :param mutex: ``struct mutex *``
-    :returns: ``struct task_struct *``
-    """
-    seen = set()
-    for waiter in validate_list_for_each_entry(
-        prog.type("struct mutex_waiter"), mutex.wait_list.address_of_(), "list"
-    ):
-        addr = waiter.value_()
-        if addr in seen:
-            raise ValidationError("circular list")
-        seen.add(addr)
-        yield waiter.task
+    for waiter in iterfn(type_, list_head, "list"):
+        yield waiter
 
 
 ######################################
@@ -323,20 +309,6 @@ def rwsem_has_spinner(rwsem: Object) -> bool:
     :returns: True if rwsem has optimistic spinners, False otherwise.
     """
     return osq_is_locked(rwsem.osq.address_of_())
-
-
-def for_each_rwsem_waiter_entity(rwsem: Object) -> Iterable[Object]:
-    """
-    Find rwsem_waiter(s) for given rwsem
-
-    :param rwsem: ``struct rw_semaphore *``
-    :returns: Iterator of ``struct rwsem_waiter``
-    """
-
-    for waiter in list_for_each_entry(
-        "struct rwsem_waiter", rwsem.wait_list.address_of_(), "list"
-    ):
-        yield waiter
 
 
 def rwsem_count(rwsem: Object) -> int:
@@ -418,7 +390,7 @@ def get_rwsem_waiters_info(rwsem: Object, callstack: int = 0) -> None:
     waiter_type = "none"
     print("The waiters of rwsem are as follows: ")
     tbl = FixedTable(["TASK:>x", "PID:>", "TYPE:16s", "CPU:>", "ST", "WAIT:>"])
-    for waiter in for_each_rwsem_waiter_entity(rwsem):
+    for waiter in for_each_lock_waiter(rwsem):
         waiter_type = get_rwsem_waiter_type(waiter)
         task = waiter.task
         tbl.row(
@@ -597,15 +569,12 @@ def is_task_blocked_on_lock(
     """
 
     try:
-        if lock_type == "semaphore" or lock_type == "rw_semaphore":
+        if lock_type in ("mutex", "semaphore", "rw_semaphore"):
             return pid in [
-                waiter.pid.value_()
-                for waiter in for_each_rwsem_waiter_careful(lock.prog_, lock)
-            ]
-        elif lock_type == "mutex":
-            return pid in [
-                waiter.pid.value_()
-                for waiter in for_each_mutex_waiter_careful(lock.prog_, lock)
+                waiter.task.pid.value_()
+                for waiter in for_each_lock_waiter(
+                    lock, validate_list_for_each_entry
+                )
             ]
         elif lock_type == "completion":
             return pid in [

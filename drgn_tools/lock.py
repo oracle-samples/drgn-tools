@@ -47,8 +47,7 @@ from drgn_tools.deadlock import DependencyGraph
 from drgn_tools.locking import _RWSEM_READER_MASK
 from drgn_tools.locking import _RWSEM_READER_SHIFT
 from drgn_tools.locking import completion_for_each_task
-from drgn_tools.locking import for_each_mutex_waiter
-from drgn_tools.locking import for_each_rwsem_waiter
+from drgn_tools.locking import for_each_lock_waiter
 from drgn_tools.locking import get_lock_from_frame
 from drgn_tools.locking import get_rwsem_owner
 from drgn_tools.locking import get_rwsem_spinners_info
@@ -167,7 +166,8 @@ def get_mutex_lock_info(
         if pid is None:
             if time is None:
                 time = 0
-            for waiter in for_each_mutex_waiter(prog, mutex):
+            for waiter_obj in for_each_lock_waiter(mutex):
+                waiter = waiter_obj.task
                 waittime = task_lastrun2now(waiter)
                 timens = time * 1000000000
                 index = index + 1
@@ -245,7 +245,8 @@ def scan_mutex_lock(
         if pid is None:
             if time is None:
                 time = 0
-            for waiter in for_each_mutex_waiter(prog, mutex):
+            for waiter_obj in for_each_lock_waiter(mutex):
+                waiter = waiter_obj.task
                 waittime = task_lastrun2now(waiter)
                 timens = time * 1000000000
                 index = index + 1
@@ -293,7 +294,8 @@ def show_sem_lock(
         if pid is None:
             if time is None:
                 time = 0
-            for waiter in for_each_rwsem_waiter(prog, sem):
+            for waiter_obj in for_each_lock_waiter(sem):
+                waiter = waiter_obj.task
                 waittime = task_lastrun2now(waiter)
                 timens = time * 1000000000
                 index = index + 1
@@ -370,7 +372,8 @@ def show_rwsem_lock(
             if time is None:
                 time = 0
 
-            for waiter in for_each_rwsem_waiter(prog, rwsem):
+            for waiter_obj in for_each_lock_waiter(rwsem):
+                waiter = waiter_obj.task
                 waittime = task_lastrun2now(waiter)
                 timens = time * 1000000000
                 index = index + 1

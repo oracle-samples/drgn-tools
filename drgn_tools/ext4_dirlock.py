@@ -97,8 +97,7 @@ from drgn_tools.bt import bt
 from drgn_tools.bt import bt_has
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.itertools import count
-from drgn_tools.locking import for_each_mutex_waiter
-from drgn_tools.locking import for_each_rwsem_waiter
+from drgn_tools.locking import for_each_lock_waiter
 from drgn_tools.locking import show_lock_waiter
 from drgn_tools.module import ensure_debuginfo
 from drgn_tools.task import task_lastrun2now
@@ -175,15 +174,15 @@ def ext4_dirlock_scan(prog: drgn.Program, stacktrace: bool = False) -> None:
             bt(task)
         print("%-12s:" % "Lock waiter")
 
-        index = 0
         if has_member(inode, "i_rwsem"):
-            for waiter in for_each_rwsem_waiter(prog, inode.i_rwsem):
-                show_lock_waiter(prog, waiter, index, stacktrace)
-                index = index + 1
-        elif has_member(inode, "i_mutex"):
-            for waiter in for_each_mutex_waiter(prog, inode.i_mutex):
-                show_lock_waiter(prog, waiter, index, stacktrace)
-                index = index + 1
+            lock = inode.i_rwsem.address_of_()
+        else:
+            lock = inode.i_mutex.address_of_()
+
+        index = 0
+        for waiter in for_each_lock_waiter(lock):
+            show_lock_waiter(prog, waiter.task, index, stacktrace)
+            index = index + 1
 
 
 class Ext4DirLock(CorelensModule):
