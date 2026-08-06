@@ -13,28 +13,86 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from tempfile import TemporaryDirectory
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 from drgn_tools.debuginfo import CtfCompatibility
 from drgn_tools.debuginfo import KernelVersion
+from testing.util import BASE_DIR
 from testing.util import combine_junit_xml
+from testing.vm.chroot import BindMount
+from testing.vm.chroot import run_in_rootfs
+from testing.vm.config import VmLayout
 from testing.vmcore.manage import CORE_DIR
 
 
-def _test_job(
-    core_name: str, cmd: List[str], xml: str
+LAYOUT = VmLayout(BASE_DIR)
+
+
+def _test_in_host(
+    core_name: str,
+    test_cmd: List[str],
+    ol_ver: int,
 ) -> Tuple[str, bool, ET.ElementTree]:
     # Runs the test silently, but prints the stdout/stderr on failure.
-    with NamedTemporaryFile("w+t") as f:
+    with NamedTemporaryFile("w+t") as f, TemporaryDirectory() as td:
         print(f"Begin testing {core_name}")
+        xml = Path(td) / f"vmcore-{core_name}.xml"
+        test_cmd.extend(
+            [
+                f"--vmcore-dir={str(CORE_DIR)}",
+                f"--junitxml={str(xml)}",
+            ]
+        )
         start = time.time()
-        res = subprocess.run(cmd, stdout=f, stderr=f)
+        res = subprocess.run(test_cmd, stdout=f, stderr=f)
         if res.returncode != 0:
             print(f"=== FAILURE: {core_name} ===")
             f.seek(0)
             sys.stdout.write(f.read())
         runtime = time.time() - start
+        print(f"Completed testing {core_name} in {runtime:.1f}")
+        run_data = ET.parse(xml)
+    return (core_name, res.returncode == 0, run_data)
+
+
+def _test_in_rootfs(
+    core_name: str, test_cmd: List[str], ol_ver: int
+) -> Tuple[str, bool, ET.ElementTree]:
+    # Runs the test silently
+    with TemporaryDirectory() as td:
+        print(f"Begin testing {core_name} in OL{ol_ver} rootfs")
+        xml = Path(td) / f"vmcore-{core_name}.xml"
+        output = Path(td) / "output.txt"
+        code_dir = Path(__file__).parent.parent.parent
+        mounts = [
+            BindMount(CORE_DIR, "/vmcores", True),
+            BindMount(xml.parent, "/output", False),
+            BindMount(code_dir, "/code", True),
+        ]
+        test_cmd.extend(
+            [
+                "--vmcore-dir=/vmcores",
+                f"--junitxml=/output/{xml.name}",
+            ]
+        )
+        start = time.time()
+        rootfs = LAYOUT.rootfs_dir / f"ol{ol_ver}"
+        with output.open("w") as f:
+            res = run_in_rootfs(
+                rootfs,
+                test_cmd,
+                mounts,
+                cwd="/code",
+                stdout=f,
+                stderr=f,
+            )
+        runtime = time.time() - start
+        if res.returncode != 0:
+            print(f"=== FAILURE: {core_name} ===")
+            sys.stdout.buffer.write(output.read_bytes())
         print(f"Completed testing {core_name} in {runtime:.1f}")
         run_data = ET.parse(xml)
     return (core_name, res.returncode == 0, run_data)
@@ -75,6 +133,8 @@ def test(
     vmcore_list: List[str],
     ctf: bool = False,
     parallel: int = 1,
+    ol_ver: Optional[int] = None,
+    python: Optional[str] = None,
 ) -> None:
     def should_run_vmcore(name: str) -> bool:
         if not vmcore_list:
@@ -88,7 +148,14 @@ def test(
     passed = []
     skipped = []
     xml = None
-    ol_ver = host_ol_ver()
+    if ol_ver is None:
+        test_fn = _test_in_host
+        ol_ver = host_ol_ver()
+    else:
+        test_fn = _test_in_rootfs
+
+    if python is None:
+        python = sys.executable if ol_ver is None else "python3"
 
     with ExitStack() as es:
         pool = es.enter_context(ThreadPoolExecutor(max_workers=parallel))
@@ -101,27 +168,19 @@ def test(
             if _skip_ctf(ctf, uname, ol_ver):
                 skipped.append(core_name)
                 continue
-            xml_run = es.enter_context(
-                NamedTemporaryFile("w", suffix=".xml", delete=False)
-            )
-            xml_run.close()  # not deleted until context is ended
             cmd = [
-                sys.executable,
+                python,
                 "-m",
                 "testing.unittest_runner",
                 "tests/",
                 f"--vmcore={core_name}",
-                f"--vmcore-dir={str(CORE_DIR)}",
-                f"--junitxml={xml_run.name}",
             ]
             if ctf:
                 if not (path / "vmlinux.ctfa").is_file():
                     skipped.append(core_name)
                     continue
                 cmd.append("--ctf")
-            futures.append(
-                pool.submit(_test_job, core_name, cmd, xml_run.name)
-            )
+            futures.append(pool.submit(test_fn, core_name, cmd, ol_ver))
 
         for future in futures:
             core_name, test_passed, run_data = future.result()
@@ -174,6 +233,18 @@ def main():
         default=1,
         help="Run the tests in parallel with the given number of threads",
     )
+    parser.add_argument(
+        "--ol",
+        choices=[8, 9, 10],
+        type=int,
+        default=None,
+        help="Run the tests within the Oracle Linux (already built) rootfs",
+    )
+    parser.add_argument(
+        "--python",
+        default=None,
+        help="Run the tests with the given python binary name",
+    )
     args = parser.parse_args()
     if args.core_directory:
         CORE_DIR = args.core_directory.absolute()
@@ -181,6 +252,8 @@ def main():
         args.vmcore,
         ctf=args.ctf,
         parallel=args.parallel,
+        ol_ver=args.ol,
+        python=args.python,
     )
 
 
