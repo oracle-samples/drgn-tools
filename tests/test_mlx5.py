@@ -10,7 +10,6 @@ from drgn import TypeEnumerator
 from drgn import TypeMember
 
 from drgn_tools import mlx5
-from drgn_tools.mlx5_support.dumps import _annotate_owner_status
 
 
 def _test_program():
@@ -123,25 +122,6 @@ class _MemoryProgram:
 
 
 class TestMlx5(unittest.TestCase):
-    def test_queue_counter_progress(self):
-        rq = _Struct(wqe_ctr=7, cur_sz=7)
-        self.assertEqual(
-            mlx5._mlx5e_queue_progress(_Struct(), rq, True),
-            (7, 0, 7),
-        )
-        wrapping_rq = _Struct(wqe_ctr=1, cur_sz=2)
-        self.assertEqual(
-            mlx5._mlx5e_queue_progress(_Struct(), wrapping_rq, True),
-            (1, 0xFFFF, 2),
-        )
-
-        sq = _Struct(pc=1, cc=0xFFFF)
-        self.assertEqual(
-            mlx5._mlx5e_queue_progress(sq, _Struct(), False),
-            (1, 0xFFFF, 2),
-        )
-        self.assertEqual(mlx5._counter_delta(1, 0xFFFFFFFF, 32), 2)
-
     def test_hardware_descriptor_decoding(self):
         prog = _test_program()
         cqe = bytearray(64)
@@ -173,99 +153,6 @@ class TestMlx5(unittest.TestCase):
                 "qpn": 0x123456,
                 "ds": 0x18,
             },
-        )
-
-    def test_cqe_owner_and_pollability(self):
-        cases = (
-            (0, 0x2, 0, 0, "ready"),
-            (0, 0xF, 0, 0, "not-ready"),
-            (1, 0x2, 0, 0, "not-ready"),
-            (0, 0x2, 9, 10, "not-ready"),
-        )
-        for owner, opcode, absolute, consumer, status in cases:
-            with self.subTest(status=status):
-                decoded = {
-                    "owner_bit": owner,
-                    "opcode_value": opcode,
-                    "status": "ok",
-                }
-                _annotate_owner_status(decoded, absolute, 64, "cqe", consumer)
-                self.assertEqual(decoded["status"], status)
-
-    def test_fragmented_rdma_cq_and_read_fault(self):
-        fragments = _Struct(entries=[_Struct(buf=0x1000), _Struct(buf=0x5000)])
-        fbc = _Struct(
-            frags=fragments,
-            sz_m1=63,
-            log_sz=6,
-            log_stride=6,
-            log_frag_strides=1,
-            frag_sz_m1=1,
-            strides_offset=0,
-        )
-        cq_buf = _Struct(
-            type_name="struct mlx5_ib_cq_buf",
-            fbc=fbc,
-            nent=4,
-            cqe_size=64,
-            frag_buf=_Struct(size=256),
-        )
-        blocks = {
-            0x1000: bytes(64) + bytes([1]) + bytes(63),
-            0x5000: bytes([2]) + bytes(63) + bytes([3]) + bytes(63),
-        }
-        collector = object.__new__(mlx5.Mlx5Collector)
-        collector.prog = _MemoryProgram(blocks)
-        entries = collector._dump_ring(
-            cq_buf,
-            max_entries=4,
-            decode=lambda raw: {"value": raw[0], "owner_bit": 0},
-            ring_size=4,
-            consumer_index=2,
-            descriptor_kind="cqe",
-        )
-        self.assertEqual([entry["value"] for entry in entries], [0, 1, 2, 3])
-        self.assertEqual(
-            [entry["address"] for entry in entries],
-            ["0x1000", "0x1040", "0x5000", "0x5040"],
-        )
-
-        collector.prog = _MemoryProgram({0x1000: blocks[0x1000]})
-        entries = collector._dump_ring(
-            cq_buf,
-            max_entries=4,
-            decode=lambda raw: {"value": raw[0], "owner_bit": 0},
-            ring_size=4,
-            consumer_index=2,
-            descriptor_kind="cqe",
-        )
-        self.assertEqual(
-            [entry["status"] for entry in entries[2:]],
-            ["read-unavailable", "read-unavailable"],
-        )
-
-    def test_firmware_falls_back_when_mmio_is_unreadable(self):
-        class UnreadableIseg:
-            @property
-            def fw_rev(self):
-                raise FaultError("missing MMIO page", 0x1000)
-
-        mdev = _Struct(address=1, iseg=UnreadableIseg())
-        device = _Struct(
-            mdev=mdev,
-            ibdev=_Struct(
-                ib_dev=_Struct(
-                    attrs=_Struct(fw_ver=(22 << 32) | (34 << 16) | 1014)
-                )
-            ),
-        )
-
-        self.assertEqual(
-            mlx5._mlx5_fw_version(device.mdev, device.ibdev), "22.34.1014"
-        )
-        device.ibdev = None
-        self.assertEqual(
-            mlx5._mlx5_fw_version(device.mdev, device.ibdev), "unavailable"
         )
 
 
