@@ -224,7 +224,11 @@ def module_exports(module: Object) -> List[Tuple[int, str]]:
                 )
 
     add_symbols(module.num_syms, module.syms)
-    add_symbols(module.num_gpl_syms, module.gpl_syms)
+    # Since v7.1 commit b4760ff2a5e43 ("module: deprecate usage of *_gpl
+    # sections in module loader"), GPL symbols are no longer in a separate
+    # section and thus have no separate fields.
+    if hasattr(module, "num_gpl_syms"):
+        add_symbols(module.num_gpl_syms, module.gpl_syms)
     if hasattr(module, "unused_syms"):
         add_symbols(module.num_unused_syms, module.unused_syms)
     if hasattr(module, "unused_gpl_syms"):
