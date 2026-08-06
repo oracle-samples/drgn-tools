@@ -126,10 +126,16 @@ class VmLayout(NamedTuple):
 
 
 TARGETS = [
-    KernelCategory(10, KernelKind.UEKNEXT, "x86_64"),
+    # Skip UEK-NEXT (v7.1) due to two errors:
+    # -> 'struct kmem_cache' has no member 'node'
+    # -> unrecognized .orc_header
+    # Both are fixed in drgn 0.2.0, but until it is released to Oracle Linux
+    # RPMs we cannot run it in the test suite.
+    # TODO: Enable UEK-NEXT testing once drgn 0.2.0 is released on OL.
+    # KernelCategory(10, KernelKind.UEKNEXT, "x86_64"),
     KernelCategory(10, KernelKind.UEK8, "x86_64"),
     KernelCategory(10, KernelKind.RHCK, "x86_64"),
-    KernelCategory(9, KernelKind.UEKNEXT, "x86_64"),
+    # KernelCategory(9, KernelKind.UEKNEXT, "x86_64"),
     KernelCategory(9, KernelKind.UEK8, "x86_64"),
     KernelCategory(9, KernelKind.UEK7, "x86_64"),
     KernelCategory(9, KernelKind.RHCK, "x86_64"),
