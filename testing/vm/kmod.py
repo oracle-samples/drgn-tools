@@ -2,10 +2,11 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Kernel module build orchestration for testing.vm."""
 import shutil
+import subprocess
 from pathlib import Path
 
 from testing.vm.chroot import BindMount
-from testing.vm.chroot import run_in_chroot
+from testing.vm.chroot import run_in_rootfs
 from testing.vm.config import KernelKind
 from testing.vm.config import KernelVer
 from testing.vm.config import VmLayout
@@ -74,9 +75,10 @@ def ensure_kmod(
         ]
     )
 
-    run_in_chroot(
+    command = " ; ".join(command_parts)
+    run_in_rootfs(
         rootfs,
-        " ; ".join(command_parts),
+        ["sh", "-c", command],
         binds=[
             BindMount(
                 source=repo_root, destination="/mnt/repo", readonly=False
@@ -85,7 +87,8 @@ def ensure_kmod(
                 source=extract_root, destination="/mnt/extract", readonly=False
             ),
         ],
-        verbose=log.verbose,
+        stdout=None if log.verbose else subprocess.DEVNULL,
+        stderr=None if log.verbose else subprocess.DEVNULL,
     )
 
     if not source_module.is_file():

@@ -5,6 +5,7 @@ import argparse
 import shlex
 import subprocess
 from pathlib import Path
+from typing import Any
 from typing import List
 from typing import NamedTuple
 
@@ -23,12 +24,12 @@ def _rootfs_mount_target(rootfs: Path, destination: str) -> Path:
     return rootfs / destination.lstrip("/")
 
 
-def run_in_chroot(
+def run_in_rootfs(
     rootfs: Path,
-    command: str,
+    command: List[str],
     binds: List[BindMount],
-    verbose: bool = False,
-) -> None:
+    **kwargs: Any,
+) -> subprocess.CompletedProcess:
     lines = ["set -euo pipefail"]
     mount_targets = []
 
@@ -37,13 +38,15 @@ def run_in_chroot(
         mount_targets.append(target)
         source = bind.source.absolute()
         lines.append(f"mkdir -p {shlex.quote(str(target))}")
-        lines.append(
-            "mount --bind "
-            f"{shlex.quote(str(source))} {shlex.quote(str(target))}"
-        )
         if bind.readonly:
             lines.append(
-                "mount -o remount,ro,bind " f"{shlex.quote(str(target))}"
+                "mount -o ro --bind "
+                f"{shlex.quote(str(source))} {shlex.quote(str(target))}"
+            )
+        else:
+            lines.append(
+                "mount --bind "
+                f"{shlex.quote(str(source))} {shlex.quote(str(target))}"
             )
 
     for host_path, dst in (
@@ -57,10 +60,9 @@ def run_in_chroot(
         lines.append(f"mkdir -p {shlex.quote(str(target.parent))}")
         lines.append(f"touch {shlex.quote(str(target))}")
         lines.append(
-            "mount --bind "
+            "mount -o ro --bind "
             f"{shlex.quote(str(host_path))} {shlex.quote(str(target))}"
         )
-        lines.append("mount -o remount,ro,bind " f"{shlex.quote(str(target))}")
 
     proc_target = _rootfs_mount_target(rootfs, "/proc")
     lines.append(f"mkdir -p {shlex.quote(str(proc_target))}")
@@ -74,17 +76,16 @@ def run_in_chroot(
     lines.append("  exit $status")
     lines.append("}")
     lines.append("trap cleanup EXIT")
+    cwd = kwargs.pop("cwd", "/")
+    command_str = " ".join(shlex.quote(elem) for elem in command)
     lines.append(
-        "chroot "
-        f"{shlex.quote(str(rootfs))} /bin/bash -lc {shlex.quote(command)}"
+        f"chroot {shlex.quote(str(rootfs))}"
+        ' sh -c \'cd "$1" && exec "${@:2}"\' IGNOREDARG'
+        f" {shlex.quote(cwd)} {command_str}"
     )
 
     script = "\n".join(lines)
-    if verbose:
-        stdout = stderr = None
-    else:
-        stdout = stderr = subprocess.DEVNULL
-    subprocess.run(
+    return subprocess.run(
         [
             "unshare",
             "--mount",
@@ -96,9 +97,7 @@ def run_in_chroot(
             "-lc",
             script,
         ],
-        check=True,
-        stdout=stdout,
-        stderr=stderr,
+        **kwargs,
     )
 
 
@@ -113,16 +112,6 @@ def _parse_bind(spec: str, readonly: bool) -> BindMount:
     if not destination:
         raise ValueError(f"Bind mount destination path is empty: {spec!r}")
     return BindMount(Path(source_str), destination, readonly=readonly)
-
-
-def _command_to_shell(command: List[str]) -> str:
-    if not command:
-        return "/bin/bash"
-    if command[0] == "--":
-        command = command[1:]
-    if not command:
-        return "/bin/bash"
-    return " ".join(shlex.quote(arg) for arg in command)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -169,11 +158,17 @@ def main() -> None:
     except ValueError as e:
         raise SystemExit(str(e)) from e
 
-    run_in_chroot(
+    command = args.command
+    if len(command) > 0 and command[0] == "--":
+        command = command[1:]
+    if not command:
+        command = ["/bin/bash", "-li"]
+
+    run_in_rootfs(
         args.rootfs.absolute(),
-        _command_to_shell(args.command),
+        command,
         binds=binds,
-        verbose=True,
+        check=True,
     )
 
 
