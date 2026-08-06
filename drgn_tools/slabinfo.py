@@ -30,6 +30,7 @@ from drgn.helpers.linux.slab import slab_cache_for_each_allocated_object
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import FixedTable
+from drgn_tools.util import has_member
 from drgn_tools.util import hexdump_mem
 
 
@@ -133,11 +134,18 @@ def _kmem_cache_barn_free_objs(cache: Object) -> int:
 
     total = 0
     for nodeid in for_each_online_node(prog):
-        node = cache.node[nodeid]
-        try:
-            barn = node.barn
-        except AttributeError:
-            return 0
+        if has_member(cache, "per_node"):
+            # In v7.1 commit 5ba6bc27b1f99 ("slab: decouple pointer to barn from
+            # kmem_cache_node"), the barn pointer is moved from the
+            # kmem_cache_node object, to a pointer in the "per_node" field of
+            # the slab cache. But
+            barn = cache.per_node[nodeid].barn
+        else:
+            node = cache.node[nodeid]
+            try:
+                barn = node.barn
+            except AttributeError:
+                return 0
         if not barn:
             continue
         for sheaf in list_for_each_entry(
@@ -168,7 +176,13 @@ def kmem_cache_pernode(
     nr_partial = 0
     node_total_use = 0
 
-    kmem_cache_node = cache.node[nodeid]
+    if has_member(cache, "per_node"):
+        # In v7.1 commit 5ba6bc27b1f99 ("slab: decouple pointer to barn from
+        # kmem_cache_node"), the node pointer is moved to within the per_node
+        # array.
+        kmem_cache_node = cache.per_node[nodeid].node
+    else:
+        kmem_cache_node = cache.node[nodeid]
     x = 0
 
     prog = cache.prog_
