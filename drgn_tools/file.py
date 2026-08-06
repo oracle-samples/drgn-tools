@@ -24,6 +24,7 @@ from drgn.helpers.linux.xarray import xa_for_each
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_table
 from drgn_tools.util import human_bytes
+from drgn_tools.util import type_has_member
 
 
 def for_each_inode_page_in_pagecache(
@@ -240,9 +241,15 @@ def __path_by_inode(inode: Object) -> str:
     hlist_head = inode.i_dentry
     if hlist_empty(hlist_head.address_of_()):
         return "[NO DENTRY]"
+    # Since v7.1 commit 2420067cecacb ("struct dentry: make ->d_u anonymous"),
+    # d_u no longer exists and the union is anonymous.
+    if type_has_member(inode.prog_, "struct dentry", "d_u"):
+        member = "d_u.d_alias"
+    else:
+        member = "d_alias"
     try:
         hlist_node = hlist_head.first
-        dentry = container_of(hlist_node, "struct dentry", "d_u")
+        dentry = container_of(hlist_node, "struct dentry", member)
         return d_path(dentry).decode()
     except drgn.FaultError:
         return "[ERROR]"
