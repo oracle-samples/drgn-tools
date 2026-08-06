@@ -47,25 +47,11 @@ def _annotate_owner_status(
 
 
 def _wq_layout_summary(wq: Object) -> Dict[str, Any]:
-    fbc_ref = wq.fbc
-    fbc = fbc_ref.read_()
-    frags = fbc.frags
+    fbc = wq.fbc.read_()
     log_stride = int(fbc.log_stride)
     return {
         "wq": _hex(int(wq.address_)),
-        "wq_type": str(wq.type_),
-        "fbc": _hex(int(fbc_ref.address_)),
-        "frags": _hex(int(frags)),
-        "frag0_buf": _hex(_fragment_base(frags, 0)),
+        "frags": _hex(int(fbc.frags)),
         "sz_m1": int(fbc.sz_m1),
-        "log_sz": int(fbc.log_sz),
-        "log_stride": log_stride,
         "stride_bytes": 1 << log_stride,
-        "log_frag_strides": int(fbc.log_frag_strides),
-        "frag_sz_m1": int(fbc.frag_sz_m1),
-        "strides_offset": int(fbc.strides_offset),
     }
-
-
-def _fragment_base(frags: Object, index: int) -> int:
-    return int(frags[index].buf)

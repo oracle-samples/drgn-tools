@@ -71,20 +71,6 @@ def _sort_key(value: Any) -> Tuple[int, Any]:
     return (1, 0) if value is None else (0, value)
 
 
-def _jsonable(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            k: _jsonable(v)
-            for k, v in value.items()
-            if not str(k).startswith("_")
-        }
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(v) for v in value]
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    return str(value)
-
-
 def _format_ib_fw_ver(value: Optional[int]) -> Optional[str]:
     if value is None:
         return None

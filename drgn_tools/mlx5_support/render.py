@@ -74,35 +74,32 @@ _DESCRIPTOR_COLUMNS = {
 
 
 def render_report(report: Dict[str, Any], args: argparse.Namespace) -> None:
-    report_selection = report.get("selection", {})
     print("MLX5 REPORT")
     print("===========")
     print()
     print("Inputs")
     print(f"  mode    : {report.get('mode')}")
-    print(f"  dev     : {report_selection.get('dev') or '<all>'}")
-    print(f"  netdev  : {report_selection.get('netdev') or '<all>'}")
-    print(f"  ip      : {report_selection.get('ip') or '<all>'}")
-    if report_selection.get("summary"):
+    print(f"  dev     : {args.dev or '<all>'}")
+    print(f"  netdev  : {args.netdev or '<all>'}")
+    print(f"  ip      : {args.ip or '<all>'}")
+    if args.summary:
         print("  summary : yes")
-    if report_selection.get("full"):
+    if args.full:
         print("  full    : yes")
-    if report_selection.get("qp_creators"):
-        print(
-            f"  qp creator: {', '.join(str(v) for v in report_selection.get('qp_creators') or [])}"
-        )
+    if args.qp_creators:
+        print(f"  qp creator: {', '.join(args.qp_creators)}")
     print(
         "  max obj : "
-        f"queues={_max_display(report_selection.get('maxqueues'))} "
-        f"cq={_max_display(report_selection.get('maxcq'))} "
-        f"eq={_max_display(report_selection.get('maxeq'))} "
-        f"qp={_max_display(report_selection.get('maxqp'))}"
+        f"queues={_max_display(args.maxqueues)} "
+        f"cq={_max_display(args.maxcq)} "
+        f"eq={_max_display(args.maxeq)} "
+        f"qp={_max_display(args.maxqp)}"
     )
     print(
         "  max desc: "
-        f"cqe={report_selection.get('maxcqe')} "
-        f"eqe={report_selection.get('maxeqe')} "
-        f"wqe={report_selection.get('maxwqe')}"
+        f"cqe={args.maxcqe} "
+        f"eqe={args.maxeqe} "
+        f"wqe={args.maxwqe}"
     )
     print()
 
@@ -272,7 +269,7 @@ def _render_queues(
     )
     print(
         "  CC is the consumer counter. For SQs, it tracks completed sends. "
-        "For RQs, it is the receive WQ head/start index."
+        "For RQs, it is derived from posted minus in-flight receive WQEs."
     )
     print(
         "  TX_STOP shows whether the netdev TX queue is stopped or frozen. "
@@ -497,8 +494,8 @@ def _render_qps(
             qp.get("hw_qpn"),
             qp.get("address"),
             qp.get("creator"),
-            qp.get("type_display") or qp.get("type"),
-            qp.get("state_display") or qp.get("state"),
+            qp.get("type_display"),
+            qp.get("state_display"),
             qp.get("send_cqn"),
             qp.get("recv_cqn"),
             sq.get("size"),
@@ -576,41 +573,24 @@ def _render_one_dump(
 
 
 def _cqe_path_display(dump: Dict[str, Any]) -> str:
-    cq: Dict[str, Any] = dump.get("cq") or {}
     cqn = selection._first_not_none(
-        cq.get("cqn"),
+        dump.get("cqn"),
         dump.get("selector")
         if dump.get("selector_name") in (None, "cqn")
         else None,
         "-",
     )
-    eqn = selection._first_not_none(cq.get("eqn"), "-")
-    irqn = selection._first_not_none(cq.get("irqn"), "-")
-    irq_cpus = selection._first_not_none(cq.get("irq_cpu"), "-")
+    eqn = selection._first_not_none(dump.get("eqn"), "-")
+    irqn = selection._first_not_none(dump.get("irqn"), "-")
+    irq_cpus = selection._first_not_none(dump.get("irq_cpu"), "-")
     return f"CQN={cqn} EQN={eqn} IRQN={irqn} CPU={irq_cpus}"
 
 
 def _dump_device_lines(
     dump: Dict[str, Any], rdma_labels: Dict[str, str]
 ) -> List[Tuple[str, Any]]:
-    kind = str(dump.get("kind", "descriptor"))
-    netdev = None
-    device_record = dump
-    if kind == "cqe" and isinstance(dump.get("cq"), dict):
-        device_record = dump["cq"]
-        if _short_struct(
-            device_record.get("address_struct")
-        ) == "mlx5e_cq" and device_record.get("netdev"):
-            netdev = device_record.get("netdev")
-    elif kind == "eqe" and isinstance(dump.get("eq"), dict):
-        device_record = dump["eq"]
-    elif kind == "wqe":
-        queue = dump.get("queue")
-        if isinstance(queue, dict) and queue.get("netdev"):
-            netdev = queue.get("netdev")
-        if isinstance(dump.get("qp"), dict):
-            device_record = dump["qp"]
-    rdma_dev = _record_device_label(device_record, rdma_labels, fallback=False)
+    netdev = dump.get("netdev")
+    rdma_dev = _record_device_label(dump, rdma_labels, fallback=False)
     if netdev and rdma_dev and netdev != rdma_dev:
         return [("netdev", netdev), ("rdma_dev", rdma_dev)]
     if netdev:

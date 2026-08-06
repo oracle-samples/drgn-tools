@@ -16,7 +16,6 @@ sections. The --max* options can cap sections for smaller captures.
 """
 import argparse
 import ipaddress
-import json
 from collections import Counter
 from collections import OrderedDict
 from typing import Any
@@ -65,8 +64,6 @@ _decode_cqe = decode._decode_cqe
 _decode_eqe = decode._decode_eqe
 _decode_rq_wqe = decode._decode_rq_wqe
 _decode_wqe = decode._decode_wqe
-_jsonable = formatting._jsonable
-
 _KeyT = TypeVar("_KeyT")
 
 
@@ -295,19 +292,13 @@ class Mlx5(CorelensModule):
                 default=MAX_DEFAULT_DESCRIPTOR_ENTRIES,
                 help=f"Maximum {entry} entries to dump per {target}, default: 32",
             )
-        parser.add_argument(
-            "--json", action="store_true", help="Emit machine-readable JSON"
-        )
 
     def run(self, prog: Program, args: argparse.Namespace) -> None:
         selection._resolve_report_sections(args)
         _validate_args(args)
 
         report = Mlx5Collector(prog, args).collect()
-        if args.json:
-            print(json.dumps(_jsonable(report), indent=2, sort_keys=True))
-        else:
-            render.render_report(report, args)
+        render.render_report(report, args)
 
 
 def _new_channel_record(
@@ -525,7 +516,6 @@ class Mlx5Collector:
                     else []
                 )
                 device.counts = {
-                    "netdevs": int(device.netdev is not None),
                     "channels": len(channels) if self._want_channels else None,
                     "queues": sum(
                         1
@@ -565,15 +555,9 @@ class Mlx5Collector:
             return len(records) if collected else None
 
         return {
-            "module": "mlx5",
             "mode": (
                 "live" if self.prog.flags & ProgramFlags.IS_LIVE else "vmcore"
             ),
-            "selection": {
-                name: value
-                for name, value in vars(self.args).items()
-                if not name.startswith("_") and name != "json"
-            },
             "devices": [device.to_dict() for device in devices],
             "cqs": sorted(
                 (e.record for e in self._cqs.values()),
@@ -605,7 +589,6 @@ class Mlx5Collector:
         eqs, cqs = self._count_summary_eqs_and_cqs(device)
         device.counts.update(
             {
-                "netdevs": int(device.netdev is not None),
                 "channels": channels,
                 "queues": queues,
                 "cqs": cqs,
@@ -782,7 +765,6 @@ class Mlx5Collector:
         device_name = device.mdev_address
         netdev_name = netdev_record["name"]
         state = int(queue_obj.state)
-        linked_rq = False
         if is_rq:
             linked_type = int(
                 self.prog.constant("MLX5_WQ_TYPE_LINKED_LIST_STRIDING_RQ")
@@ -791,22 +773,8 @@ class Mlx5Collector:
             wq = queue_obj.mpwqe.wq if linked_rq else queue_obj.wqe.wq
         else:
             wq = queue_obj.wq
+        pc, cc, inflight = _mlx5e_queue_progress(queue_obj, wq, is_rq)
         wq_summary = self._collect_wq_summary(wq)
-        if is_rq:
-            progress = {
-                "pc": wq_summary.get("wqe_counter"),
-                "cc": wq_summary.get("head") if linked_rq else None,
-                "inflight": wq_summary.get("cur_size") if linked_rq else None,
-            }
-        else:
-            pc = int(queue_obj.pc)
-            cc = int(queue_obj.cc)
-            inflight = _nonnegative_delta(pc, cc)
-            progress = dict(
-                pc=pc,
-                cc=cc,
-                inflight=inflight,
-            )
         cq = queue_obj.cq
         owner = {
             "device": device_name,
@@ -827,11 +795,11 @@ class Mlx5Collector:
             "kind": kind,
             "tc": tc,
             "owner": _owner_string(owner),
-            "device": device_name,
             "netdev": netdev_name,
-            "channel": channel_index,
             "number": qn,
-            **progress,
+            "pc": pc,
+            "cc": cc,
+            "inflight": inflight,
             "state": formatting._hex(state),
             "state_flags": formatting._enum_flags(
                 state, enabled_bit.type_, state_prefix
@@ -856,7 +824,7 @@ class Mlx5Collector:
         self, wq: Optional[Object], kernel_backed: bool = True
     ) -> Dict[str, Any]:
         if wq is None:
-            return {"status": "unavailable"}
+            return {}
         type_name = wq.type_.type_name()
         supported_types = (
             "struct mlx5_cqwq",
@@ -899,11 +867,6 @@ class Mlx5Collector:
         }
         if type_name == "struct mlx5_cqwq":
             summary["cc"] = int(wq.cc)
-        else:
-            summary["wqe_counter"] = int(wq.wqe_ctr)
-            summary["cur_size"] = int(wq.cur_sz)
-            if type_name == "struct mlx5_wq_ll":
-                summary["head"] = int(wq.head)
         return summary
 
     def _collect_mlx5e_cq(
@@ -1177,9 +1140,11 @@ class Mlx5Collector:
         creator = self._qp_creator(qp)
         sq_wq = qp.sq
         rq_wq = qp.rq
-        kernel_backed = creator["type"] == "kernel"
+        kernel_backed = not bool(qp.ibqp.uobject)
         sq_summary = self._collect_wq_summary(sq_wq, kernel_backed)
-        rq_summary = self._collect_wq_summary(rq_wq, kernel_backed)
+        rq_summary = self._collect_wq_summary(
+            rq_wq, kernel_backed and bool(qp.has_rq)
+        )
         qp_state = int(qp.state)
         eligible_sq_wq = (
             sq_wq if kernel_backed and int(sq_summary["size"]) > 0 else None
@@ -1188,27 +1153,15 @@ class Mlx5Collector:
             "qpn": qpn,
             "hw_qpn": hw_qpn,
             "address": formatting._hex(int(qp)),
-            "address_struct": "struct mlx5_ib_qp",
             "device": device.mdev_address,
-            "owner": "mlx5_ib_qp_list",
             "creator": creator["display"],
             "creator_type": creator["type"],
-            "type": qp_type,
             "type_display": decode._enum_type_label(
                 self.prog, qp_type, "enum ib_qp_type"
             ),
-            "state": qp_state,
             "state_display": decode._enum_type_label(
                 self.prog, qp_state, "enum ib_qp_state"
             ),
-            "flags": formatting._hex(int(qp.flags)),
-            "has_rq": int(qp.has_rq),
-            "is_rss": int(qp.is_rss) if has_member(qp, "is_rss") else None,
-            "max_inline_data": int(qp.max_inline_data),
-            "db": formatting._hex(int(qp.db.address_)),
-            "buf": formatting._hex(int(qp.buf.address_)),
-            "send_cq": formatting._hex(int(send_cq) if send_cq else None),
-            "recv_cq": formatting._hex(int(recv_cq) if recv_cq else None),
             "send_cqn": self._ib_cq_number(send_cq),
             "recv_cqn": self._ib_cq_number(recv_cq),
             "sq": sq_summary,
@@ -1259,7 +1212,6 @@ class Mlx5Collector:
                     else {
                         "kind": "cqe",
                         "selector": self.args.cqn,
-                        "status": "not-found",
                         "entries": [],
                     }
                 )
@@ -1284,7 +1236,6 @@ class Mlx5Collector:
                     else {
                         "kind": "eqe",
                         "selector": self.args.eqn,
-                        "status": "not-found",
                         "entries": [],
                     }
                 )
@@ -1317,7 +1268,6 @@ class Mlx5Collector:
                         "kind": "wqe",
                         "source": "qp",
                         "selector": self.args.qpn,
-                        "status": "not-found",
                         "entries": [],
                     }
                 )
@@ -1334,7 +1284,6 @@ class Mlx5Collector:
                         "source": "queue",
                         "selector_name": selector_name,
                         "selector": number,
-                        "status": "not-found",
                         "entries": [],
                     }
                 )
@@ -1401,7 +1350,7 @@ class Mlx5Collector:
             sq_size = sq.get("size") if isinstance(sq, dict) else None
             sq_pc = sq.get("head") if isinstance(sq, dict) else None
             sq_cc = sq.get("tail") if isinstance(sq, dict) else None
-            inflight = _nonnegative_delta(sq_pc, sq_cc)
+            inflight = _counter_delta(sq_pc, sq_cc, 32)
             return (
                 1 if sq_size in (None, 0) else 0,
                 1 if inflight == 0 else 0,
@@ -1533,8 +1482,6 @@ class Mlx5Collector:
                 "selector_name": "cqn",
                 "selector": cqn,
                 "device": device_name,
-                "status": "not-found",
-                "cq": _jsonable(record),
                 "entries": [],
             }
         entries = self._dump_ring(
@@ -1546,8 +1493,8 @@ class Mlx5Collector:
             descriptor_kind="cqe",
         )
         status, bad_statuses = _descriptor_dump_summary(entries)
-        wq_layout = dumps._wq_layout_summary(wq)
         if bad_statuses:
+            wq_layout = dumps._wq_layout_summary(wq)
             self._warn(
                 f"CQN {cqn} on {device_name} dump status {status}; "
                 f"wq_layout={wq_layout}"
@@ -1557,14 +1504,15 @@ class Mlx5Collector:
             "selector_name": "cqn",
             "selector": cqn,
             "device": device_name,
-            "status": status,
-            "cq": _jsonable(record),
-            "wq": wq_layout,
+            "netdev": record.get("netdev"),
+            "cqn": record.get("cqn"),
+            "eqn": record.get("eqn"),
+            "irqn": record.get("irqn"),
+            "irq_cpu": record.get("irq_cpu"),
             "consumer_index": record.get("consumer_index"),
             "window": dumps._dump_window_summary(
                 max_entries, record.get("size")
             ),
-            "notes": [],
             "entries": entries,
         }
 
@@ -1580,8 +1528,6 @@ class Mlx5Collector:
                 "selector_name": "eqn",
                 "selector": eqn,
                 "device": device_name,
-                "status": "not-found",
-                "eq": _jsonable(record),
                 "entries": [],
             }
         entries = self._dump_ring(
@@ -1593,8 +1539,8 @@ class Mlx5Collector:
             descriptor_kind="eqe",
         )
         status, bad_statuses = _descriptor_dump_summary(entries)
-        wq_layout = dumps._wq_layout_summary(wq)
         if bad_statuses:
+            wq_layout = dumps._wq_layout_summary(wq)
             self._warn(
                 f"EQN {eqn} on {device_name} dump status {status}; "
                 f"wq_layout={wq_layout}"
@@ -1604,9 +1550,6 @@ class Mlx5Collector:
             "selector_name": "eqn",
             "selector": eqn,
             "device": device_name,
-            "status": status,
-            "eq": _jsonable(record),
-            "wq": wq_layout,
             "consumer_index": record.get("consumer_index"),
             "window": dumps._dump_window_summary(
                 max_entries, record.get("size")
@@ -1622,13 +1565,10 @@ class Mlx5Collector:
         device_name = str(record.get("device") or "")
         qpn = record.get("qpn")
         wq = entry.sq_wq if entry is not None else None
-        owner = record.get("owner")
         wq_summary = record.get("sq", {})
         if wq is None:
             notes = []
-            status = "not-found"
             if entry is not None:
-                status = "unavailable"
                 if record.get("creator_type") == "user":
                     notes.append(
                         "User-backed QP WQEs are not available through the "
@@ -1649,9 +1589,6 @@ class Mlx5Collector:
                 "selector_name": "qpn",
                 "selector": qpn,
                 "device": device_name,
-                "owner": owner,
-                "status": status,
-                "qp": _jsonable(record),
                 "notes": notes,
                 "entries": [],
             }
@@ -1668,19 +1605,19 @@ class Mlx5Collector:
             variable_wqe_stride=True,
         )
         status, bad_statuses = _descriptor_dump_summary(entries)
-        wq_layout = dumps._wq_layout_summary(wq)
         notes = (
             [
                 "SQ head/tail show no outstanding WQEs; entries may be old ring contents"
             ]
             if isinstance(wq_summary, dict)
-            and _nonnegative_delta(
-                wq_summary.get("head"), wq_summary.get("tail")
+            and _counter_delta(
+                wq_summary.get("head"), wq_summary.get("tail"), 32
             )
             == 0
             else []
         )
         if bad_statuses:
+            wq_layout = dumps._wq_layout_summary(wq)
             self._warn_wqe_dump_error(
                 selector_name="QPN",
                 selector=qpn,
@@ -1696,10 +1633,6 @@ class Mlx5Collector:
             "selector_name": "qpn",
             "selector": qpn,
             "device": device_name,
-            "owner": owner,
-            "status": status,
-            "qp": _jsonable(record),
-            "wq": wq_layout,
             "wqe_kind": "ctrl",
             "notes": notes,
             "entries": entries,
@@ -1711,10 +1644,9 @@ class Mlx5Collector:
         max_entries: int,
         auto: bool = False,
     ) -> Dict[str, Any]:
-        device_name, selector_name, number, key_owner = key
+        device_name, selector_name, number, _key_owner = key
         entry = self._mlx5e_queues.get(key)
         record, wq = entry if entry is not None else ({}, None)
-        owner = record.get("owner") or key_owner
         if wq is None:
             return {
                 "kind": "wqe",
@@ -1722,9 +1654,7 @@ class Mlx5Collector:
                 "selector_name": selector_name,
                 "selector": number,
                 "device": device_name,
-                "owner": owner,
-                "status": "not-found",
-                "queue": _jsonable(record),
+                "netdev": record.get("netdev"),
                 "entries": [],
             }
         wq_summary = record.get("wq", {})
@@ -1742,13 +1672,16 @@ class Mlx5Collector:
             ring_size=wq_summary.get("size")
             if isinstance(wq_summary, dict)
             else None,
-            consumer_index=selection._first_not_none(
-                record.get("cc"), record.get("pc")
+            consumer_index=(
+                0
+                if linked_rq
+                else selection._first_not_none(
+                    record.get("cc"), record.get("pc")
+                )
             ),
             variable_wqe_stride=not is_rq,
         )
         status, bad_statuses = _descriptor_dump_summary(entries)
-        wq_layout = dumps._wq_layout_summary(wq)
         notes = (
             [
                 "queue progress shows no outstanding WQEs; entries may be old ring contents"
@@ -1757,6 +1690,7 @@ class Mlx5Collector:
             else []
         )
         if bad_statuses:
+            wq_layout = dumps._wq_layout_summary(wq)
             self._warn_wqe_dump_error(
                 selector_name=selector_name.upper(),
                 selector=number,
@@ -1772,10 +1706,7 @@ class Mlx5Collector:
             "selector_name": selector_name,
             "selector": number,
             "device": device_name,
-            "owner": owner,
-            "status": status,
-            "queue": _jsonable(record),
-            "wq": wq_layout,
+            "netdev": record.get("netdev"),
             "wqe_kind": "rq" if is_rq else "ctrl",
             "notes": notes,
             "entries": entries,
@@ -1873,9 +1804,9 @@ class Mlx5Collector:
                 return [{"index": None, "status": "layout-unavailable"}]
         elif size != fbc_size:
             return [{"index": None, "status": "layout-unavailable"}]
-        read_len = min(defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES, stride)
+        read_len = min(defs.MLX5_DESCRIPTOR_BYTES, stride)
         cqe_offset = (
-            defs.DEFAULT_DESCRIPTOR_ENTRY_BYTES
+            defs.MLX5_DESCRIPTOR_BYTES
             if descriptor_kind == "cqe" and stride == 128
             else 0
         )
@@ -1893,7 +1824,7 @@ class Mlx5Collector:
             adjusted_index = index + strides_offset
             frag_index = adjusted_index >> log_frag_strides
             if frag_index not in fragment_cache:
-                base = dumps._fragment_base(frags, frag_index)
+                base = int(frags[frag_index].buf)
                 frag_first = frag_index * frag_strides
                 first = max(strides_offset, frag_first)
                 end = min(strides_offset + size, frag_first + frag_strides)
@@ -2012,8 +1943,6 @@ class Mlx5Collector:
                         queue_name = str(queue["owner"])
                         wq = queue.get("wq")
                         size = wq.get("size") if isinstance(wq, dict) else None
-                        pc = queue.get("pc")
-                        cc = queue.get("cc")
                         inflight = queue.get("inflight")
                         for severity, present, message in (
                             (
@@ -2032,16 +1961,11 @@ class Mlx5Collector:
                                 f"{queue_name} netdev TX queue is stopped/frozen",
                             ),
                             (
-                                "MED",
-                                pc is not None and cc is not None and pc < cc,
-                                f"{queue_name} producer counter is behind consumer counter",
-                            ),
-                            (
                                 "HIGH",
                                 inflight is not None
                                 and size is not None
-                                and 0 < size <= inflight,
-                                f"{queue_name} in-flight work is at or above WQ size",
+                                and 0 < size < inflight,
+                                f"{queue_name} in-flight work exceeds WQ size",
                             ),
                         ):
                             if present:
@@ -2105,20 +2029,17 @@ def _validate_args(args: argparse.Namespace) -> None:
             "--qp-creator must be 'kernel' or 'user', got: "
             + ", ".join(invalid_qp_creators)
         )
-    for option, value, hard_limit in (
-        ("--maxqueues", args.maxqueues, defs.MAX_REPORT_ROWS),
-        ("--maxcq", args.maxcq, defs.MAX_REPORT_ROWS),
-        ("--maxeq", args.maxeq, defs.MAX_REPORT_ROWS),
-        ("--maxqp", args.maxqp, defs.MAX_REPORT_ROWS),
-        ("--maxcqe", args.maxcqe, defs.MAX_DESCRIPTOR_ENTRIES),
-        ("--maxeqe", args.maxeqe, defs.MAX_DESCRIPTOR_ENTRIES),
-        ("--maxwqe", args.maxwqe, defs.MAX_DESCRIPTOR_ENTRIES),
+    for option, value in (
+        ("--maxqueues", args.maxqueues),
+        ("--maxcq", args.maxcq),
+        ("--maxeq", args.maxeq),
+        ("--maxqp", args.maxqp),
+        ("--maxcqe", args.maxcqe),
+        ("--maxeqe", args.maxeqe),
+        ("--maxwqe", args.maxwqe),
     ):
-        if value is not None or option in {"--maxcqe", "--maxeqe", "--maxwqe"}:
-            if value < 1:
-                raise ValueError(f"{option} must be >= 1")
-            if value > hard_limit:
-                raise ValueError(f"{option} must be <= {hard_limit}")
+        if value is not None and value < 1:
+            raise ValueError(f"{option} must be >= 1")
     if args.dev and ":" in args.dev and "." in args.dev:
         if not defs._PCI_BDF_RE.match(args.dev):
             raise ValueError("invalid --dev BDF value, expected DDDD:BB:DD.F")
@@ -2167,10 +2088,25 @@ def _wqe_ctrl_wqebbs(decoded: Dict[str, Any], stride_bytes: int) -> int:
     return max(1, (ds * 16 + stride_bytes - 1) // stride_bytes)
 
 
-def _nonnegative_delta(pc: Optional[int], cc: Optional[int]) -> Optional[int]:
-    if pc is None or cc is None or pc < cc:
+def _counter_delta(
+    pc: Optional[int], cc: Optional[int], bits: int
+) -> Optional[int]:
+    if pc is None or cc is None:
         return None
-    return pc - cc
+    return (pc - cc) & ((1 << bits) - 1)
+
+
+def _mlx5e_queue_progress(
+    queue: Object, wq: Object, is_rq: bool
+) -> Tuple[int, int, int]:
+    if is_rq:
+        pc = int(wq.wqe_ctr)
+        inflight = int(wq.cur_sz)
+        return pc, (pc - inflight) & 0xFFFF, inflight
+
+    pc = int(queue.pc)
+    cc = int(queue.cc)
+    return pc, cc, (pc - cc) & 0xFFFF
 
 
 # Linux/netdev/mlx5 object helpers
