@@ -158,29 +158,13 @@ def mlx5_ib_iter_qps(ibdev: Object) -> Iterator[Object]:
     )
 
 
-def _mlx5_fw_version(mdev: Object, ibdev: Optional[Object]) -> str:
-    if ibdev is not None:
-        try:
-            fw_ver = formatting._format_ib_fw_ver(
-                int(ibdev.ib_dev.attrs.fw_ver)
-            )
-            if fw_ver is not None:
-                return fw_ver
-        except FaultError:
-            pass
-
-    try:
-        iseg = mdev.iseg
-        if iseg:
-            fw_ver = formatting._format_iseg_fw_revision(
-                int(iseg.fw_rev),
-                int(iseg.cmdif_rev_fw_sub),
-            )
-            if fw_ver is not None:
-                return fw_ver
-    except FaultError:
-        pass
-    return "unavailable"
+def _mlx5_fw_version(ibdev: Optional[Object]) -> str:
+    if ibdev is None:
+        return "unavailable"
+    return (
+        formatting._format_ib_fw_ver(int(ibdev.ib_dev.attrs.fw_ver))
+        or "unavailable"
+    )
 
 
 class Mlx5(CorelensModule):
@@ -483,7 +467,7 @@ class Mlx5Collector:
                 "device_state": formatting._enum_name(
                     device.mdev.state, "MLX5_DEVICE_STATE_"
                 ),
-                "fw_version": _mlx5_fw_version(device.mdev, device.ibdev),
+                "fw_version": _mlx5_fw_version(device.ibdev),
             }
             device.health = collect_device.collect_health(device.mdev)
 
@@ -765,6 +749,7 @@ class Mlx5Collector:
         device_name = device.mdev_address
         netdev_name = netdev_record["name"]
         state = int(queue_obj.state)
+        linked_rq = False
         if is_rq:
             linked_type = int(
                 self.prog.constant("MLX5_WQ_TYPE_LINKED_LIST_STRIDING_RQ")
@@ -784,6 +769,8 @@ class Mlx5Collector:
             "queue_number": qn,
         }
         cq_record = self._collect_mlx5e_cq(cq, owner)
+        if linked_rq:
+            cq_record["_striding_rq"] = True
 
         txq = queue_obj.txq if kind in ("sq", "qos_sq", "ptp_sq") else None
         txq_state = int(txq.state) if txq else None
@@ -947,9 +934,12 @@ class Mlx5Collector:
             "vector": int(core.vecidx),
             "consumer_index": int(core.cons_index),
             "size": int(core.fbc.sz_m1) + 1,
-            "cq_count": int(core.cq_count)
-            if has_member(core, "cq_count")
-            else None,
+            "cq_count": sum(
+                1
+                for _key, _cq in radix_tree_for_each(
+                    core.cq_table.tree.address_of_()
+                )
+            ),
             "eqe_size": self.prog.type("struct mlx5_eqe").size,
         }
         self._eqs[key] = _EqEntry(record, core)
@@ -996,8 +986,10 @@ class Mlx5Collector:
             specific_owner = _owner_string(mlx5e_owner)
         owners = [specific_owner] if specific_owner else []
         wq_summary = self._collect_wq_summary(wq)
-        consumer_index = _cq_consumer_index(
-            address_struct, wq_summary, core_cq
+        consumer_index = (
+            None
+            if ib_cq is not None and ib_cq.ibcq.uobject
+            else _cq_consumer_index(address_struct, wq_summary, core_cq)
         )
         record = {
             "cqn": cqn,
@@ -1487,7 +1479,11 @@ class Mlx5Collector:
         entries = self._dump_ring(
             wq,
             max_entries,
-            decode=lambda raw: _decode_cqe(self.prog, raw),
+            decode=lambda raw: _decode_cqe(
+                self.prog,
+                raw,
+                striding_rq=bool(record.get("_striding_rq")),
+            ),
             ring_size=record.get("size"),
             consumer_index=record.get("consumer_index"),
             descriptor_kind="cqe",

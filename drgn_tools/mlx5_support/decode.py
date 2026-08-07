@@ -74,9 +74,18 @@ def _enum_type_label(
     return _enum_name(prog, value, type_name=type_name)
 
 
-def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
+def _decode_cqe(
+    prog: Program, raw: bytes, *, striding_rq: bool = False
+) -> Dict[str, Any]:
     cqe = Object.from_bytes_(prog, "struct mlx5_cqe64", raw)
     op_own = int(cqe.op_own)
+    owner = op_own & 1
+    if (op_own >> 2) & 0x3 == 0x3:
+        return {
+            "owner_bit": owner,
+            "opcode_display": "COMPRESSED",
+        }
+
     opcode = op_own >> 4
     opcode_name = _enum_name(
         prog,
@@ -84,7 +93,6 @@ def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         representative="MLX5_CQE_REQ",
         prefix="MLX5_CQE_",
     )
-    owner = op_own & 1
     sop_drop_qpn = _be(cqe.sop_drop_qpn)
     req_opcode = (sop_drop_qpn >> 24) if opcode_name == "REQ" else None
     req_opcode_name = _enum_name(
@@ -94,6 +102,8 @@ def _decode_cqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         prefix="MLX5_OPCODE_",
     )
     byte_count = _be(cqe.byte_cnt)
+    if striding_rq:
+        byte_count &= 0xFFFF
     byte_count_display = None
     if opcode_name in (
         "RESP_WR_IMM",
@@ -148,7 +158,8 @@ def _decode_eqe(prog: Program, raw: bytes) -> Dict[str, Any]:
         "type_display": _enum_label(event_type, event_name),
     }
     if event_name == "COMP":
-        decoded["cqn"] = _read_be(raw, 56, 4)
+        cqn = _read_be(raw, 56, 4)
+        decoded["cqn"] = None if cqn is None else cqn & 0xFFFFFF
     return decoded
 
 
@@ -179,8 +190,11 @@ def _decode_wqe(prog: Program, raw: bytes) -> Dict[str, Any]:
 
 def _decode_rq_wqe(raw: bytes, linked: bool = False) -> Dict[str, Any]:
     data_offset = 16 if linked else 0
+    byte_count = _read_be(raw, data_offset, 4)
     return {
-        "byte_count": _read_be(raw, data_offset, 4),
+        "byte_count": (
+            None if byte_count is None else byte_count & 0x7FFFFFFF
+        ),
         "lkey": _hex(_read_be(raw, data_offset + 4, 4)),
         "dma_addr": _hex(_read_be(raw, data_offset + 8, 8)),
     }

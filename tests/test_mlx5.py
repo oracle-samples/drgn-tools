@@ -136,10 +136,23 @@ class TestMlx5(unittest.TestCase):
         self.assertEqual(decoded["wqe_counter"], 123)
         self.assertEqual(decoded["byte_count_display"], 1514)
 
+        cqe[44:48] = (0x0001003C).to_bytes(4, "big")
+        decoded = mlx5._decode_cqe(prog, bytes(cqe), striding_rq=True)
+        self.assertEqual(decoded["byte_count_display"], 60)
+
+        cqe[63] = 0x0D
+        self.assertEqual(
+            mlx5._decode_cqe(prog, bytes(cqe)),
+            {"owner_bit": 1, "opcode_display": "COMPRESSED"},
+        )
+
         eqe = bytearray(64)
         eqe[1] = 0
         eqe[56:60] = (0x1234).to_bytes(4, "big")
         eqe[63] = 1
+        self.assertEqual(mlx5._decode_eqe(prog, bytes(eqe))["cqn"], 0x1234)
+
+        eqe[56:60] = (0xAB001234).to_bytes(4, "big")
         self.assertEqual(mlx5._decode_eqe(prog, bytes(eqe))["cqn"], 0x1234)
 
         send = bytearray(64)
@@ -153,6 +166,12 @@ class TestMlx5(unittest.TestCase):
                 "qpn": 0x123456,
                 "ds": 0x18,
             },
+        )
+
+        receive = bytearray(16)
+        receive[0:4] = (0x800005F2).to_bytes(4, "big")
+        self.assertEqual(
+            mlx5._decode_rq_wqe(bytes(receive))["byte_count"], 1522
         )
 
 

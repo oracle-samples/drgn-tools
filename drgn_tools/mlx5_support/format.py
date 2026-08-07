@@ -86,15 +86,3 @@ def _format_fw_revision(
     if None in revision or revision in ((0, 0, 0), (0xFFFF, 0xFFFF, 0xFFFF)):
         return None
     return "{}.{}.{}".format(major, minor, sub)
-
-
-def _format_iseg_fw_revision(
-    fw_rev: Optional[int], sub: Optional[int]
-) -> Optional[str]:
-    if fw_rev is None or sub is None:
-        return None
-    if fw_rev in (0, 0xFFFFFFFF) or sub == 0xFFFFFFFF:
-        return None
-    return _format_fw_revision(
-        fw_rev & 0xFFFF, (fw_rev >> 16) & 0xFFFF, sub & 0xFFFF
-    )
