@@ -21,18 +21,13 @@ else
 endif
 endif
 
-.PHONY: litevm-test
-litevm-test:
-	$(PYTHON) -m testing.litevm.vm
-
-
 .PHONY: vmcore-test
 vmcore-test:
 	$(PYTHON) -m testing.vmcore test
 
 
 .PHONY: test
-test: litevm-test vmcore-test
+test: vmcore-test
 
 .PHONY: docs
 docs:
