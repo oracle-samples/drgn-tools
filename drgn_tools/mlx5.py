@@ -92,12 +92,16 @@ def mlx5_iter_channel_queues(
     for tc in range(int(channel.num_tc)):
         yield "tx_sqs", channel.sq[tc], "sq", tc
 
-    qos_sqs = channel.qos_sqs
-    if qos_sqs:
-        for index in range(int(channel.qos_sqs_size)):
-            sq = qos_sqs[index]
-            if sq:
-                yield "tx_sqs", sq, "qos_sq", index
+    # In v5.12 commit 214baf22870cf ("net/mlx5e: Support HTB offload"), qos_sqs
+    # was added, and backported to UEK6. It is not present on older UEK6 or
+    # UEK5. Be cautious when accessing the member.
+    if has_member(channel, "qos_sqs"):
+        qos_sqs = channel.qos_sqs
+        if qos_sqs:
+            for index in range(int(channel.qos_sqs_size)):
+                sq = qos_sqs[index]
+                if sq:
+                    yield "tx_sqs", sq, "qos_sq", index
 
     if int(channel.xdp):
         yield "xdp_sqs", channel.rq_xdpsq, "rq_xdpsq", None
@@ -171,9 +175,12 @@ class Mlx5(CorelensModule):
     """Inspect mlx5 devices, queues, and descriptors."""
 
     name = "mlx5"
-    run_when = "never"
+    run_when = "always"
     need_dwarf = False
     live_ok = True
+
+    default_args = [["--summary"]]
+    verbose_args = [["--full"]]
 
     @property
     def skip_unless_have_kmods(self) -> List[str]:
