@@ -9,15 +9,12 @@ import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import List
+from typing import Optional
 from urllib.error import HTTPError
 
+from drgn_tools.util import download_file
 from drgn_tools.util import head_file
-from testing.litevm.rpm import cached_file_path
-from testing.litevm.rpm import check_file_cached
-from testing.litevm.rpm import DEBUGINFO_URL
-from testing.litevm.rpm import download_file_cached
-from testing.litevm.rpm import REPODATA
-from testing.litevm.rpm import UEK_YUM
+from testing.util import BASE_DIR
 from testing.vm.config import KernelCategory
 from testing.vm.config import KernelKind
 from testing.vm.config import KernelVer
@@ -25,10 +22,92 @@ from testing.vm.config import VmLayout
 from testing.vm.logging import VmLogger
 
 
+UEK_YUM = (
+    "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/UEKR{uek_ver}/{arch}/"
+)
 UEKNEXT_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/developer/UEKnext/{arch}/"
 RHCK_YUM = (
     "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/baseos/latest/{arch}/"
 )
+
+YUM_CACHE_DIR = BASE_DIR / "yumcache"
+DEBUGINFO_URL = "https://oss.oracle.com/ol{ol_ver}/debuginfo/{pkgbase}-debuginfo-{release}.rpm"
+REPODATA = "repodata/repomd.xml"
+
+
+def download_file_cached(
+    url: str,
+    quiet: bool = False,
+    desc: str = "Downloading",
+    cache: Optional[Path] = None,
+    cache_key: Optional[str] = None,
+    delete_on_miss: bool = True,
+) -> Path:
+    """
+    Download a file into the cache directory
+
+    This function is designed to work seamlessly with the Github Actions cache,
+    but would also work well with a simple cache directory with no Github
+    Actions magic. The cache has a directory structure, and each kind of file
+    gets put under a separate subdirectory. When downloading a file, we search
+    the subdirectory, and if it already exists, there is a cache hit and we can
+    skip the download. If the file does not exist, it's a cache miss and we
+    download the file. In that case, the cache contents may be stale, so we can
+    clear out the previous contents (this behavior can be skipped in case you're
+    keeping several files in the directory).
+
+    When used properly, the cache directory will speed up operation by skipping
+    downloads. And when a newer version of the downloaded resources becomes
+    available, the old resources are removed from the directory, so that the
+    size is minimized.
+
+    :param url: Url to download. The last path component is the filename
+    :param quiet: Whether to print progress
+    :param desc: Description for progress printing
+    :param cache: Location of the cache directory
+    :param cache_key: Key providing isolation within the cache. It's treated as
+      a path component, so it can have slashes which introduce subdirectories.
+    :param delete_on_miss: Whether to delete all files under the cache_key
+      during a cache miss. Set this to False if your cache_key contains multiple
+      files which will all miss in a row. Note that delete_on_miss is only
+      respected when cache_key is not None.
+    :returns: Path of the downloaded or cached file
+    """
+    if not cache:
+        cache = YUM_CACHE_DIR
+    cached_file = cached_file_path(url, cache, cache_key)
+    cached_file.parent.mkdir(exist_ok=True, parents=True)
+    if not cached_file.is_file():
+        if cache_key and delete_on_miss and cached_file.parent.is_dir():
+            shutil.rmtree(cached_file.parent)
+        cached_file.parent.mkdir(exist_ok=True, parents=True)
+        with cached_file.open("wb+") as cache_f:
+            try:
+                download_file(url, cache_f, quiet=quiet, desc=desc)
+            except BaseException:
+                # Yes, BaseException is correct. If we're interrupted for _any_
+                # reason, our cached download is invalid and must be removed.
+                cache_f.close()
+                cached_file.unlink()
+                raise
+    return cached_file
+
+
+def check_file_cached(
+    url: str, cache: Optional[Path], cache_key: Optional[str]
+) -> bool:
+    cached_file = cached_file_path(url, cache, cache_key)
+    return cached_file.is_file() or head_file(url)
+
+
+def cached_file_path(
+    url: str, cache: Optional[Path], cache_key: Optional[str]
+) -> Path:
+    if not cache:
+        cache = YUM_CACHE_DIR
+    if cache_key:
+        cache = cache / cache_key
+    return cache / url.split("/")[-1]
 
 
 def _cache_key(category: KernelCategory, kind: str) -> str:
