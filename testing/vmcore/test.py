@@ -135,6 +135,7 @@ def test(
     parallel: int = 1,
     ol_ver: Optional[int] = None,
     python: Optional[str] = None,
+    test_args: Optional[List[str]] = None,
 ) -> None:
     def should_run_vmcore(name: str) -> bool:
         if not vmcore_list:
@@ -157,6 +158,9 @@ def test(
     if python is None:
         python = sys.executable if ol_ver is None else "python3"
 
+    if test_args is None:
+        test_args = []
+
     with ExitStack() as es:
         pool = es.enter_context(ThreadPoolExecutor(max_workers=parallel))
         futures = []
@@ -172,8 +176,8 @@ def test(
                 python,
                 "-m",
                 "testing.unittest_runner",
-                "tests/",
                 f"--vmcore={core_name}",
+                *test_args,
             ]
             if ctf:
                 if not (path / "vmlinux.ctfa").is_file():
@@ -245,6 +249,12 @@ def main():
         default=None,
         help="Run the tests with the given python binary name",
     )
+    parser.add_argument(
+        "args",
+        nargs="*",
+        help="Arguments to pass through to unittest_runner, e.g. to specify"
+        " which test files to run.",
+    )
     args = parser.parse_args()
     if args.core_directory:
         CORE_DIR = args.core_directory.absolute()
@@ -254,6 +264,7 @@ def main():
         parallel=args.parallel,
         ol_ver=args.ol,
         python=args.python,
+        test_args=args.args,
     )
 
 
