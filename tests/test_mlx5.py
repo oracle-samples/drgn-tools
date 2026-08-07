@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Tests for mlx5 descriptor handling."""
+import argparse
 import unittest
 
 from drgn import FaultError
@@ -10,6 +11,9 @@ from drgn import TypeEnumerator
 from drgn import TypeMember
 
 from drgn_tools import mlx5
+from tests import DrgnToolsTestCase
+from tests import skip_live
+from tests import skip_vmcore
 
 
 def _test_program():
@@ -173,6 +177,30 @@ class TestMlx5(unittest.TestCase):
         self.assertEqual(
             mlx5._decode_rq_wqe(bytes(receive))["byte_count"], 1522
         )
+
+
+@skip_live
+@skip_vmcore("rds-uek5")
+@skip_vmcore("smp_ipi-uek5")
+@skip_vmcore("smp_ipi-uek6")  # TODO: broaden support for older UEK6
+class TestMlx5Smoke(DrgnToolsTestCase):
+    def _module(self, args) -> mlx5.Mlx5:
+        try:
+            self.prog.module("mlx5_core")
+        except LookupError:
+            raise unittest.SkipTest("mlx5_core module is not loaded, skipping")
+        module = mlx5.Mlx5()
+        parser = argparse.ArgumentParser()
+        mlx5.Mlx5.add_args(mlx5.Mlx5, parser)
+        return module, parser.parse_args(args)
+
+    def test_smoke_full(self):
+        module, args = self._module(["--full"])
+        module.run(self.prog, args)
+
+    def test_smoke_summary(self):
+        module, args = self._module(["--summary"])
+        module.run(self.prog, args)
 
 
 if __name__ == "__main__":
