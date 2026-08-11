@@ -301,3 +301,15 @@ APPSTREAM_PYTHONS = {
     ),
     OLVersion.OL10: (PythonVer.PY314,),
 }
+
+# Some UEK versions use a newer compiler version than the system.
+# fmt: off
+KERNEL_TOOLSETS = {
+    KernelCategory(OLVersion.OL9, KernelKind.UEK8, Architecture.X86_64): "gcc-toolset-14",
+    KernelCategory(OLVersion.OL9, KernelKind.UEKNEXT, Architecture.X86_64): "gcc-toolset-14",
+    KernelCategory(OLVersion.OL9, KernelKind.UEK8, Architecture.AARCH64): "gcc-toolset-14",
+    KernelCategory(OLVersion.OL9, KernelKind.UEKNEXT, Architecture.AARCH64): "gcc-toolset-14",
+    KernelCategory(OLVersion.OL8, KernelKind.UEK7, Architecture.X86_64): "gcc-toolset-11",
+    KernelCategory(OLVersion.OL8, KernelKind.UEK7, Architecture.AARCH64): "gcc-toolset-11",
+}
+# fmt: on

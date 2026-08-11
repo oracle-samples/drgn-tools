@@ -7,7 +7,7 @@ from pathlib import Path
 
 from testing.chroot import BindMount
 from testing.chroot import run_in_rootfs
-from testing.config import KernelKind
+from testing.config import KERNEL_TOOLSETS
 from testing.config import KernelVer
 from testing.config import TestDirectories
 from testing.vm.logging import VmLogger
@@ -57,13 +57,10 @@ def ensure_kmod(
 
     command_parts = ["set -euo pipefail"]
 
-    if kernel.category.ol_ver == 8 and kernel.category.kind == KernelKind.UEK7:
-        command_parts.append("source /opt/rh/gcc-toolset-11/enable")
-    elif kernel.category.ol_ver == 9 and kernel.category.kind in (
-        KernelKind.UEK8,
-        KernelKind.UEKNEXT,
-    ):
-        command_parts.append("source /opt/rh/gcc-toolset-14/enable")
+    # Source the toolset necessary to build a kmod
+    toolset = KERNEL_TOOLSETS.get(kernel.category)
+    if toolset:
+        command_parts.append(f"source /opt/rh/{toolset}/enable")
 
     make = (
         f"make -C /mnt/extract/usr/src/kernels/{kernel.release} "

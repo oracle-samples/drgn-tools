@@ -11,6 +11,7 @@ from pathlib import Path
 
 from testing.config import APPSTREAM_PYTHONS
 from testing.config import Architecture
+from testing.config import KERNEL_TOOLSETS
 from testing.config import OLVersion
 from testing.config import Rootfs
 from testing.config import TestDirectories
@@ -63,39 +64,31 @@ def _build_rootfs(
         "dnf",
         f"oraclelinux-release-el{rootfs.ol_ver}",
     ]
+
+    # Include the extra pythonx.xx-drgn RPMs
     for pyver in APPSTREAM_PYTHONS[rootfs.ol_ver]:
         rpm_list.append(f"{pyver.value}-drgn")
-    if rootfs.ol_ver == OLVersion.OL8:
+
+    # Include the necessary toolset RPMs for building kernel modules
+    toolsets = set(v for k, v in KERNEL_TOOLSETS.items() if k.rootfs == rootfs)
+    for toolset in toolsets:
         rpm_list.extend(
             [
-                # For UEK7 module build
-                "gcc-toolset-11-gcc",
-                "gcc-toolset-11-binutils-devel",
-                # For RHCK module build (ORC generation)
-                "elfutils-libelf-devel",
+                f"{toolset}-gcc",
+                f"{toolset}-binutils-devel",
             ]
         )
-    elif rootfs.ol_ver == OLVersion.OL9:
-        rpm_list.extend(
-            [
-                # Required since OL9, fio engine
-                "fio-engine-libaio",
-                # For UEK8 module build
-                "gcc-toolset-14-gcc",
-                "gcc-toolset-14-binutils-devel",
-            ]
-        )
-    elif rootfs.ol_ver == OLVersion.OL10:
-        rpm_list.extend(
-            [
-                # Required since OL9, fio engine
-                "fio-engine-libaio",
-            ]
-        )
-    else:
-        raise ValueError(
-            f"Invalid ol_ver={rootfs.ol_ver}, we support 8, 9, 10"
-        )
+        if rootfs.ol_ver == OLVersion.OL8:
+            rpm_list.append(f"{toolset}-elfutils-libelf-devel")
+
+    # The OL8 RHCK requires elfutils-libelf-devel for ORC generation
+    if rootfs.ol_ver.value == 8:
+        rpm_list.append("elfutils-libelf-devel")
+
+    # Since OL9, fio needs an engine to run
+    if rootfs.ol_ver.value >= 9:
+        rpm_list.append("fio-engine-libaio")
+
     rpms = " ".join(rpm_list)
     install_cmd = inspect.cleandoc(
         f"""
