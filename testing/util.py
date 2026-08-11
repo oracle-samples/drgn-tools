@@ -1,18 +1,15 @@
 # Copyright (c) 2023, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import os
+import re
+import shutil
 import time
 import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Callable
 from typing import Generator
 from typing import Optional
-
-BASE_DIR = (Path(__file__).parent.parent / "testdata").absolute()
-"""
-Default directory where all testing data object should go. Should
-be overridden on the CLI where necessary.
-"""
 
 
 def gitlab_section_start(
@@ -94,3 +91,54 @@ def combine_junit_xml(
 
     main.getroot().extend(new.getroot())
     return main
+
+
+def builddir(
+    path: Path, rmtree: Callable[[Path], None] = shutil.rmtree
+) -> Path:
+    """
+    Return an in-progress directory for building something
+
+    When doing a complex task that results in an output directory, it's
+    necessary to use a temporary directory name while building it, and then
+    rename it to its final destination name when complete. This function creates
+    the in-progress directory using a consistent style (appending ".building"),
+    deleting any prior one.
+    """
+    parent = path.parent
+    parent.mkdir(exist_ok=True, parents=True)
+
+    building = parent / f"{path.name}.building"
+    if building.exists():
+        rmtree(building)
+    building.mkdir(parents=True)
+    return building
+
+
+def rmtree_siblings(path: Path) -> None:
+    """
+    Given a file or directory, (recursively) delete all its siblings
+    """
+    for sib in path.parent.iterdir():
+        if sib == path:
+            continue
+        if sib.is_dir():
+            shutil.rmtree(sib)
+        else:
+            sib.unlink()
+
+
+def rmtree_siblings_matching(path: Path, expr: str) -> None:
+    """
+    Given a file or directory, (recursively) delete contents matching regex
+    """
+    regexp = re.compile(expr)
+    for entry in path.parent.iterdir():
+        if entry == path:
+            continue
+        if not regexp.fullmatch(entry.name):
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()

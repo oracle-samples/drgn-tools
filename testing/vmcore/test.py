@@ -1,4 +1,4 @@
-# Copyright (c) 2024, Oracle and/or its affiliates.
+# Copyright (c) 2024, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """
 Run tests in parallel against vmcores
@@ -20,18 +20,17 @@ from typing import Tuple
 
 from drgn_tools.debuginfo import CtfCompatibility
 from drgn_tools.debuginfo import KernelVersion
-from testing.util import BASE_DIR
 from testing.util import combine_junit_xml
 from testing.vm.chroot import BindMount
 from testing.vm.chroot import run_in_rootfs
-from testing.vm.config import VmLayout
-from testing.vmcore.manage import CORE_DIR
-
-
-LAYOUT = VmLayout(BASE_DIR)
+from testing.vm.config import Architecture
+from testing.vm.config import OLVersion
+from testing.vm.config import Rootfs
+from testing.vm.config import TestDirectories
 
 
 def _test_in_host(
+    layout: TestDirectories,
     core_name: str,
     test_cmd: List[str],
     ol_ver: int,
@@ -42,7 +41,7 @@ def _test_in_host(
         xml = Path(td) / f"vmcore-{core_name}.xml"
         test_cmd.extend(
             [
-                f"--vmcore-dir={str(CORE_DIR)}",
+                f"--vmcore-dir={str(layout.vmcore_dir)}",
                 f"--junitxml={str(xml)}",
             ]
         )
@@ -59,7 +58,7 @@ def _test_in_host(
 
 
 def _test_in_rootfs(
-    core_name: str, test_cmd: List[str], ol_ver: int
+    layout: TestDirectories, core_name: str, test_cmd: List[str], ol_ver: int
 ) -> Tuple[str, bool, ET.ElementTree]:
     # Runs the test silently
     with TemporaryDirectory() as td:
@@ -68,7 +67,7 @@ def _test_in_rootfs(
         output = Path(td) / "output.txt"
         code_dir = Path(__file__).parent.parent.parent
         mounts = [
-            BindMount(CORE_DIR, "/vmcores", True),
+            BindMount(layout.vmcore_dir, "/vmcores", True),
             BindMount(xml.parent, "/output", False),
             BindMount(code_dir, "/code", True),
         ]
@@ -79,7 +78,9 @@ def _test_in_rootfs(
             ]
         )
         start = time.time()
-        rootfs = LAYOUT.rootfs_dir / f"ol{ol_ver}"
+        rootfs = layout.rootfs_path(
+            Rootfs(OLVersion(ol_ver), Architecture.host_arch())
+        )
         with output.open("w") as f:
             res = run_in_rootfs(
                 rootfs,
@@ -130,6 +131,7 @@ def host_ol_ver() -> int:
 
 
 def test(
+    layout: TestDirectories,
     vmcore_list: List[str],
     ctf: bool = False,
     parallel: int = 1,
@@ -164,7 +166,7 @@ def test(
     with ExitStack() as es:
         pool = es.enter_context(ThreadPoolExecutor(max_workers=parallel))
         futures = []
-        for path in CORE_DIR.iterdir():
+        for path in layout.vmcore_dir.iterdir():
             core_name = path.name
             if not should_run_vmcore(core_name):
                 continue
@@ -184,7 +186,9 @@ def test(
                     skipped.append(core_name)
                     continue
                 cmd.append("--ctf")
-            futures.append(pool.submit(test_fn, core_name, cmd, ol_ver))
+            futures.append(
+                pool.submit(test_fn, layout, core_name, cmd, ol_ver)
+            )
 
         for future in futures:
             core_name, test_passed, run_data = future.result()
@@ -209,12 +213,14 @@ def test(
 
 
 def main():
-    global CORE_DIR
     parser = argparse.ArgumentParser(
         description="manages drgn-tools vmcores",
     )
     parser.add_argument(
         "--core-directory", type=Path, help="where to store vmcores"
+    )
+    parser.add_argument(
+        "--base-directory", type=Path, help="testdata base directory"
     )
     parser.add_argument(
         "--vmcore",
@@ -256,9 +262,9 @@ def main():
         " which test files to run.",
     )
     args = parser.parse_args()
-    if args.core_directory:
-        CORE_DIR = args.core_directory.absolute()
+    layout = TestDirectories.create(args.base_directory, args.core_directory)
     test(
+        layout,
         args.vmcore,
         ctf=args.ctf,
         parallel=args.parallel,

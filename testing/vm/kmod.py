@@ -9,15 +9,14 @@ from testing.vm.chroot import BindMount
 from testing.vm.chroot import run_in_rootfs
 from testing.vm.config import KernelKind
 from testing.vm.config import KernelVer
-from testing.vm.config import VmLayout
+from testing.vm.config import TestDirectories
 from testing.vm.logging import VmLogger
 
 
 def ensure_kmod(
-    rootfs: Path,
     kernel: KernelVer,
     repo_root: Path,
-    layout: VmLayout,
+    layout: TestDirectories,
     log: VmLogger,
     skip_build: bool = False,
 ) -> Path:
@@ -25,8 +24,7 @@ def ensure_kmod(
     source_dir = repo_root / "testing/kmod"
     source_file = source_dir / "drgntools_test.c"
 
-    release = kernel.release
-    out_path = layout.kmod_path(release)
+    out_path = layout.kmod_path(kernel)
     out_dir = out_path.parent
     if (
         out_path.is_file()
@@ -35,6 +33,9 @@ def ensure_kmod(
         log.already_done("build kmod", out_path)
         return out_path
 
+    rootfs_dir = layout.rootfs_path(kernel.category.rootfs)
+    if not rootfs_dir.is_dir():
+        raise RuntimeError(f"Rootfs is missing: {rootfs_dir}")
     if skip_build:
         raise RuntimeError(
             f"Kernel module does not exist: {out_path} "
@@ -44,11 +45,11 @@ def ensure_kmod(
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    extract_root = layout.extract_dir.absolute()
-    kernel_dir = extract_root / release / "usr/src/kernels" / release
+    extract_root = layout.extract_path(kernel)
+    kbuild_dir = extract_root / "usr/src/kernels" / kernel.release
 
-    if not kernel_dir.is_dir():
-        raise RuntimeError(f"Kernel build tree not found: {kernel_dir}")
+    if not kbuild_dir.is_dir():
+        raise RuntimeError(f"Kernel build tree not found: {kbuild_dir}")
 
     source_module = source_dir / "drgntools_test.ko"
     if source_module.exists():
@@ -65,7 +66,7 @@ def ensure_kmod(
         command_parts.append("source /opt/rh/gcc-toolset-14/enable")
 
     make = (
-        f"make -C /mnt/extract/{release}/usr/src/kernels/{release} "
+        f"make -C /mnt/extract/usr/src/kernels/{kernel.release} "
         "M=/mnt/repo/testing/kmod"
     )
     command_parts.extend(
@@ -77,7 +78,7 @@ def ensure_kmod(
 
     command = " ; ".join(command_parts)
     run_in_rootfs(
-        rootfs,
+        rootfs_dir,
         ["sh", "-c", command],
         binds=[
             BindMount(

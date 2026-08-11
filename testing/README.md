@@ -2,225 +2,204 @@ Testing
 =======
 
 This directory contains (substantial) machinery necessary for running drgn-tools
-tests. There are three distinct testing systems present here, each of which
-satisfy specific goals:
+tests. We have two main types of tests:
 
-1. The "litevm" testing system uses Qemu to boot a UEK kernel, and then mounts
-   the host filesystem using 9p. The test suite can be executed directly from
-   the host filesystem.
-2. The "heavyvm" testing system contains fully automated infrastructure that can
-   download Oracle Linux virtual machine images and customize them with a given
-   UEK kernel and debuginfo. Tests can then be run by copying the necessary
-   files and executing them via SSH.
-3. The "vmcore" testing system allows you to maintain a library of core dumps
-   and their correpsonding debuginfo, and execute the drgn-tools test suite on
-   each. It also comes with upload and download systems that allow users to
-   share the vmcores on OCI object storage.
+- VM tests, where we boot Oracle Linux kernels & userspace, and run tests
+  against the booted kernel. We also build & load a kernel module as test data.
+- Vmcore tests, where we run tests against kernel core dump files. These can be
+  run on the host filesystem, or run in the Oracle Linux rootfs from the VM test
+  system.
 
-Each test environment has benefits and drawbacks:
 
-- litevm
-    - Quickest to set up and requires the least disk space.
-    - Easiest to run in CI systems like Github Actions due to low overhead.
-    - Automatically tests the latest UEK releases as they come out.
-    - Since it uses the host filesystem, it may not detect compatibility issues
-      with Drgn on Oracle Linux.
-    - Also, since it is VM-based, there are few opportunities for testing
-      helpers that relate to specific hardware drivers, or configurations not
-      found on your development / CI machine.
-    - Since litevm depends on 9p, it's not fully compatible with older UEK
-      versions.
-- "heavyvm"
-    - Having a full OL userspace means we can detect compatibility issues: we
-      are testing the full system, integration-test style.
-    - Allows us to run tests on older UEK kernels such as UEK4.
-    - Can keep up with the latest UEK versions, but disk images need to be
-      rebuilt.
-    - Requires much data to be downloaded and much more disk space to store the
-      disk images.
-    - Still limited in terms of hardware & software configurations.
-    - Difficult or impossible to run on public CI systems without having a
-      large, persistent storage location for disk images.
-- "vmcore"
-    - Allows testing on a broad variety of hardware and software configurations.
-    - Also fairly lightweight, so long as the vmcore is generated using
-      aggressive makedumpfile options.
-    - Vmcores can contain sensitive data, so great care needs to be used when
-      generating vmcores that will be publicly released. As a result, we do not
-      yet provide any testing vmcores, though we hope to do this in the future.
+System Requirements
+-------------------
 
-litevm
-------
+The following are the system requirements for running both kinds of tests.
+Oracle Linux is the expected platform, although it is likely that Fedora and
+other distros should work fine. The ideal system is a bare-metal one with at
+least 8 CPU cores and ample memory (ideally, 4 GiB per-core). In addition,
+around 40 GiB of free disk space should be available if you are doing VM tests,
+and an additional 100 GiB would be necessary to store the various vmcores
+(assuming you have access to them). Finally, a speedy Internet connection is
+helpful in creating the rootfs, as well as downloading kernels & vmcores.
 
-### Overview
+For Oracle Linux 9:
 
-The litevm system uses the latest UEK kernel from the Oracle Linux yum
-repositories. It downloads the necessary RPMs and extracts them. In order to
-boot into the host filesystem, an initial ramdisk must be created which contains
-the necessary kernel modules. (9p is not built-in to UEK kernels). The litevm
-builds the initrd using busybox, and finally boots into the new system to
-execute a user command.
+```sh
+dnf config-manager --enable ol9_addons
+dnf config-manager --enable ol9_kvm_utils
+dnf config-manager --enable ol9_codeready_builder
+dnf config-manager --enable ol9_developer_EPEL
+dnf install -y git drgn qemu-kvm podman virtiofsd \
+               cpio gzip bzip2 zstd busybox
+```
 
-Dependencies:
+For Oracle Linux 10:
 
-- Qemu
-- Busybox
-- Rpm tools (`rpm2cpio`, `cpio`)
-- Kmod package (`depmod`)
-- Compression tools: `bzip2`, `gzip`
-- Ext4 utils (`mkfs.ext4`)
+```sh
+dnf config-manager --enable ol10_addons
+dnf config-manager --enable ol10_kvm_utils
+dnf config-manager --enable ol10_codeready_builder
+# Adjust as necessary for the currently available EPEL point release:
+dnf config-manager --enable ol10_u1_developer_EPEL
+# The fixed busybox RPM should become available in ol10_u2_developer_EPEL
+dnf install -y git drgn qemu-kvm podman virtiofsd \
+               cpio gzip bzip2 zstd \
+               https://kojipkgs.fedoraproject.org//packages/busybox/1.37.0/4.el10_2/x86_64/busybox-1.37.0-4.el10_2.x86_64.rpm
+```
 
-Test data storage:
 
-- `testdata/yumcache`: contains downloaded yum repositories and kernel RPMs
-- `testdata/rpmextract`: holds the contents of the extracted RPMs
+Running VM Tests
+----------------
 
-Oddities:
+To run all VM tests:
 
-- On UEK5, the `CONFIG_9P_FS` configuration is disabled. Thankfully, it is
-  simple enough to build the module out-of-tree. The patch and module for this
-  are provided in `testing/litevm/mod`.
+```sh
+python -m testing.vm.runner
+```
 
-### Usage
+For each kernel target (see `testing/vm/config.py`) this will build the OL
+rootfs if necessary, download and extract the latest kernel & debuginfo, build a
+test kernel module, boot the virtual machine, and run tests with DWARF and CTF
+debuginfo.
 
-To download the latest RPMs for each test kernel:
+After the first run, subsequent runs will be much faster, because they can make
+use of the already-built rootfs, and already-downloaded kernels.
 
-    python -m testing.litevm.rpm
+The runner's help output (`--help`) can provide guidance on running against
+specific kernels or specific debuginfo. The runner also provides the capability
+to run interactive commands within the virtual machine, including running a
+specific test command (see below).
 
-The above is not strictly necessary (the RPMs will be downloaded by the next
-step if not present). However, it is useful to have it as a separate step for
-CI.
 
-To run commands on the lite VMs:
+Running Vmcore Tests
+--------------------
 
-    python -m testing.litevm.vm [command ...]
+To run all vmcore tests:
 
-Please see the `--help` output of each command for full details.
+```sh
+# DWARF debuginfo
+python -m testing.vmcore.test [-j PROCESSES]
+# CTF debuginfo
+python -m testing.vmcore.test --ctf [-j PROCESSES]
+```
 
-heavyvm
--------
+This runs tests against all vmcores in the test directory (see "Test Directory
+Layout" below). It's recommended to use the parallel option, as the serial
+execution time can be quite long if you have a lot of vmcores. However, note
+that memory usage can get quite high with high parallelism.
 
-### Overview
+It is also possible to run vmcore tests within the same Oracle Linux rootfs used
+by the VM tests. This will ensure that the specific drgn RPM and system
+libraries for each OL version are exercised:
 
-The heavyvm system contains several scripts to maintain disk images containing
-full Oracle Linux userspace and UEK kernel.
+```sh
 
-- `testing/heavyvm/images.py` is a configuration file, which lists out the
-  different configurations which we build for: OL7-10, UEK4-8.
-- `testing/heavyvm/imgbuild.py` is a script for automating the creation of qemu
-  disk images directly from cloud image templates. This is used periodically to
-  create fresh VM images with the latest package and kernel versions.
-- `testing/heavyvm/qemu.py` contains helpers for interacting with Qemu, and a
-  quick command line tool for easily running a VM.
-- `testing/heavyvm/runner.py` is a script for orchestrating all the VMs:
-  bringing them up, distributing drgn-tools code to them, running test commands,
-  and shutting them down.
+python -m testing.vmcore.test --ol VERSION [-j PROCESSES]
+```
 
-Requirements:
+Finally, you may also find it helpful to run only specific tests across the
+entire vmcore collection. This can be done by passing positional arguments,
+which are directed to the actual test runner:
 
-- Qemu, and the qemu disk utils (see oddities for Oracle Linux info)
-- A decently beefy machine and a decent amount of time for running the VMs,
-  especially if you'll use the parallelism
-- At least 60 GiB of disk space for storing disk images
-- In order to build OL7, you'll need the `drgn` RPM stored locally. See the
-  `testing/heavyvm/images.py` configurations for the exact filenames, or you can
-  comment out the OL7 definitions and use the OL8 and OL9 VMs only (which fetch
-  the drgn RPMs from the public yum repositories).
+```sh
+python -m testing.vmcore.test -j8 -- tests/test_my_module.py
+```
 
-Test data:
+If you would like to run tests against a single vmcore and see all test output,
+the simplest way is to directly run the test runner, as seen in the next
+section.
 
-- `testdata/iso` - downoaded Oracle Linux ISO files
-- `testdata/images` - built disk images
-- `testdata/heavy-vminfo` - directory to store serial connection files
 
-Oddities:
+Test Runner
+-----------
 
-- All VMs are created with the root password "password", and they enable root
-  password login via SSH. These VMs are insecure by default, because they are
-  **only** intended to be used for the purpose of running these tests. Please
-  keep this in mind and **never** use these VMs for other purposes.
-- To run the tests on an Oracle Linux machine, you'll need to compile Qemu from
-  source, and use the `$PATH` environment variable to ensure your compiled
-  version is used ahead of the system one. The packaged version doesn't include
-  all the necessary features enabled at compile time. As far as I can tell, this
-  step is unnecessary on Ubuntu.
+Both the vm and the vmcore test runners are simply tools that end up calling the
+test runner, `testing/unittest_runner.py`. You can directly call it yourself for
+more control when running a specific test scenario. It takes arguments that
+configure what sort of target the tests run against.
 
-### Usage
+To run tests against a live kernel (with or without CTF):
 
-Prior to running any tests, you must first build the VM images. This is fully
-automated: it starts with ISO files and automatically builds from there. You
-must have an internet connection, since the installer pulls the latest packages
-from Yum. To use the image builder:
+```sh
+python -m testing.unittest_runner [--ctf]
+```
 
-    python -m testing.heavyvm.imgbuild
+To run tests against a vmcore (with or without CTF):
 
-You can customize the storage locations, and select which images are built,
-using various command line flags -- see `--help` output for more.
+```sh
+python -m testing.unittest_runner --vmcore core-name
+```
 
-Once the images are built, if you'd like to explore them, then you can boot one
-and run serial commands via the Qemu monitor. The test system avoids modifying
-the disk images by creating an "overlay" disk, so you don't need to worry about
-impacting the state of the VM for later tests.
+You can specify test files or modules as positional arguments:
 
-    python -m testing.heavyvm.qemu path/to/disk.qcow2
+```sh
+python -m testing.unittest_runner tests/test_mymodule.py
+```
 
-Finally, to run the tests within the VMs, you'll need to first create a git
-archive of the current source tree, and specify that when you run the test.
 
-    git archive HEAD -o archive.tar.gz
-    python -m testing.heavyvm.runner --tarball archive.tar.gz
+Vmcore Management
+-----------------
 
-Again, you can select which image you run tests on, as well as other options,
-accessible from the `--help` output.
+The vmcores are found in the `vmcores` test directory (see below).
+The official set of vmcores is stored in a private object storage bucket. If you
+have the pre-authenticated URL in your environment (`OCI_PAR_URL`) you can use
+the following to download (or update) them:
 
-vmcore
-------
+```sh
+python -m testing.vmcore.manage download
+```
 
-### Overview
+If you have a new vmcore, and you have a `OCI_PAR_URL` with write permissions,
+you can upload a specific core:
 
-The vmcore testing system allows you to maintain a library of vmcores for
-running tests. The vmcore library should be stored at `testdata/vmcores`. Each
-core should get a subdirectory with a descriptive name. The subdirectory name
-will serve as the identifier for the vmcore. The contents of the directory
-should be just like the following:
+```sh
+python -m testing.vmcore.manage upload [--upload-all | --upload-core NAME]
+```
 
-- `vmcore` - the ELF or makedumpfile formatted core dump
-- `vmlinux` - the debuginfo ELF file for the matching kernel version
-- `*.ko.debug` - any debuginfo for modules, which will be loaded here.
-  - If your core dump contains any "virtio" modules loaded, be sure to include
-    the virtio module debuginfo in order to run the tests.
 
-The vmcore system provides the ability to upload and download vmcores to an OCI
-object storage bucket. You can configure the location by the following
-environment variables:
+Test Directory Layout
+---------------------
 
-- `VMCORE_NAMESPACE` - this is usually the name of the tenancy where your block
-  storage bucket resides
-- `VMCORE_BUCKET` - the bucket name
-- `VMCORE_PREFIX` - the prefix (similar to a directory) where vmcores are stored
+To run the test system, we have a "test directory" that contains vmcores, root
+filesystem images, downloaded kernels and debuginfo, and all the other necessary
+components for testing. Normally it is named `testdata` in the root of the git
+repository, but this can be customized at runtime.
 
-Please note that it is not required to use the upload/download system. You can
-manage your vmcores locally without needing to use OCI object storage.
+```
+testdata/
 
-### Usage
+    # Storage of vmcores and their debuginfo for testing:
+    vmcores/
 
-Assuming you have created the necessary directories and files, you can use the
-following to run tests:
+        # Each directory is named
+        $VMCORENAME/
+            vmcore
+            UTS_RELEASE
+            vmlinux.ctfa
+            vmlinux
+            module.ko.debug
+            ...
 
-    python -m testing.vmcore.test
+    # Root filesystems for running VM & vmcore tests
+    rootfs/
+        ol8-x86_64/
+        ol9-x86_64/
+        ol10-x86_64/
 
-If you've configured OCI and your `VMCORE_*` variables, then you can use the
-uploader to upload a specific vmcore, or download all vmcores.
+    # Storage of cached data for running VM tests
+    vm/
 
-    python -m testing.vmcore.manage upload --upload-core $name
-    python -m testing.vmcore.manage downoad
+        # Each VM target has a named directory
+        ol10-uek8-x86_64/
 
-Vmcores
--------
+            rpmdb/         # cached yum database
+            kernel/        # artifacts by kernel version
+                $VERSION/
+                    kmod/  # build dir for kernel mod
+                    root/  # RPM extraction directory
 
-Generate vmcore for md helpers:
-- create 3 md devices, raid0/1/5
-- create xfs on it and mount
-- drop page caches
-- run fio script to trigger io load on them
-- trigger system crash after io load starts
+    # Test log directory
+    logs/
+        vm-test-ol10-uek8-x86_64-dwarf-python3.log
+```

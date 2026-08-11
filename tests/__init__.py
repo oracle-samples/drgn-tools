@@ -23,6 +23,7 @@ from drgn import ProgramFlags
 from drgn_tools.debuginfo import has_vmlinux_build_id_mismatch
 from drgn_tools.debuginfo import KernelVersion
 from drgn_tools.module import module_is_in_tree
+from testing.vm.config import BASE_DIR
 
 
 VMCORE: Optional[Path] = None
@@ -31,7 +32,7 @@ DEBUGINFO: List[Path] = []
 CTF = False
 CTF_FILE: Optional[str] = None
 
-CORE_DIR = Path.cwd() / "vmcores"
+CORE_DIR = BASE_DIR / "vmcores"
 KVER: Optional[KernelVersion] = None
 PROG: Optional[drgn.Program] = None
 
@@ -130,7 +131,7 @@ def configure(
     global _CONFIGURED
     global _CONFIG
 
-    core_dir = Path(vmcore_dir) if vmcore_dir else Path.cwd() / "vmcores"
+    core_dir = Path(vmcore_dir) if vmcore_dir else CORE_DIR
     config = (vmcore, str(core_dir), ctf)
     if _CONFIGURED:
         if _CONFIG != config:

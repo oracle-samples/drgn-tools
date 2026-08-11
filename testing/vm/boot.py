@@ -24,7 +24,7 @@ from typing import Tuple
 from testing.vm.config import KernelVer
 from testing.vm.config import SHARED_FS_VIRTIOFS
 from testing.vm.config import SUPPORTED_SHARED_FS
-from testing.vm.config import VmLayout
+from testing.vm.config import TestDirectories
 from testing.vm.logging import VmLogger
 
 
@@ -549,43 +549,31 @@ def _qemu_host_share_args(
 
 def run_in_vm(
     kernel: KernelVer,
-    rootfs_dir: Path,
-    layout: VmLayout,
+    layout: TestDirectories,
     repo_root: Path,
     command: List[str],
     log_path: Optional[Path],
     log: VmLogger,
-    kmod_path: Optional[Path] = None,
     shared_fs: Optional[str] = None,
 ) -> None:
     if shared_fs is None:
         shared_fs = kernel.category.shared_fs
     _validate_shared_fs(shared_fs)
 
-    extract_dir = layout.extract_path(kernel.release)
-    qemu = _find_qemu(kernel.category.arch)
+    qemu = _find_qemu(kernel.category.arch.value)
 
-    repo_root = repo_root.absolute()
-    base_dir = layout.base_dir.absolute()
-    rootfs_dir = rootfs_dir.absolute()
-    extract_dir = extract_dir.absolute()
-    if kmod_path is not None:
-        kmod_path = kmod_path.absolute()
-    shared_dir = Path(os.path.commonpath([str(repo_root), str(base_dir)]))
-
+    base_dir = layout.base_dir
+    rootfs_dir = layout.rootfs_path(kernel.category.rootfs)
+    extract_dir = layout.extract_path(kernel)
+    kmod_path = layout.kmod_path(kernel)
     if not rootfs_dir.is_dir():
         raise RuntimeError(f"Rootfs is missing: {rootfs_dir}")
-    paths = [rootfs_dir, extract_dir]
-    if kmod_path is not None:
-        paths.append(kmod_path)
-    for path in paths:
-        try:
-            path.relative_to(shared_dir)
-        except ValueError as e:
-            raise RuntimeError(
-                "Path must be inside shared repository root "
-                f"{shared_dir}: {path}"
-            ) from e
+
+    # Our hack here is that we'll launch a single shared FS at the common parent
+    # of repo_root, and the test base directory. We'll mount different subtrees
+    # differently in the VM. We know that the rootfs, extraction dir, and the
+    # kmod are all subtrees of the base_dir and thus the shared_dir.
+    shared_dir = Path(os.path.commonpath([str(repo_root), str(base_dir)]))
 
     guest_command = _create_guest_command(
         repo_root,

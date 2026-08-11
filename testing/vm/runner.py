@@ -8,17 +8,15 @@ import sys
 from pathlib import Path
 from typing import List
 
-from testing.util import BASE_DIR
 from testing.util import ci_section
 from testing.vm.artifacts import ensure_kernel
-from testing.vm.artifacts import resolve_kernel
 from testing.vm.boot import run_in_vm
 from testing.vm.config import KernelCategory
 from testing.vm.config import KernelKind
 from testing.vm.config import SHARED_FS_AUTO
 from testing.vm.config import SHARED_FS_CHOICES
 from testing.vm.config import TARGETS
-from testing.vm.config import VmLayout
+from testing.vm.config import TestDirectories
 from testing.vm.kmod import ensure_kmod
 from testing.vm.logging import default_verbose
 from testing.vm.logging import VmLogger
@@ -77,7 +75,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--base-dir",
         type=Path,
-        default=BASE_DIR,
+        default=None,
         help="Base directory for cached and generated test artifacts",
     )
     parser.add_argument(
@@ -169,7 +167,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    layout = VmLayout(args.base_dir)
+    layout = TestDirectories.create(args.base_dir)
     log = VmLogger(args.verbose, args.interactive)
 
     base_command = args.command if args.command else _default_command()
@@ -199,26 +197,19 @@ def main() -> None:
                 f"Set up rootfs, kernel RPMs, and kmod for {target.name}",
             ):
                 log.begin_target(target.name)
-                rootfs = ensure_rootfs(
-                    target,
+                ensure_rootfs(
+                    target.rootfs,
                     layout,
                     log,
                     skip_build=args.skip_rootfs_build,
                 )
-                kernel = resolve_kernel(
+                kernel = ensure_kernel(
                     target,
                     layout,
                     log,
                     skip_fetch=args.skip_rpm_fetch,
                 )
-                ensure_kernel(
-                    kernel,
-                    layout,
-                    log,
-                    skip_fetch=args.skip_rpm_fetch,
-                )
-                kmod_path = ensure_kmod(
-                    rootfs,
+                ensure_kmod(
                     kernel,
                     repo_root,
                     layout,
@@ -237,7 +228,7 @@ def main() -> None:
                         )
                         continue
                     log.begin_test(target.name, mode_name, shared_fs)
-                    log_path = layout.log_path(target.name, mode_name)
+                    log_path = layout.vm_log_path(kernel.category, mode_name)
                     run_command = _command_for_mode(
                         base_command,
                         ctf,
@@ -245,13 +236,11 @@ def main() -> None:
                     try:
                         run_in_vm(
                             kernel,
-                            rootfs,
                             layout,
                             repo_root,
                             run_command,
                             None if args.interactive else log_path,
                             log,
-                            kmod_path=kmod_path,
                             shared_fs=shared_fs,
                         )
                     except RuntimeError as e:
@@ -262,8 +251,7 @@ def main() -> None:
 
             if args.delete_after_test:
                 log.message("Deleting RPM cache and extraction directory")
-                shutil.rmtree(layout.extract_path(kernel.release))
-                shutil.rmtree(layout.yum_cache_dir / kernel.category.name)
+                shutil.rmtree(layout.target_path(target))
         except BaseException as e:
             failures.append(f"{target.name}: {e}")
             if isinstance(e, (SystemExit, KeyboardInterrupt)):

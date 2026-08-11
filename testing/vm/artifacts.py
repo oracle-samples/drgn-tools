@@ -2,203 +2,152 @@
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Kernel RPM resolution/download/extract orchestration for testing.vm."""
 import os
-import shlex
 import shutil
 import sqlite3
 import subprocess
+import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List
-from typing import Optional
 from urllib.error import HTTPError
 
 from drgn_tools.util import download_file
 from drgn_tools.util import head_file
-from testing.util import BASE_DIR
+from testing.util import builddir
+from testing.util import rmtree_siblings
+from testing.util import rmtree_siblings_matching
+from testing.vm.config import DEBUGINFO_URL
 from testing.vm.config import KernelCategory
 from testing.vm.config import KernelKind
 from testing.vm.config import KernelVer
-from testing.vm.config import VmLayout
+from testing.vm.config import OLVersion
+from testing.vm.config import TestDirectories
+from testing.vm.config import YUM_STALE_HOURS
 from testing.vm.logging import VmLogger
 
 
-UEK_YUM = (
-    "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/UEKR{uek_ver}/{arch}/"
-)
-UEKNEXT_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/developer/UEKnext/{arch}/"
-RHCK_YUM = (
-    "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/baseos/latest/{arch}/"
-)
-
-YUM_CACHE_DIR = BASE_DIR / "yumcache"
-DEBUGINFO_URL = "https://oss.oracle.com/ol{ol_ver}/debuginfo/{pkgbase}-debuginfo-{release}.rpm"
 REPODATA = "repodata/repomd.xml"
 
 
-def download_file_cached(
+def dest_path(dest: Path, url: str) -> Path:
+    return dest / url.split("/")[-1]
+
+
+def download_to_file(
     url: str,
+    dest: Path,
     quiet: bool = False,
     desc: str = "Downloading",
-    cache: Optional[Path] = None,
-    cache_key: Optional[str] = None,
-    delete_on_miss: bool = True,
 ) -> Path:
-    """
-    Download a file into the cache directory
-
-    This function is designed to work seamlessly with the Github Actions cache,
-    but would also work well with a simple cache directory with no Github
-    Actions magic. The cache has a directory structure, and each kind of file
-    gets put under a separate subdirectory. When downloading a file, we search
-    the subdirectory, and if it already exists, there is a cache hit and we can
-    skip the download. If the file does not exist, it's a cache miss and we
-    download the file. In that case, the cache contents may be stale, so we can
-    clear out the previous contents (this behavior can be skipped in case you're
-    keeping several files in the directory).
-
-    When used properly, the cache directory will speed up operation by skipping
-    downloads. And when a newer version of the downloaded resources becomes
-    available, the old resources are removed from the directory, so that the
-    size is minimized.
-
-    :param url: Url to download. The last path component is the filename
-    :param quiet: Whether to print progress
-    :param desc: Description for progress printing
-    :param cache: Location of the cache directory
-    :param cache_key: Key providing isolation within the cache. It's treated as
-      a path component, so it can have slashes which introduce subdirectories.
-    :param delete_on_miss: Whether to delete all files under the cache_key
-      during a cache miss. Set this to False if your cache_key contains multiple
-      files which will all miss in a row. Note that delete_on_miss is only
-      respected when cache_key is not None.
-    :returns: Path of the downloaded or cached file
-    """
-    if not cache:
-        cache = YUM_CACHE_DIR
-    cached_file = cached_file_path(url, cache, cache_key)
-    cached_file.parent.mkdir(exist_ok=True, parents=True)
-    if not cached_file.is_file():
-        if cache_key and delete_on_miss and cached_file.parent.is_dir():
-            shutil.rmtree(cached_file.parent)
-        cached_file.parent.mkdir(exist_ok=True, parents=True)
-        with cached_file.open("wb+") as cache_f:
-            try:
-                download_file(url, cache_f, quiet=quiet, desc=desc)
-            except BaseException:
-                # Yes, BaseException is correct. If we're interrupted for _any_
-                # reason, our cached download is invalid and must be removed.
-                cache_f.close()
-                cached_file.unlink()
-                raise
-    return cached_file
-
-
-def check_file_cached(
-    url: str, cache: Optional[Path], cache_key: Optional[str]
-) -> bool:
-    cached_file = cached_file_path(url, cache, cache_key)
-    return cached_file.is_file() or head_file(url)
-
-
-def cached_file_path(
-    url: str, cache: Optional[Path], cache_key: Optional[str]
-) -> Path:
-    if not cache:
-        cache = YUM_CACHE_DIR
-    if cache_key:
-        cache = cache / cache_key
-    return cache / url.split("/")[-1]
-
-
-def _cache_key(category: KernelCategory, kind: str) -> str:
-    return "{}/{}".format(category.name, kind)
-
-
-def _require_cached_file(
-    category: KernelCategory,
-    kind: str,
-    url: str,
-    layout: VmLayout,
-) -> Path:
-    path = cached_file_path(
-        url, layout.yum_cache_dir, _cache_key(category, kind)
-    )
-    if not path.is_file():
-        raise RuntimeError(
-            "Cached file is missing for {}: {} (disable --skip-rpm-fetch)".format(
-                category.name, path
-            )
-        )
-    return path
-
-
-def _yum_base(category: KernelCategory) -> str:
-    fmtdict = category._asdict()
-    if category.kind == KernelKind.UEKNEXT:
-        fmt = UEKNEXT_YUM
-    elif category.kind == KernelKind.RHCK:
-        fmt = RHCK_YUM
-    else:
-        fmt = UEK_YUM
-        fmtdict["uek_ver"] = category.uek_ver
-    return fmt.format_map(fmtdict)
+    dest.parent.mkdir(exist_ok=True, parents=True)
+    with dest.open("wb") as f:
+        try:
+            download_file(url, f, quiet=quiet, desc=desc)
+        except BaseException:
+            f.close()
+            dest.unlink()
+            raise
+    return dest
 
 
 def _fetch_repomd(
     category: KernelCategory,
-    layout: VmLayout,
+    dest: Path,
     skip_fetch: bool,
     verbose: bool,
 ) -> Path:
-    index_url = _yum_base(category) + REPODATA
+    index_url = category.yum_repo() + REPODATA
+    path = dest_path(dest, index_url)
+
+    # When skip_fetch is enabled: accept any repomd, no matter the staleness,
+    # and fail hard when the repomd is missing.
     if skip_fetch:
-        return _require_cached_file(category, "db", index_url, layout)
-    return download_file_cached(
-        index_url,
-        quiet=not verbose,
-        desc="Fetching index",
-        cache=layout.yum_cache_dir,
-        cache_key=_cache_key(category, "db"),
-    )
+        if path.exists():
+            return path
+        else:
+            raise RuntimeError(
+                "Cached file is missing for {}: {} (disable --skip-rpm-fetch)".format(
+                    category.name, path
+                )
+            )
+    # For normal mode, invalidate the repomd file after YUM_STALE_HOURS
+    if path.exists():
+        statbuf = path.stat()
+        if statbuf.st_mtime < time.time() - YUM_STALE_HOURS * 3600:
+            path.unlink()
+
+    if path.exists():
+        # Return the path if it exists and was not stale
+        return path
+    else:
+        # Otherwise, download it
+        return download_to_file(
+            index_url,
+            path,
+            quiet=not verbose,
+            desc="Fetching index",
+        )
 
 
 def _fetch_primary_db(
     category: KernelCategory,
-    layout: VmLayout,
+    layout: TestDirectories,
     skip_fetch: bool,
     verbose: bool,
 ) -> Path:
+    dest = layout.yum_cache_dir(category)
     repomd = ET.fromstring(
-        _fetch_repomd(category, layout, skip_fetch, verbose).read_text()
+        _fetch_repomd(category, dest, skip_fetch, verbose).read_text()
     )
     ns = "http://linux.duke.edu/metadata/repo"
     primary_db_node = repomd.findall(
         ".//{{{}}}data[@type='primary_db']/{{{}}}location".format(ns, ns)
     )[0]
-    db_url = _yum_base(category) + primary_db_node.attrib["href"]
-    if skip_fetch:
-        db_path = _require_cached_file(category, "db", db_url, layout)
+    db_url = category.yum_repo() + primary_db_node.attrib["href"]
+    download_path = dest_path(dest, db_url)
+
+    if download_path.name.endswith(".sqlite"):
+        final_path = download_path
+    elif download_path.name.endswith(".sqlite.bz2"):
+        final_path = download_path.parent / download_path.name[: -len(".bz2")]
     else:
-        db_path = download_file_cached(
-            db_url,
-            quiet=not verbose,
-            cache=layout.yum_cache_dir,
-            cache_key=_cache_key(category, "db"),
-            desc="Fetching primary_db",
-            delete_on_miss=False,
-        )
-    if db_path.name.endswith(".bz2"):
-        db_path_dec = db_path.parent / db_path.name[: -len(".bz2")]
-        if not db_path_dec.is_file():
-            if verbose:
-                print("Decompressing primary_db")
-            subprocess.run(["bunzip2", "-k", "-q", str(db_path)], check=True)
-        db_path = db_path_dec
-    return db_path
+        raise RuntimeError(f"Unrecognized RPM DB extension: {db_url}")
 
+    # If already downloaded (and extracted), return it directly
+    if final_path.exists():
+        return final_path
 
-def _version_sort_key(row: tuple) -> tuple:
-    return tuple(map(int, row[0].split(".") + row[1].split(".")[:-1]))
+    # We may need to download
+    if not download_path.exists():
+        if skip_fetch:
+            raise RuntimeError(
+                "Cached file is missing for {}: {} (disable --skip-rpm-fetch)".format(
+                    category.name, download_path
+                )
+            )
+        else:
+            download_to_file(
+                db_url,
+                download_path,
+                quiet=not verbose,
+                desc="Fetching primary_db",
+            )
+
+    # We may need to extract
+    if download_path.name.endswith(".sqlite"):
+        # No decompression necessary!
+        pass
+    elif download_path.name.endswith(".sqlite.bz2"):
+        if verbose:
+            print("Decompressing primary_db")
+        # deletes the compressed version on success
+        subprocess.run(["bunzip2", "-q", str(download_path)], check=True)
+    else:
+        assert False
+
+    # Delete any older rpmdb
+    rmtree_siblings_matching(final_path, r".*\.sqlite.*")
+    assert final_path.exists()
+    return final_path
 
 
 def _rpm_url(base_url: str, pkgbase: str, pkgname: str) -> str:
@@ -209,18 +158,16 @@ def _resolve_urls(
     category: KernelCategory,
     release: str,
     href: str,
-    layout: VmLayout,
-    skip_fetch: bool,
-) -> List[str]:
-    base_url = _yum_base(category) + href
+) -> KernelVer:
+    base_url = category.yum_repo() + href
     urls = []
     for pkg in category.rpms():
         if (
             pkg.startswith("kernel-devel")
             and category.kind == KernelKind.RHCK
-            and category.ol_ver >= 9
+            and category.ol_ver.value >= OLVersion.OL9.value
         ):
-            # RHCK put kernel-devel in appstream from OL9
+            # RHCK put kernel-devel in appstream starting with OL9
             urls.append(
                 _rpm_url(
                     base_url.replace("baseos/latest", "appstream"),
@@ -236,33 +183,133 @@ def _resolve_urls(
         pkgbase=category.rpmbase,
     )
     urls.append(dbinfo_url)
-
-    if skip_fetch:
-        # In skip_fetch mode, verify the files are downloaded
-        for url in urls:
-            _require_cached_file(category, "rpm", url, layout)
-    else:
-        # Otherwise, ensure that the files are either downloaded or
-        # at least present on the repo. If not present, we can fall back to an
-        # older version according to palicy.
-        key = _cache_key(category, "rpm")
-        for url in urls:
-            if not (
-                check_file_cached(url, layout.yum_cache_dir, key)
-                or head_file(url)
-            ):
-                return []
-    return urls
+    return KernelVer(category, release, urls)
 
 
-def resolve_kernel(
+def _kernel_version_present(ver: KernelVer, layout: TestDirectories) -> bool:
+    extract_path = layout.extract_path(ver)
+    libmod = extract_path / f"lib/modules/{ver.release}"
+    debugmod = extract_path / f"usr/lib/debug/lib/modules/{ver.release}"
+    mod_dep = extract_path / f"lib/modules/{ver.release}/modules.dep"
+    return (
+        extract_path.is_dir()
+        and libmod.is_dir()
+        and debugmod.is_dir()
+        and mod_dep.is_file()
+    )
+
+
+def _all_rpms_available(
+    ver: KernelVer, layout: TestDirectories, skip_fetch: bool = False
+) -> bool:
+    rpm_path = layout.rpm_path(ver)
+    for url in ver.urls:
+        dest = dest_path(rpm_path, url)
+        if dest.exists():
+            continue
+        if not skip_fetch and head_file(url):
+            continue
+        return False
+    return True
+
+
+def _version_sort_key(row: tuple) -> tuple:
+    return tuple(map(int, row[0].split(".") + row[1].split(".")[:-1]))
+
+
+def _extract_rpm(rpm_path: Path, dest: Path) -> None:
+    with subprocess.Popen(
+        ["rpm2cpio", str(rpm_path)], shell=False, stdout=subprocess.PIPE
+    ) as proc:
+        subprocess.run(
+            ["cpio", "-id", "-D", str(dest), "--quiet"],
+            stdin=proc.stdout,
+            shell=False,
+            check=True,
+        )
+        proc.stdout.close()  # type: ignore[union-attr]  # stdout is piped
+        if proc.wait() != 0:
+            raise subprocess.CalledProcessError(proc.returncode, proc.args)
+
+
+def _download_extract_rpms(
+    kernel: KernelVer,
+    layout: TestDirectories,
+    skip_fetch: bool,
+    log: VmLogger,
+) -> KernelVer:
+    # The per-kernel path contains the temporary rpm directory and the
+    # extraction dir. EG:
+    # testdata/vm/ol10-uek8-x86_64/kernel/$release/
+    #  -> rpms/$foo.rpm
+    #  -> root/...
+    kernel_path = layout.kernel_path(kernel)
+    rpm_dir = layout.rpm_path(kernel)
+    paths = []
+    try:
+        for i, url in enumerate(kernel.urls):
+            dest = dest_path(rpm_dir, url)
+            if dest.exists():
+                paths.append(dest)
+                continue
+            # _all_rpms_available() should prevent this, but check it anyway
+            assert not skip_fetch
+            desc = (
+                "Debuginfo RPM"
+                if i == len(kernel.urls) - 1
+                else "RPM {}/{}".format(i + 1, len(kernel.urls) - 1)
+            )
+            path = download_to_file(
+                url,
+                dest,
+                quiet=not log.verbose,
+                desc=desc,
+            )
+            paths.append(path)
+    except HTTPError as e:
+        raise RuntimeError(
+            "HTTP error {} {} encountered while fetching URL:\n{}".format(
+                e.code, e.reason, e.url
+            )
+        )
+
+    final_out_dir = layout.extract_path(kernel)
+    if final_out_dir.exists():
+        shutil.rmtree(final_out_dir)
+
+    out_dir = builddir(final_out_dir)
+    try:
+        for path in paths:
+            _extract_rpm(path, out_dir)
+        subprocess.run(
+            ["depmod", "-b", str(out_dir), kernel.release],
+            shell=False,
+            check=True,
+        )
+    except BaseException:
+        # Cleanup all extraction data (but leave the RPMs in case of a later
+        # try) on any error.
+        shutil.rmtree(str(out_dir))
+        raise
+    os.rename(out_dir, final_out_dir)
+
+    # On successful extraction, we do not need to keep the RPMs we downloaded.
+    shutil.rmtree(rpm_dir)
+    # Similarly, we can now clear out any prior kernels we had downloaded and
+    # extracted.
+    rmtree_siblings(kernel_path)
+    return kernel
+
+
+def ensure_kernel(
     category: KernelCategory,
-    paths: VmLayout,
+    paths: TestDirectories,
     log: VmLogger,
     skip_fetch: bool = False,
 ) -> KernelVer:
     """
-    Given a kernel category, determine the latest available version
+    Given a kernel category, ensure the latest RPMs are downloaded & extracted
+    in the testdata directory.
 
     :param category: OL + UEK version to download
     :param paths: pointer to data directory
@@ -277,7 +324,7 @@ def resolve_kernel(
         SELECT version, release, location_href FROM packages
         WHERE name=? AND arch=?;
         """,
-        (category.rpmbase, category.arch),
+        (category.rpmbase, category.arch.value),
     ).fetchall()
     conn.close()
 
@@ -288,9 +335,17 @@ def resolve_kernel(
     versions_tried = []
     for ver, rel, href in rows[:5]:
         release = "{}-{}.{}".format(ver, rel, category.arch)
-        urls = _resolve_urls(category, release, href, paths, skip_fetch)
-        if urls:
-            return KernelVer(category, release, urls)
+        kver = _resolve_urls(category, release, href)
+
+        # Short circuit for a common case: the kernel RPMs were already
+        # downloaded and extracted to their expected directory.
+        if _kernel_version_present(kver, paths):
+            return kver
+
+        # We do not cache RPMs, so if it is not extracted, there's nothing to do
+        # in skip_fetch mode. For normal mode, check the latest version.
+        if _all_rpms_available(kver, paths, skip_fetch):
+            return _download_extract_rpms(kver, paths, skip_fetch, log)
         if allow_missing:
             versions_tried.append(release)
             if log.verbose:
@@ -299,114 +354,14 @@ def resolve_kernel(
                         release
                     )
                 )
-            continue
-        raise RuntimeError(
-            "Required RPMs were unavailable for {} ({})".format(
-                category.name, release
+        else:
+            raise RuntimeError(
+                "Required RPMs were unavailable for {} ({})".format(
+                    category.name, release
+                )
             )
-        )
     raise RuntimeError(
         "No release had all files available. Tried: {}".format(
             ", ".join(versions_tried)
         )
     )
-
-
-def _download_kernel_rpms(
-    kernel: KernelVer,
-    layout: VmLayout,
-    log: VmLogger,
-) -> List[Path]:
-    paths = []
-    try:
-        for i, url in enumerate(kernel.urls):
-            desc = (
-                "Debuginfo RPM"
-                if i == len(kernel.urls) - 1
-                else "RPM {}/{}".format(i + 1, len(kernel.urls) - 1)
-            )
-            path = download_file_cached(
-                url,
-                quiet=not log.verbose,
-                desc=desc,
-                cache=layout.yum_cache_dir,
-                cache_key=_cache_key(kernel.category, "rpm"),
-                delete_on_miss=(i == 0),
-            )
-            paths.append(path)
-    except HTTPError as e:
-        raise RuntimeError(
-            "HTTP error {} {} encountered while fetching URL:\n{}".format(
-                e.code, e.reason, e.url
-            )
-        )
-    return paths
-
-
-def _cached_kernel_rpms(kernel: KernelVer, layout: VmLayout) -> List[Path]:
-    return [
-        _require_cached_file(kernel.category, "rpm", url, layout)
-        for url in kernel.urls
-    ]
-
-
-def _extract_rpms(paths: List[Path], kernel: KernelVer, out_dir: Path) -> None:
-    out_dir.mkdir(parents=True, exist_ok=False)
-    try:
-        out_dir_str = shlex.quote(str(out_dir))
-        for path in paths:
-            path_str = shlex.quote(str(path))
-            subprocess.run(
-                "rpm2cpio {} | cpio -id -D {} --quiet".format(
-                    path_str, out_dir_str
-                ),
-                shell=True,
-                check=True,
-            )
-        subprocess.run(
-            ["depmod", "-b", str(out_dir), kernel.release],
-            shell=False,
-            check=True,
-        )
-    except BaseException:
-        shutil.rmtree(str(out_dir))
-        raise
-
-
-def ensure_kernel(
-    kernel: KernelVer,
-    layout: VmLayout,
-    log: VmLogger,
-    skip_fetch: bool = False,
-) -> Path:
-    """
-    Given a kernel version, ensure it's downloaded and extracted
-    """
-    out_dir = layout.extract_path(kernel.release)
-    if out_dir.is_dir():
-        log.already_done("Fetch & Extract Kernel RPMs", out_dir)
-        return out_dir
-    log.working("Fetch & Extract Kernel RPMs", out_dir)
-
-    if skip_fetch:
-        rpm_paths = _cached_kernel_rpms(kernel, layout)
-    else:
-        rpm_paths = _download_kernel_rpms(kernel, layout, log)
-
-    building_dir = layout.extract_dir / "{}.building".format(kernel.release)
-    if building_dir.exists():
-        if building_dir.is_dir():
-            shutil.rmtree(str(building_dir))
-        else:
-            building_dir.unlink()
-
-    layout.extract_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        _extract_rpms(rpm_paths, kernel, building_dir)
-        os.rename(str(building_dir), str(out_dir))
-    except BaseException:
-        if building_dir.exists():
-            shutil.rmtree(str(building_dir))
-        raise
-    log.done("Fetch & Extract Kernel RPMs", out_dir)
-    return out_dir

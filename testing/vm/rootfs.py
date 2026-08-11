@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """Rootfs build and validation for testing.vm."""
+import argparse
 import contextlib
 import inspect
 import os
@@ -8,8 +9,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from testing.vm.config import KernelCategory
-from testing.vm.config import VmLayout
+from testing.util import builddir
+from testing.vm.config import APPSTREAM_PYTHONS
+from testing.vm.config import Architecture
+from testing.vm.config import OLVersion
+from testing.vm.config import Rootfs
+from testing.vm.config import TestDirectories
 from testing.vm.logging import VmLogger
 
 
@@ -28,7 +33,7 @@ def _validate_rootfs(path: Path) -> None:
 
 
 def _build_rootfs(
-    ol_ver: int,
+    rootfs: Rootfs,
     build_dir: Path,
     output_log: Path,
     log: VmLogger,
@@ -56,9 +61,11 @@ def _build_rootfs(
         # Following commands are not strictly necessary, but make it far easier
         # to install custom packages into the rootfs ad-hoc.
         "dnf",
-        f"oraclelinux-release-el{ol_ver}",
+        f"oraclelinux-release-el{rootfs.ol_ver}",
     ]
-    if ol_ver == 8:
+    for pyver in APPSTREAM_PYTHONS[rootfs.ol_ver]:
+        rpm_list.append(f"{pyver.value}-drgn")
+    if rootfs.ol_ver == OLVersion.OL8:
         rpm_list.extend(
             [
                 # For UEK7 module build
@@ -66,11 +73,9 @@ def _build_rootfs(
                 "gcc-toolset-11-binutils-devel",
                 # For RHCK module build (ORC generation)
                 "elfutils-libelf-devel",
-                # For appstream pythons:
-                "python3.12-drgn",
             ]
         )
-    elif ol_ver == 9:
+    elif rootfs.ol_ver == OLVersion.OL9:
         rpm_list.extend(
             [
                 # Required since OL9, fio engine
@@ -78,33 +83,28 @@ def _build_rootfs(
                 # For UEK8 module build
                 "gcc-toolset-14-gcc",
                 "gcc-toolset-14-binutils-devel",
-                # For appstream pythons:
-                "python3.12-drgn",
-                # TODO: python3.14-drgn is still pending
-                # "python3.14-drgn",
             ]
         )
-    elif ol_ver == 10:
+    elif rootfs.ol_ver == OLVersion.OL10:
         rpm_list.extend(
             [
                 # Required since OL9, fio engine
                 "fio-engine-libaio",
-                # For appstream pythons:
-                # TODO: python3.14-drgn is still pending
-                # "python3.14-drgn",
             ]
         )
     else:
-        raise ValueError(f"Invalid ol_ver={ol_ver}, we support 8, 9, 10")
+        raise ValueError(
+            f"Invalid ol_ver={rootfs.ol_ver}, we support 8, 9, 10"
+        )
     rpms = " ".join(rpm_list)
     install_cmd = inspect.cleandoc(
         f"""
         set -euo pipefail
-        dnf -y --releasever={ol_ver} --installroot=/rootfs \\
+        dnf -y --releasever={rootfs.ol_ver} --installroot=/rootfs \\
                --setopt=install_weak_deps=False \\
                --setopt=tsflags=nodocs \\
-               --enablerepo=ol{ol_ver}_addons \\
-               --enablerepo=ol{ol_ver}_codeready_builder \\
+               --enablerepo=ol{rootfs.ol_ver}_addons \\
+               --enablerepo=ol{rootfs.ol_ver}_codeready_builder \\
                --refresh \\
                install {rpms}
         dnf -y --installroot=/rootfs clean all;
@@ -118,7 +118,7 @@ def _build_rootfs(
         "--rm",
         "--mount",
         f"type=bind,src={build_dir},dst=/rootfs,relabel=private",
-        f"oraclelinux:{ol_ver}",
+        f"oraclelinux:{rootfs.ol_ver}",
         "bash",
         "-lc",
         install_cmd,
@@ -152,14 +152,12 @@ def _rmtree_rootfs(path: Path) -> None:
 
 
 def ensure_rootfs(
-    category: KernelCategory,
-    layout: VmLayout,
+    rootfs: Rootfs,
+    layout: TestDirectories,
     log: VmLogger,
     skip_build: bool = False,
 ) -> Path:
-    layout.rootfs_dir.mkdir(parents=True, exist_ok=True)
-
-    final_dir = layout.rootfs_path(category.ol_ver)
+    final_dir = layout.rootfs_path(rootfs)
     if final_dir.is_dir():
         _validate_rootfs(final_dir)
         log.already_done("build rootfs", final_dir)
@@ -171,15 +169,13 @@ def ensure_rootfs(
         )
     log.working("build rootfs", final_dir)
 
-    building_dir = layout.rootfs_dir / f"ol{category.ol_ver}.building"
-    if building_dir.exists():
-        _rmtree_rootfs(building_dir)
+    building_dir = builddir(final_dir, rmtree=_rmtree_rootfs)
 
     try:
         _build_rootfs(
-            category.ol_ver,
+            rootfs,
             building_dir,
-            layout.logs_dir / "rootfs" / f"ol{category.ol_ver}.log",
+            layout.logs_dir / f"rootfs-build-{rootfs.name}.log",
             log,
         )
         _validate_rootfs(building_dir)
@@ -190,3 +186,45 @@ def ensure_rootfs(
 
     log.done("build rootfs", final_dir)
     return final_dir
+
+
+def build_rootfses():
+    supported_ol_vers = [v.value for v in OLVersion if v.value > 7]
+    parser = argparse.ArgumentParser(description="rootfs builder")
+    parser.add_argument(
+        "--base-dir",
+        type=Path,
+        help="Test data base directory",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print detailed progress",
+    )
+    parser.add_argument(
+        "--rebuild",
+        help="Delete old rootfs and rebuild",
+        action="store_true",
+    )
+    parser.add_argument(
+        "versions",
+        nargs="*",
+        type=int,
+        choices=supported_ol_vers,
+        help=f"OL rootfs version to build (default: {' '.join(map(str, supported_ol_vers))})",
+    )
+    args = parser.parse_args()
+    layout = TestDirectories.create(base_dir=args.base_dir)
+    log = VmLogger(args.verbose, False)
+    versions = args.versions or supported_ol_vers
+    for version in versions:
+        rootfs = Rootfs(OLVersion(version), Architecture.host_arch())
+        dir_ = layout.rootfs_path(rootfs)
+        if args.rebuild and dir_.exists():
+            _rmtree_rootfs(dir_)
+        ensure_rootfs(rootfs, layout, log)
+
+
+if __name__ == "__main__":
+    build_rootfses()
