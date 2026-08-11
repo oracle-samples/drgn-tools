@@ -333,6 +333,7 @@ def _create_initrd(
     pre_chroot_setup: str,
     guest_command: str,
     shared_fs: str,
+    out_path: Path,
 ) -> Path:
     _require_tool("cpio")
     _require_tool("gzip")
@@ -376,10 +377,6 @@ def _create_initrd(
         )
         init.chmod(0o755)
 
-        out_path = (
-            extract_dir / "boot" / f"drgn-tools-initramfs-{kernel.release}.img"
-        )
-        out_path.parent.mkdir(parents=True, exist_ok=True)
         with out_path.open("wb") as f:
             subprocess.run(
                 "find . -print0 "
@@ -574,31 +571,32 @@ def run_in_vm(
         kmod_path,
         shared_dir,
     )
-    initrd = _create_initrd(
-        kernel,
-        extract_dir,
-        rootfs_dir,
-        shared_dir,
-        pre_chroot_setup,
-        guest_command,
-        shared_fs,
-    )
-    vmlinuz = _find_vmlinuz(kernel.release, extract_dir)
-
-    if log_path is not None:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-
     with contextlib.ExitStack() as stack:
+        tempdir = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        initrd = _create_initrd(
+            kernel,
+            extract_dir,
+            rootfs_dir,
+            shared_dir,
+            pre_chroot_setup,
+            guest_command,
+            shared_fs,
+            tempdir / "initrd",
+        )
+        vmlinuz = _find_vmlinuz(kernel.release, extract_dir)
+
+        if log_path is not None:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+
         block_img = stack.enter_context(_create_ext4_block_image())
         scsi_img = stack.enter_context(_create_ext4_block_image())
         nvme_img = stack.enter_context(_create_block_image())
-        tempdir = stack.enter_context(tempfile.TemporaryDirectory())
         stdin = None
         if log_path is not None:
             stdin = subprocess.DEVNULL
         sock: Optional[Path] = None
         if shared_fs == SHARED_FS_VIRTIOFS:
-            sock = Path(tempdir) / "virtiofs.sock"
+            sock = tempdir / "virtiofs.sock"
             stack.enter_context(_start_virtiofsd(sock, shared_dir))
         args = [qemu]
         if os.access("/dev/kvm", os.R_OK | os.W_OK):
