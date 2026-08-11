@@ -138,6 +138,34 @@ python -m testing.unittest_runner tests/test_mymodule.py
 ```
 
 
+Rootfs Management
+-----------------
+
+The rootfs contains a userspace environment for a specific Oracle Linux version.
+It is typically built automatically by the `vm` test runner prior to a test.
+However you can manually build/rebuild it, which is useful to test against
+specific RPMs (e.g. unreleased drgn versions). You can also launch a shell
+within the rootfs, which can be useful for testing and development.
+
+To build (or rebuild) all rootfses:
+
+```sh
+python -m testing.rootfs [--rebuild] [8 9 10]
+```
+
+The rebuild flag will cause already existing rootfses to be rebuilt. By default
+all rootfses are rebuilt but specific OL versions can be specified on the CLI.
+
+To run a command within the rootfs:
+
+```sh
+python -m testing.chroot testdata/rootfs/ol8-x86_64 -- bash -l
+```
+
+Though `bash -l` is a good command for an interactive session, any command can
+be used (e.g. a drgn command).
+
+
 Vmcore Management
 -----------------
 
