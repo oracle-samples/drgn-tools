@@ -12,33 +12,47 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
-from tempfile import NamedTemporaryFile
-from tempfile import TemporaryDirectory
 from typing import List
+from typing import NamedTuple
 from typing import Optional
-from typing import Tuple
 
 from drgn_tools.debuginfo import CtfCompatibility
 from drgn_tools.debuginfo import KernelVersion
 from testing.chroot import BindMount
 from testing.chroot import run_in_rootfs
 from testing.config import Architecture
+from testing.config import Debuginfo
 from testing.config import OLVersion
+from testing.config import PythonVer
 from testing.config import Rootfs
 from testing.config import TestDirectories
 from testing.util import combine_junit_xml
 
 
+class TestParam(NamedTuple):
+    core_name: str
+    rootfs: Optional[Rootfs]
+    mode: Debuginfo
+    python: PythonVer
+
+
+class TestResult(NamedTuple):
+    param: TestParam
+    success: bool
+    junitxml: ET.ElementTree
+
+
 def _test_in_host(
     layout: TestDirectories,
-    core_name: str,
+    param: TestParam,
     test_cmd: List[str],
-    ol_ver: int,
-) -> Tuple[str, bool, ET.ElementTree]:
-    # Runs the test silently, but prints the stdout/stderr on failure.
-    with NamedTemporaryFile("w+t") as f, TemporaryDirectory() as td:
-        print(f"Begin testing {core_name}")
-        xml = Path(td) / f"vmcore-{core_name}.xml"
+) -> TestResult:
+    testlog = layout.vmcore_log_path(
+        param.core_name, param.mode.value, "hostfs", param.python.value
+    )
+    xml = testlog.parent / testlog.name.replace(".log", ".xml")
+    with testlog.open("wt") as f:
+        print(f"Begin testing {param.core_name}")
         test_cmd.extend(
             [
                 f"--vmcore-dir={str(layout.vmcore_dir)}",
@@ -48,59 +62,69 @@ def _test_in_host(
         start = time.time()
         res = subprocess.run(test_cmd, stdout=f, stderr=f)
         if res.returncode != 0:
-            print(f"=== FAILURE: {core_name} ===")
+            print(f"=== FAILURE: {param.core_name} ===")
             f.seek(0)
             sys.stdout.write(f.read())
         runtime = time.time() - start
-        print(f"Completed testing {core_name} in {runtime:.1f}")
+        print(f"Completed testing {param.core_name} in {runtime:.1f}")
         run_data = ET.parse(xml)
-    return (core_name, res.returncode == 0, run_data)
+    return TestResult(param, res.returncode == 0, run_data)
 
 
 def _test_in_rootfs(
-    layout: TestDirectories, core_name: str, test_cmd: List[str], ol_ver: int
-) -> Tuple[str, bool, ET.ElementTree]:
-    # Runs the test silently
-    with TemporaryDirectory() as td:
-        print(f"Begin testing {core_name} in OL{ol_ver} rootfs")
-        xml = Path(td) / f"vmcore-{core_name}.xml"
-        output = Path(td) / "output.txt"
-        code_dir = Path(__file__).parent.parent.parent
-        mounts = [
-            BindMount(layout.vmcore_dir, "/vmcores", True),
-            BindMount(xml.parent, "/output", False),
-            BindMount(code_dir, "/code", True),
+    layout: TestDirectories,
+    param: TestParam,
+    test_cmd: List[str],
+) -> TestResult:
+    r: Rootfs = param.rootfs  # type: ignore[assignment]  # rootfs is present
+    testlog = layout.vmcore_log_path(
+        param.core_name,
+        param.mode.value,
+        r.name,
+        param.python.value,
+    )
+    xml = testlog.parent / testlog.name.replace(".log", ".xml")
+    print(f"Begin testing {param.core_name} in {r}")
+    code_dir = Path(__file__).parent.parent.parent
+    mounts = [
+        BindMount(layout.vmcore_dir, "/vmcores", True),
+        BindMount(layout.logs_dir, "/output", False),
+        BindMount(code_dir, "/code", True),
+    ]
+    test_cmd.extend(
+        [
+            "--vmcore-dir=/vmcores",
+            f"--junitxml=/output/{xml.name}",
         ]
-        test_cmd.extend(
-            [
-                "--vmcore-dir=/vmcores",
-                f"--junitxml=/output/{xml.name}",
-            ]
+    )
+    start = time.time()
+    rootfs = layout.rootfs_path(r)
+    with testlog.open("w") as f:
+        res = run_in_rootfs(
+            rootfs,
+            test_cmd,
+            mounts,
+            cwd="/code",
+            stdout=f,
+            stderr=f,
         )
-        start = time.time()
-        rootfs = layout.rootfs_path(
-            Rootfs(OLVersion(ol_ver), Architecture.host_arch())
-        )
-        with output.open("w") as f:
-            res = run_in_rootfs(
-                rootfs,
-                test_cmd,
-                mounts,
-                cwd="/code",
-                stdout=f,
-                stderr=f,
-            )
-        runtime = time.time() - start
-        if res.returncode != 0:
-            print(f"=== FAILURE: {core_name} ===")
-            sys.stdout.buffer.write(output.read_bytes())
-        print(f"Completed testing {core_name} in {runtime:.1f}")
-        run_data = ET.parse(xml)
-    return (core_name, res.returncode == 0, run_data)
+    runtime = time.time() - start
+    if res.returncode != 0:
+        print(f"=== FAILURE: {param.core_name} ===")
+        sys.stdout.buffer.write(testlog.read_bytes())
+    print(f"Completed testing {param.core_name} in {runtime:.1f}")
+    run_data = ET.parse(xml)
+    return TestResult(param, res.returncode == 0, run_data)
 
 
-def _skip_ctf(ctf: bool, uname: str, host_ol: int) -> bool:
-    if ctf:
+def _skip_ctf(
+    mode: Debuginfo, uname: str, host_ol: int, rootfs: Optional[Rootfs]
+) -> bool:
+    # Skip CTF mode based on the CTF compatibility where the tests are run. If
+    # it's within the rootfs, use that ol version instead.
+    if rootfs:
+        host_ol = rootfs.ol_ver.value
+    if mode == Debuginfo.CTF:
         kver = KernelVersion.parse(uname)
         compat = CtfCompatibility.get(kver, host_ol)
         # Skip test when CTF is fully unsupported, or when it would require a
@@ -133,10 +157,10 @@ def host_ol_ver() -> int:
 def test(
     layout: TestDirectories,
     vmcore_list: List[str],
-    ctf: bool = False,
+    modes: List[Debuginfo],
+    python: PythonVer,
     parallel: int = 1,
-    ol_ver: Optional[int] = None,
-    python: Optional[str] = None,
+    ol_ver: Optional[OLVersion] = None,
     test_args: Optional[List[str]] = None,
 ) -> None:
     def should_run_vmcore(name: str) -> bool:
@@ -151,11 +175,13 @@ def test(
     passed = []
     skipped = []
     xml = None
+    host_ol = host_ol_ver()
     if ol_ver is None:
         test_fn = _test_in_host
-        ol_ver = host_ol_ver()
+        rootfs = None
     else:
         test_fn = _test_in_rootfs
+        rootfs = Rootfs(ol_ver, Architecture.host_arch())
 
     if python is None:
         python = sys.executable if ol_ver is None else "python3"
@@ -170,45 +196,45 @@ def test(
             core_name = path.name
             if not should_run_vmcore(core_name):
                 continue
-            uname = (path / "UTS_RELEASE").read_text().strip()
-            if _skip_ctf(ctf, uname, ol_ver):
-                skipped.append(core_name)
-                continue
-            cmd = [
-                python,
-                "-m",
-                "testing.unittest_runner",
-                f"--vmcore={core_name}",
-                *test_args,
-            ]
-            if ctf:
-                if not (path / "vmlinux.ctfa").is_file():
-                    skipped.append(core_name)
+            for mode in modes:
+                param = TestParam(core_name, rootfs, mode, python)
+                uname = (path / "UTS_RELEASE").read_text().strip()
+                if _skip_ctf(mode, uname, host_ol, rootfs):
+                    skipped.append(param)
                     continue
-                cmd.append("--ctf")
-            futures.append(
-                pool.submit(test_fn, layout, core_name, cmd, ol_ver)
-            )
+                cmd = [
+                    python.value,
+                    "-m",
+                    "testing.unittest_runner",
+                    f"--vmcore={core_name}",
+                    *test_args,
+                ]
+                if mode == Debuginfo.CTF:
+                    if not (path / "vmlinux.ctfa").is_file():
+                        skipped.append(param)
+                        continue
+                    cmd.append("--ctf")
+                futures.append(pool.submit(test_fn, layout, param, cmd))
 
         for future in futures:
-            core_name, test_passed, run_data = future.result()
+            param, test_passed, run_data = future.result()
             xml = combine_junit_xml(xml, run_data)
             if test_passed:
-                passed.append(core_name)
+                passed.append(param)
             else:
-                failed.append(core_name)
+                failed.append(param)
 
     if xml is not None:
         xml.write("vmcore.xml")
     print("Complete test logs: vmcore.xml")
     print("Vmcore Test Summary -- Passed:")
-    print("\n".join(f"- {n}" for n in passed))
+    print("\n".join(f"- {p.core_name} ({p.mode})" for p in passed))
     if skipped:
         print("Vmcore Test Summary -- Skipped (missing CTF):")
-        print("\n".join(f"- {n}" for n in skipped))
+        print("\n".join(f"- {p.core_name} ({p.mode})" for p in skipped))
     if failed:
         print("Vmcore Test Summary -- FAILED:")
-        print("\n".join(f"- {n}" for n in failed))
+        print("\n".join(f"- {p.core_name} ({p.mode})" for p in failed))
         sys.exit(1)
 
 
@@ -223,20 +249,6 @@ def main():
         "--base-directory", type=Path, help="testdata base directory"
     )
     parser.add_argument(
-        "--vmcore",
-        action="append",
-        default=[],
-        help="only run tests on the given vmcore(s). you can use this "
-        "multiple times to specify multiple vmcore names. You can also "
-        "use fnmmatch patterns to specify several cores at once.",
-    )
-    parser.add_argument(
-        "--ctf",
-        action="store_true",
-        help="Use CTF debuginfo for tests rather than DWARF (skips vmcores "
-        "without a vmlinux.ctfa file)",
-    )
-    parser.add_argument(
         "--parallel",
         "-j",
         type=int,
@@ -244,15 +256,37 @@ def main():
         help="Run the tests in parallel with the given number of threads",
     )
     parser.add_argument(
+        "--vmcore",
+        "-c",
+        action="append",
+        default=[],
+        help="only run tests on the given vmcore(s). you can use this "
+        "multiple times to specify multiple vmcore names. You can also "
+        "use fnmmatch patterns to specify several cores at once.",
+    )
+    parser.add_argument(
+        "--no-ctf",
+        dest="ctf",
+        action="store_false",
+        help="Do not run tests with CTF",
+    )
+    parser.add_argument(
+        "--no-dwarf",
+        dest="dwarf",
+        action="store_false",
+        help="Do not run tests with DWARF",
+    )
+    parser.add_argument(
         "--ol",
-        choices=[8, 9, 10],
-        type=int,
+        choices=[OLVersion.OL8, OLVersion.OL9, OLVersion.OL10],
+        type=lambda s: OLVersion(int(s)),
         default=None,
         help="Run the tests within the Oracle Linux (already built) rootfs",
     )
     parser.add_argument(
         "--python",
-        default=None,
+        default=PythonVer.SYSTEM,
+        type=PythonVer,
         help="Run the tests with the given python binary name",
     )
     parser.add_argument(
@@ -263,13 +297,19 @@ def main():
     )
     args = parser.parse_args()
     layout = TestDirectories.create(args.base_directory, args.core_directory)
+    layout.logs_dir.mkdir(exist_ok=True, parents=True)
+    modes = []
+    if args.ctf:
+        modes.append(Debuginfo.CTF)
+    if args.dwarf:
+        modes.append(Debuginfo.DWARF)
     test(
         layout,
         args.vmcore,
-        ctf=args.ctf,
+        modes,
+        args.python,
         parallel=args.parallel,
         ol_ver=args.ol,
-        python=args.python,
         test_args=args.args,
     )
 

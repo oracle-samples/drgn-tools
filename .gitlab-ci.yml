@@ -1,16 +1,6 @@
-vmcore DWARF:
+vmcore:
   script:
-    - python -m testing.vmcore.runner -j 4 --core-directory /var/drgn-tools/vmcores
-  artifacts:
-    when: always
-    paths:
-      - vmcore.xml
-    reports:
-      junit: vmcore.xml
-
-vmcore CTF:
-  script:
-    - python -m testing.vmcore.runner -j 4 --ctf --core-directory /var/drgn-tools/vmcores
+    - python -m testing.vmcore.runner -j 8
   artifacts:
     when: always
     paths:

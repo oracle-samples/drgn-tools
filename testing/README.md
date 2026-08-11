@@ -75,13 +75,10 @@ specific test command (see below).
 Running Vmcore Tests
 --------------------
 
-To run all vmcore tests:
+To run all vmcore tests (with both CTF & DWARF debuginfo):
 
 ```sh
-# DWARF debuginfo
 python -m testing.vmcore.runner [-j PROCESSES]
-# CTF debuginfo
-python -m testing.vmcore.runner --ctf [-j PROCESSES]
 ```
 
 This runs tests against all vmcores in the test directory (see "Test Directory
@@ -230,4 +227,5 @@ testdata/
     # Test log directory
     logs/
         vm-test-ol10-uek8-x86_64-dwarf-python3.log
+        vmcore-NAME-dwarf-hostfs-python3.log
 ```
