@@ -53,7 +53,7 @@ def _fetch_repomd(
     category: KernelCategory,
     dest: Path,
     skip_fetch: bool,
-    verbose: bool,
+    log: VmLogger,
 ) -> Path:
     index_url = category.yum_repo() + REPODATA
     path = dest_path(dest, index_url)
@@ -80,10 +80,11 @@ def _fetch_repomd(
         return path
     else:
         # Otherwise, download it
+        log.working("Fetching yum index", path.parent)
         return download_to_file(
             index_url,
             path,
-            quiet=not verbose,
+            quiet=not log.verbose,
             desc="Fetching index",
         )
 
@@ -92,11 +93,11 @@ def _fetch_primary_db(
     category: KernelCategory,
     layout: TestDirectories,
     skip_fetch: bool,
-    verbose: bool,
+    log: VmLogger,
 ) -> Path:
     dest = layout.yum_cache_dir(category)
     repomd = ET.fromstring(
-        _fetch_repomd(category, dest, skip_fetch, verbose).read_text()
+        _fetch_repomd(category, dest, skip_fetch, log).read_text()
     )
     ns = "http://linux.duke.edu/metadata/repo"
     primary_db_node = repomd.findall(
@@ -114,6 +115,7 @@ def _fetch_primary_db(
 
     # If already downloaded (and extracted), return it directly
     if final_path.exists():
+        log.already_done("Fetching yum index", final_path.parent)
         return final_path
 
     # We may need to download
@@ -128,7 +130,7 @@ def _fetch_primary_db(
             download_to_file(
                 db_url,
                 download_path,
-                quiet=not verbose,
+                quiet=not log.verbose,
                 desc="Fetching primary_db",
             )
 
@@ -137,8 +139,6 @@ def _fetch_primary_db(
         # No decompression necessary!
         pass
     elif download_path.name.endswith(".sqlite.bz2"):
-        if verbose:
-            print("Decompressing primary_db")
         # deletes the compressed version on success
         subprocess.run(["bunzip2", "-q", str(download_path)], check=True)
     else:
@@ -147,6 +147,7 @@ def _fetch_primary_db(
     # Delete any older rpmdb
     rmtree_siblings_matching(final_path, r".*\.sqlite.*")
     assert final_path.exists()
+    log.done("Fetching yum index", final_path.parent)
     return final_path
 
 
@@ -200,7 +201,7 @@ def _kernel_version_present(ver: KernelVer, layout: TestDirectories) -> bool:
 
 
 def _all_rpms_available(
-    ver: KernelVer, layout: TestDirectories, skip_fetch: bool = False
+    ver: KernelVer, layout: TestDirectories, log: VmLogger, skip_fetch: bool
 ) -> bool:
     rpm_path = layout.rpm_path(ver)
     for url in ver.urls:
@@ -209,6 +210,7 @@ def _all_rpms_available(
             continue
         if not skip_fetch and head_file(url):
             continue
+        log.message(f"Missing RPM: {dest.name} {url}")
         return False
     return True
 
@@ -246,6 +248,7 @@ def _download_extract_rpms(
     kernel_path = layout.kernel_path(kernel)
     rpm_dir = layout.rpm_path(kernel)
     paths = []
+    log.working("Download & extract kernel", kernel_path)
     try:
         for i, url in enumerate(kernel.urls):
             dest = dest_path(rpm_dir, url)
@@ -298,6 +301,7 @@ def _download_extract_rpms(
     # Similarly, we can now clear out any prior kernels we had downloaded and
     # extracted.
     rmtree_siblings(kernel_path)
+    log.done("Download & extract kernel", kernel_path)
     return kernel
 
 
@@ -317,7 +321,7 @@ def ensure_kernel(
     :param skip_fetch: if set, we will avoid fetching anything from the network,
       but all the data should already be present and cached locally
     """
-    db_path = _fetch_primary_db(category, paths, skip_fetch, log.verbose)
+    db_path = _fetch_primary_db(category, paths, skip_fetch, log)
     conn = sqlite3.connect(str(db_path))
     rows = conn.execute(
         """
@@ -340,11 +344,14 @@ def ensure_kernel(
         # Short circuit for a common case: the kernel RPMs were already
         # downloaded and extracted to their expected directory.
         if _kernel_version_present(kver, paths):
+            log.already_done(
+                "Download & extract kernel", paths.kernel_path(kver)
+            )
             return kver
 
         # We do not cache RPMs, so if it is not extracted, there's nothing to do
         # in skip_fetch mode. For normal mode, check the latest version.
-        if _all_rpms_available(kver, paths, skip_fetch):
+        if _all_rpms_available(kver, paths, log, skip_fetch):
             return _download_extract_rpms(kver, paths, skip_fetch, log)
         if allow_missing:
             versions_tried.append(release)
