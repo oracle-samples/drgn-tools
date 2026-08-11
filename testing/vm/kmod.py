@@ -23,13 +23,12 @@ def ensure_kmod(
     repo_root = repo_root.absolute()
     source_dir = repo_root / "testing/kmod"
     source_file = source_dir / "drgntools_test.c"
+    source_make = source_dir / "Makefile"
 
+    max_mtime = max(source_file.stat().st_mtime, source_make.stat().st_mtime)
     out_path = layout.kmod_path(kernel)
     out_dir = out_path.parent
-    if (
-        out_path.is_file()
-        and out_path.stat().st_mtime >= source_file.stat().st_mtime
-    ):
+    if out_path.is_file() and out_path.stat().st_mtime >= max_mtime:
         log.already_done("build kmod", out_path)
         return out_path
 
@@ -44,16 +43,14 @@ def ensure_kmod(
     log.working("build kmod", out_path)
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_file, out_dir)
+    shutil.copy2(source_make, out_dir)
 
     extract_root = layout.extract_path(kernel)
     kbuild_dir = extract_root / "usr/src/kernels" / kernel.release
 
     if not kbuild_dir.is_dir():
         raise RuntimeError(f"Kernel build tree not found: {kbuild_dir}")
-
-    source_module = source_dir / "drgntools_test.ko"
-    if source_module.exists():
-        source_module.unlink()
 
     command_parts = ["set -euo pipefail"]
 
@@ -63,8 +60,7 @@ def ensure_kmod(
         command_parts.append(f"source /opt/rh/{toolset}/enable")
 
     make = (
-        f"make -C /mnt/extract/usr/src/kernels/{kernel.release} "
-        "M=/mnt/repo/testing/kmod"
+        f"make -C /mnt/extract/usr/src/kernels/{kernel.release} " "M=/mnt/out"
     )
     command_parts.extend(
         [
@@ -78,24 +74,21 @@ def ensure_kmod(
         rootfs_dir,
         ["sh", "-c", command],
         binds=[
+            BindMount(source=out_dir, destination="/mnt/out", readonly=False),
             BindMount(
-                source=repo_root, destination="/mnt/repo", readonly=False
-            ),
-            BindMount(
-                source=extract_root, destination="/mnt/extract", readonly=False
+                source=extract_root,
+                destination="/mnt/extract",
+                readonly=True,
             ),
         ],
         stdout=None if log.verbose else subprocess.DEVNULL,
         stderr=None if log.verbose else subprocess.DEVNULL,
     )
 
-    if not source_module.is_file():
+    if not out_path.is_file():
         raise RuntimeError(
             "Kernel module build completed but output was not produced: "
-            f"{source_module}"
+            f"{out_path}"
         )
-
-    shutil.copy2(source_module, out_path)
     log.done("build kmod", out_path)
-
     return out_path
