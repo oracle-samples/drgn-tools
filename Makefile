@@ -23,7 +23,7 @@ endif
 
 .PHONY: vmcore-test
 vmcore-test:
-	$(PYTHON) -m testing.vmcore test
+	$(PYTHON) -m testing.vmcore.runner
 
 
 .PHONY: test

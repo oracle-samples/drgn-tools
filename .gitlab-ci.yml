@@ -1,6 +1,6 @@
 vmcore DWARF:
   script:
-    - python -m testing.vmcore.test -j 4 --core-directory /var/drgn-tools/vmcores
+    - python -m testing.vmcore.runner -j 4 --core-directory /var/drgn-tools/vmcores
   artifacts:
     when: always
     paths:
@@ -10,7 +10,7 @@ vmcore DWARF:
 
 vmcore CTF:
   script:
-    - python -m testing.vmcore.test -j 4 --ctf --core-directory /var/drgn-tools/vmcores
+    - python -m testing.vmcore.runner -j 4 --ctf --core-directory /var/drgn-tools/vmcores
   artifacts:
     when: always
     paths:

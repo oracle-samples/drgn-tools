@@ -79,9 +79,9 @@ To run all vmcore tests:
 
 ```sh
 # DWARF debuginfo
-python -m testing.vmcore.test [-j PROCESSES]
+python -m testing.vmcore.runner [-j PROCESSES]
 # CTF debuginfo
-python -m testing.vmcore.test --ctf [-j PROCESSES]
+python -m testing.vmcore.runner --ctf [-j PROCESSES]
 ```
 
 This runs tests against all vmcores in the test directory (see "Test Directory
@@ -95,7 +95,7 @@ libraries for each OL version are exercised:
 
 ```sh
 
-python -m testing.vmcore.test --ol VERSION [-j PROCESSES]
+python -m testing.vmcore.runner --ol VERSION [-j PROCESSES]
 ```
 
 Finally, you may also find it helpful to run only specific tests across the
@@ -103,7 +103,7 @@ entire vmcore collection. This can be done by passing positional arguments,
 which are directed to the actual test runner:
 
 ```sh
-python -m testing.vmcore.test -j8 -- tests/test_my_module.py
+python -m testing.vmcore.runner -j8 -- tests/test_my_module.py
 ```
 
 If you would like to run tests against a single vmcore and see all test output,
