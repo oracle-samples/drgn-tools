@@ -257,17 +257,12 @@ class TestDirectories(NamedTuple):
 
 
 # These are the VM testing targets.
+# fmt: off
 TARGETS = [
-    # Skip UEK-NEXT (v7.1) due to two errors:
-    # -> 'struct kmem_cache' has no member 'node'
-    # -> unrecognized .orc_header
-    # Both are fixed in drgn 0.2.0, but until it is released to Oracle Linux
-    # RPMs we cannot run it in the test suite.
-    # TODO: Enable UEK-NEXT testing once drgn 0.2.0 is released on OL.
-    # KernelCategory(OLVersion.OL10, KernelKind.UEKNEXT, Architecture.host_arch()),
+    KernelCategory(OLVersion.OL10, KernelKind.UEKNEXT, Architecture.host_arch()),
     KernelCategory(OLVersion.OL10, KernelKind.UEK8, Architecture.host_arch()),
     KernelCategory(OLVersion.OL10, KernelKind.RHCK, Architecture.host_arch()),
-    # KernelCategory(OLVersion.OL9, KernelKind.UEKNEXT, Architecture.host_arch()),
+    KernelCategory(OLVersion.OL9, KernelKind.UEKNEXT, Architecture.host_arch()),
     KernelCategory(OLVersion.OL9, KernelKind.UEK8, Architecture.host_arch()),
     KernelCategory(OLVersion.OL9, KernelKind.UEK7, Architecture.host_arch()),
     KernelCategory(OLVersion.OL9, KernelKind.RHCK, Architecture.host_arch()),
@@ -275,6 +270,7 @@ TARGETS = [
     KernelCategory(OLVersion.OL8, KernelKind.UEK6, Architecture.host_arch()),
     KernelCategory(OLVersion.OL8, KernelKind.RHCK, Architecture.host_arch()),
 ]
+# fmt: on
 
 # These are the rootfs directories which need to be built for VM and vmcore
 # testing.
