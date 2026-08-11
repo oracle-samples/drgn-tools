@@ -1,6 +1,6 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
-"""New VM test runner orchestration."""
+"""VM test runner."""
 import argparse
 import fnmatch
 import shutil
@@ -8,19 +8,19 @@ import sys
 from pathlib import Path
 from typing import List
 
+from testing.config import KernelCategory
+from testing.config import KernelKind
+from testing.config import SHARED_FS_AUTO
+from testing.config import SHARED_FS_CHOICES
+from testing.config import TARGETS
+from testing.config import TestDirectories
+from testing.rootfs import ensure_rootfs
 from testing.util import ci_section
 from testing.vm.artifacts import ensure_kernel
 from testing.vm.boot import run_in_vm
-from testing.vm.config import KernelCategory
-from testing.vm.config import KernelKind
-from testing.vm.config import SHARED_FS_AUTO
-from testing.vm.config import SHARED_FS_CHOICES
-from testing.vm.config import TARGETS
-from testing.vm.config import TestDirectories
 from testing.vm.kmod import ensure_kmod
 from testing.vm.logging import default_verbose
 from testing.vm.logging import VmLogger
-from testing.vm.rootfs import ensure_rootfs
 
 
 def _select_targets(pattern: str = "*") -> List[KernelCategory]:

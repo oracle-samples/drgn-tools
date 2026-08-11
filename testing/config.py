@@ -31,7 +31,7 @@ RHCK_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/baseos/latest/{ar
 DEBUGINFO_URL = "https://oss.oracle.com/ol{ol_ver}/debuginfo/{pkgbase}-debuginfo-{release}.rpm"
 # fmt: on
 
-BASE_DIR = (Path(__file__).parent.parent.parent / "testdata").absolute()
+BASE_DIR = (Path(__file__).parent.parent / "testdata").absolute()
 """
 Default directory where all testing data object should go. Should
 be overridden on the CLI where necessary.

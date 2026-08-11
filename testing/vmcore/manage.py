@@ -9,9 +9,9 @@ import shutil
 import sys
 from pathlib import Path
 
+from testing.config import TestDirectories
+from testing.config import VMCORE_PREFIX
 from testing.parlib import ParClient
-from testing.vm.config import TestDirectories
-from testing.vm.config import VMCORE_PREFIX
 
 
 class VmcoreManager:

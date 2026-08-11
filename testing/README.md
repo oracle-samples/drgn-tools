@@ -58,9 +58,9 @@ To run all VM tests:
 python -m testing.vm.runner
 ```
 
-For each kernel target (see `testing/vm/config.py`) this will build the OL
-rootfs if necessary, download and extract the latest kernel & debuginfo, build a
-test kernel module, boot the virtual machine, and run tests with DWARF and CTF
+For each kernel target (see `testing/config.py`) this will build the OL rootfs
+if necessary, download and extract the latest kernel & debuginfo, build a test
+kernel module, boot the virtual machine, and run tests with DWARF and CTF
 debuginfo.
 
 After the first run, subsequent runs will be much faster, because they can make

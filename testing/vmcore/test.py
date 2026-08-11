@@ -20,13 +20,13 @@ from typing import Tuple
 
 from drgn_tools.debuginfo import CtfCompatibility
 from drgn_tools.debuginfo import KernelVersion
+from testing.chroot import BindMount
+from testing.chroot import run_in_rootfs
+from testing.config import Architecture
+from testing.config import OLVersion
+from testing.config import Rootfs
+from testing.config import TestDirectories
 from testing.util import combine_junit_xml
-from testing.vm.chroot import BindMount
-from testing.vm.chroot import run_in_rootfs
-from testing.vm.config import Architecture
-from testing.vm.config import OLVersion
-from testing.vm.config import Rootfs
-from testing.vm.config import TestDirectories
 
 
 def _test_in_host(

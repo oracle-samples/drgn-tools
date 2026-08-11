@@ -23,7 +23,7 @@ from drgn import ProgramFlags
 from drgn_tools.debuginfo import has_vmlinux_build_id_mismatch
 from drgn_tools.debuginfo import KernelVersion
 from drgn_tools.module import module_is_in_tree
-from testing.vm.config import BASE_DIR
+from testing.config import BASE_DIR
 
 
 VMCORE: Optional[Path] = None

@@ -21,10 +21,10 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 
-from testing.vm.config import KernelVer
-from testing.vm.config import SHARED_FS_VIRTIOFS
-from testing.vm.config import SUPPORTED_SHARED_FS
-from testing.vm.config import TestDirectories
+from testing.config import KernelVer
+from testing.config import SHARED_FS_VIRTIOFS
+from testing.config import SUPPORTED_SHARED_FS
+from testing.config import TestDirectories
 from testing.vm.logging import VmLogger
 
 

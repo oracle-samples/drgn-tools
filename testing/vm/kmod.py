@@ -5,11 +5,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from testing.vm.chroot import BindMount
-from testing.vm.chroot import run_in_rootfs
-from testing.vm.config import KernelKind
-from testing.vm.config import KernelVer
-from testing.vm.config import TestDirectories
+from testing.chroot import BindMount
+from testing.chroot import run_in_rootfs
+from testing.config import KernelKind
+from testing.config import KernelVer
+from testing.config import TestDirectories
 from testing.vm.logging import VmLogger
 
 

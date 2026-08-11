@@ -9,12 +9,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from testing.config import APPSTREAM_PYTHONS
+from testing.config import Architecture
+from testing.config import OLVersion
+from testing.config import Rootfs
+from testing.config import TestDirectories
 from testing.util import builddir
-from testing.vm.config import APPSTREAM_PYTHONS
-from testing.vm.config import Architecture
-from testing.vm.config import OLVersion
-from testing.vm.config import Rootfs
-from testing.vm.config import TestDirectories
 from testing.vm.logging import VmLogger
 
 

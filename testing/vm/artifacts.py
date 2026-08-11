@@ -12,16 +12,16 @@ from urllib.error import HTTPError
 
 from drgn_tools.util import download_file
 from drgn_tools.util import head_file
+from testing.config import DEBUGINFO_URL
+from testing.config import KernelCategory
+from testing.config import KernelKind
+from testing.config import KernelVer
+from testing.config import OLVersion
+from testing.config import TestDirectories
+from testing.config import YUM_STALE_HOURS
 from testing.util import builddir
 from testing.util import rmtree_siblings
 from testing.util import rmtree_siblings_matching
-from testing.vm.config import DEBUGINFO_URL
-from testing.vm.config import KernelCategory
-from testing.vm.config import KernelKind
-from testing.vm.config import KernelVer
-from testing.vm.config import OLVersion
-from testing.vm.config import TestDirectories
-from testing.vm.config import YUM_STALE_HOURS
 from testing.vm.logging import VmLogger
 
 
