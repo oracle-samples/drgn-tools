@@ -8,10 +8,11 @@ import sys
 from pathlib import Path
 from typing import List
 
+from testing.config import Debuginfo
 from testing.config import KernelCategory
 from testing.config import KernelKind
-from testing.config import SHARED_FS_AUTO
-from testing.config import SHARED_FS_CHOICES
+from testing.config import PythonVer
+from testing.config import REPO_ROOT
 from testing.config import TARGETS
 from testing.config import TestDirectories
 from testing.rootfs import ensure_rootfs
@@ -25,43 +26,6 @@ from testing.vm.logging import VmLogger
 
 def _select_targets(pattern: str = "*") -> List[KernelCategory]:
     return [t for t in TARGETS if fnmatch.fnmatch(t.name, pattern)]
-
-
-def _default_command() -> List[str]:
-    return ["python3", "-m", "testing.unittest_runner", "tests"]
-
-
-def _is_test_command(command: List[str]) -> bool:
-    if not command:
-        return False
-    if "testing.unittest_runner" in command:
-        return True
-    for i, arg in enumerate(command[:-1]):
-        if arg == "-m" and command[i + 1] == "testing.unittest_runner":
-            return True
-    return False
-
-
-def _command_for_mode(
-    base_command: List[str],
-    ctf: bool,
-) -> List[str]:
-    command = list(base_command)
-    is_test = _is_test_command(command)
-
-    if not is_test:
-        return command
-
-    if ctf and "--ctf" not in command:
-        command.append("--ctf")
-
-    return command
-
-
-def _shared_fs_for_target(target: KernelCategory, shared_fs: str) -> str:
-    if shared_fs == SHARED_FS_AUTO:
-        return target.shared_fs
-    return shared_fs
 
 
 def _parse_args() -> argparse.Namespace:
@@ -131,26 +95,20 @@ def _parse_args() -> argparse.Namespace:
         help="Print output from builds & increase kernel log level",
     )
     parser.add_argument(
-        "--shared-fs",
-        choices=SHARED_FS_CHOICES,
-        default=SHARED_FS_AUTO,
-        help=(
-            "Host/guest shared filesystem. auto uses 9p for UEK6 and "
-            "virtiofs for newer UEKs"
-        ),
-    )
-    parser.add_argument(
         "--delete-after-test",
         action="store_true",
         help="Delete downloaded & extracted RPMs after tests for target",
     )
     parser.add_argument(
-        "command",
+        "--python",
+        type=PythonVer,
+        default=PythonVer.SYSTEM,
+        help="Python version for running tests (default: system python)",
+    )
+    parser.add_argument(
+        "test_args",
         nargs="*",
-        help=(
-            "Command to run in guest "
-            "(default: python3 -m testing.unittest_runner tests)"
-        ),
+        help="Arguments to test through to unittest_runner",
     )
 
     args = parser.parse_args()
@@ -170,28 +128,26 @@ def main() -> None:
     layout = TestDirectories.create(args.base_dir)
     log = VmLogger(args.verbose, args.interactive)
 
-    base_command = args.command if args.command else _default_command()
-    is_test = _is_test_command(base_command)
+    base_command = [
+        args.python.value,
+        "-m",
+        "testing.unittest_runner",
+        *args.test_args,
+    ]
     targets = _select_targets(args.kernel)
     if not targets:
         raise SystemExit(f"No targets matched --kernel {args.kernel!r}")
 
-    repo_root = Path.cwd().absolute()
     modes = []
-    if not is_test:
-        args.interactive = True
-        modes.append(("interactive", False))
-    else:
-        if args.dwarf:
-            modes.append(("dwarf", False))
-        if args.ctf:
-            modes.append(("ctf", True))
+    if args.dwarf:
+        modes.append(Debuginfo.DWARF)
+    if args.ctf:
+        modes.append(Debuginfo.CTF)
 
     failures: List[str] = []
 
     for target in targets:
         try:
-            shared_fs = _shared_fs_for_target(target, args.shared_fs)
             with ci_section(
                 f"{target.name}_setup",
                 f"Set up rootfs, kernel RPMs, and kmod for {target.name}",
@@ -211,43 +167,45 @@ def main() -> None:
                 )
                 ensure_kmod(
                     kernel,
-                    repo_root,
+                    REPO_ROOT,
                     layout,
                     log,
                     skip_build=args.skip_kmod_build,
                 )
 
-            for mode_name, ctf in modes:
+            for mode in modes:
                 with ci_section(
-                    f"{target.name}_{mode_name}",
-                    f"Run {mode_name.upper()} tests for {target.name}",
+                    f"{target.name}_{mode.value}",
+                    f"Run {mode.value.upper()} tests for {target.name}",
                 ):
+                    ctf = mode == Debuginfo.CTF
                     if kernel.category.kind == KernelKind.RHCK and ctf:
                         log.skip_test(
-                            target.name, mode_name, "CTF unsupported"
+                            target.name, mode.value, "CTF unsupported"
                         )
                         continue
-                    log.begin_test(target.name, mode_name, shared_fs)
-                    log_path = layout.vm_log_path(kernel.category, mode_name)
-                    run_command = _command_for_mode(
-                        base_command,
-                        ctf,
-                    )
+                    log.begin_test(target.name, mode.value, target.shared_fs)
+                    log_path = layout.vm_log_path(kernel.category, mode.value)
+                    log_path.parent.mkdir(exist_ok=True, parents=True)
+                    if ctf:
+                        command = base_command + ["--ctf"]
+                    else:
+                        command = base_command[:]
                     try:
                         run_in_vm(
                             kernel,
                             layout,
-                            repo_root,
-                            run_command,
+                            REPO_ROOT,
+                            command,
                             None if args.interactive else log_path,
                             log,
-                            shared_fs=shared_fs,
+                            shared_fs=target.shared_fs,
                         )
                     except RuntimeError as e:
-                        failures.append(f"{target.name} {mode_name}: {e}")
-                        log.fail_test(target.name, mode_name)
+                        failures.append(f"{target.name} {mode.value}: {e}")
+                        log.fail_test(target.name, mode.value)
                     else:
-                        log.pass_test(target.name, mode_name)
+                        log.pass_test(target.name, mode.value)
 
             if args.delete_after_test:
                 log.message("Deleting RPM cache and extraction directory")

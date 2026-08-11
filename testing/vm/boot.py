@@ -1,6 +1,7 @@
 # Copyright (c) 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 """VM boot and in-guest command execution for testing.vm."""
+import argparse
 import bz2
 import contextlib
 import gzip
@@ -22,9 +23,14 @@ from typing import Optional
 from typing import Tuple
 
 from testing.config import KernelVer
+from testing.config import REPO_ROOT
 from testing.config import SHARED_FS_VIRTIOFS
 from testing.config import SUPPORTED_SHARED_FS
+from testing.config import TARGETS
 from testing.config import TestDirectories
+from testing.rootfs import ensure_rootfs
+from testing.vm.artifacts import ensure_kernel
+from testing.vm.kmod import ensure_kmod
 from testing.vm.logging import VmLogger
 
 
@@ -685,3 +691,98 @@ def run_in_vm(
             raise RuntimeError(
                 f"VM test run did not succeed, see log: {log_path}"
             )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="interactively run a test VM")
+    parser.add_argument(
+        "kernel",
+        choices=[t.name for t in TARGETS],
+        help="kernel VM to run",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print output from builds & increase kernel log level",
+    )
+    parser.add_argument(
+        "--base-dir",
+        type=Path,
+        default=None,
+        help="Base directory for cached and generated test artifacts",
+    )
+    parser.add_argument(
+        "--skip-rootfs-build",
+        action="store_true",
+        help="Do not build rootfs (requires it to already exist)",
+    )
+    parser.add_argument(
+        "--skip-rpm-fetch",
+        action="store_true",
+        help=(
+            "Do not download repodata or RPMs "
+            "(requires cached metadata/RPMs)"
+        ),
+    )
+    parser.add_argument(
+        "--skip-kmod-build",
+        action="store_true",
+        help="Do not build kernel module (requires existing .ko output)",
+    )
+    parser.add_argument(
+        "--skip-all",
+        "-n",
+        action="store_true",
+        help=(
+            "Activate all --skip-* options "
+            "(requires everything already built)"
+        ),
+    )
+    parser.add_argument(
+        "command",
+        nargs="*",
+        help=("Command to run in guest " "(default: bash -li)"),
+    )
+    args = parser.parse_args()
+    layout = TestDirectories.create(args.base_dir)
+    log = VmLogger(args.verbose, True)
+
+    for target in TARGETS:
+        if target.name == args.kernel:
+            break
+    else:
+        sys.exit(f"No target matched: {args.kernel!r}")
+
+    ensure_rootfs(
+        target.rootfs,
+        layout,
+        log,
+        skip_build=args.skip_rootfs_build,
+    )
+    kernel = ensure_kernel(
+        target,
+        layout,
+        log,
+        skip_fetch=args.skip_rpm_fetch,
+    )
+    ensure_kmod(
+        kernel,
+        REPO_ROOT,
+        layout,
+        log,
+        skip_build=args.skip_kmod_build,
+    )
+    run_in_vm(
+        kernel,
+        layout,
+        REPO_ROOT,
+        args.command or ["bash", "-li"],
+        None,
+        log,
+        target.shared_fs,
+    )
+
+
+if __name__ == "__main__":
+    main()

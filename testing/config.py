@@ -9,10 +9,8 @@ from typing import NamedTuple
 from typing import Optional
 
 
-SHARED_FS_AUTO = "auto"
 SHARED_FS_9P = "9p"
 SHARED_FS_VIRTIOFS = "virtiofs"
-SHARED_FS_CHOICES = (SHARED_FS_AUTO, SHARED_FS_9P, SHARED_FS_VIRTIOFS)
 SUPPORTED_SHARED_FS = (SHARED_FS_9P, SHARED_FS_VIRTIOFS)
 
 # Don't re-fetch repomd.xml until it is at least this old. This helps keep
@@ -31,7 +29,8 @@ RHCK_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/baseos/latest/{ar
 DEBUGINFO_URL = "https://oss.oracle.com/ol{ol_ver}/debuginfo/{pkgbase}-debuginfo-{release}.rpm"
 # fmt: on
 
-BASE_DIR = (Path(__file__).parent.parent / "testdata").absolute()
+REPO_ROOT = Path(__file__).parent.parent.absolute()
+BASE_DIR = REPO_ROOT / "testdata"
 """
 Default directory where all testing data object should go. Should
 be overridden on the CLI where necessary.

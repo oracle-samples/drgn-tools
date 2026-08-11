@@ -61,15 +61,22 @@ python -m testing.vm.runner
 For each kernel target (see `testing/config.py`) this will build the OL rootfs
 if necessary, download and extract the latest kernel & debuginfo, build a test
 kernel module, boot the virtual machine, and run tests with DWARF and CTF
-debuginfo.
+debuginfo. After the first run, subsequent runs will be much faster, because
+they can make use of the already-built rootfs, and already-downloaded kernels.
 
-After the first run, subsequent runs will be much faster, because they can make
-use of the already-built rootfs, and already-downloaded kernels.
+You can also pass through arguments to the underlying unittest runner (see "Test
+Runner" below), for example to select a particular subset of tests. This can
+help run your tests much faster:
+
+```sh
+python -m testing.vm.runner -- tests/test_my_module.py
+```
 
 The runner's help output (`--help`) can provide guidance on running against
-specific kernels or specific debuginfo. The runner also provides the capability
-to run interactive commands within the virtual machine, including running a
-specific test command (see below).
+specific kernels, python versions, or debuginfo kinds, as well as controlling
+output levels. For advanced use, you may also want to see the sections below
+about running commands within the VM itself, and directly running the test
+runner.
 
 
 Running Vmcore Tests
@@ -95,9 +102,8 @@ libraries for each OL version are exercised:
 python -m testing.vmcore.runner --ol VERSION [-j PROCESSES]
 ```
 
-Finally, you may also find it helpful to run only specific tests across the
-entire vmcore collection. This can be done by passing positional arguments,
-which are directed to the actual test runner:
+Finally, just like the VM runner, you can also pass through arguments to the
+unittest runner, enabling you to select particular tests:
 
 ```sh
 python -m testing.vmcore.runner -j8 -- tests/test_my_module.py
@@ -133,6 +139,20 @@ You can specify test files or modules as positional arguments:
 ```sh
 python -m testing.unittest_runner tests/test_mymodule.py
 ```
+
+
+VM Interactive Mode
+-------------------
+
+If you would like to do interactive diagnostics within the test VM environment,
+you can do so using the script below:
+
+```sh
+python -m testing.vm.boot KERNEL [command]
+```
+
+The help output will show you the available kernels. By default, the command
+will be an interactive bash session.
 
 
 Rootfs Management
