@@ -11,7 +11,6 @@ from typing import Optional
 
 SHARED_FS_9P = "9p"
 SHARED_FS_VIRTIOFS = "virtiofs"
-SUPPORTED_SHARED_FS = (SHARED_FS_9P, SHARED_FS_VIRTIOFS)
 
 # Don't re-fetch repomd.xml until it is at least this old. This helps keep
 # things snappy during development, and avoids unexpected new kernel downloads

@@ -199,7 +199,6 @@ def main() -> None:
                             command,
                             None if args.interactive else log_path,
                             log,
-                            shared_fs=target.shared_fs,
                         )
                     except RuntimeError as e:
                         failures.append(f"{target.name} {mode.value}: {e}")

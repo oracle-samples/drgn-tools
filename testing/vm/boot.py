@@ -25,7 +25,6 @@ from typing import Tuple
 from testing.config import KernelVer
 from testing.config import REPO_ROOT
 from testing.config import SHARED_FS_VIRTIOFS
-from testing.config import SUPPORTED_SHARED_FS
 from testing.config import TARGETS
 from testing.config import TestDirectories
 from testing.rootfs import ensure_rootfs
@@ -106,18 +105,7 @@ exec switch_root /tmp/root /usr/bin/setsid -c /bin/sh -lc {guest_command}
 """
 
 
-def _validate_shared_fs(shared_fs: str) -> None:
-    if shared_fs not in SUPPORTED_SHARED_FS:
-        raise RuntimeError(
-            "Unsupported shared filesystem {!r}; expected one of {}".format(
-                shared_fs,
-                ", ".join(SUPPORTED_SHARED_FS),
-            )
-        )
-
-
 def _initrd_modules(shared_fs: str) -> List[str]:
-    _validate_shared_fs(shared_fs)
     modules = list(COMMON_INITRD_MODULES)
     if shared_fs == SHARED_FS_VIRTIOFS:
         modules.extend(VIRTIOFS_INITRD_MODULES)
@@ -127,7 +115,6 @@ def _initrd_modules(shared_fs: str) -> List[str]:
 
 
 def _host_mount_command(shared_fs: str) -> str:
-    _validate_shared_fs(shared_fs)
     if shared_fs == SHARED_FS_VIRTIOFS:
         return "mount -t virtiofs -o ro hostfs /host"
     return (
@@ -508,7 +495,6 @@ def _start_virtiofsd(socket_path: Path, shared_dir: Path) -> Iterator[None]:
 
 
 def _qemu_memory_args(shared_fs: str) -> List[str]:
-    _validate_shared_fs(shared_fs)
     if shared_fs == SHARED_FS_VIRTIOFS:
         return [
             # memfd backend is necessary for virtiofsd.
@@ -532,7 +518,6 @@ def _qemu_host_share_args(
     shared_dir: Path,
     socket_path: Optional[Path],
 ) -> List[str]:
-    _validate_shared_fs(shared_fs)
     if shared_fs == SHARED_FS_VIRTIOFS:
         if socket_path is None:
             raise RuntimeError("virtiofs requires a virtiofsd socket path")
@@ -560,13 +545,9 @@ def run_in_vm(
     command: List[str],
     log_path: Optional[Path],
     log: VmLogger,
-    shared_fs: Optional[str] = None,
 ) -> None:
-    if shared_fs is None:
-        shared_fs = kernel.category.shared_fs
-    _validate_shared_fs(shared_fs)
-
     qemu = _find_qemu(kernel.category.arch.value)
+    shared_fs = kernel.category.shared_fs
 
     base_dir = layout.base_dir
     rootfs_dir = layout.rootfs_path(kernel.category.rootfs)
@@ -780,7 +761,6 @@ def main() -> None:
         args.command or ["bash", "-li"],
         None,
         log,
-        target.shared_fs,
     )
 
 
