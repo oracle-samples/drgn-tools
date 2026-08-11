@@ -5,14 +5,28 @@ import argparse
 import fnmatch
 import shutil
 import sys
+import traceback
+from collections import defaultdict
+from concurrent.futures import FIRST_COMPLETED
+from concurrent.futures import Future
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import wait
 from pathlib import Path
+from typing import Any
+from typing import Dict
 from typing import List
+from typing import NamedTuple
+from typing import Optional
+from typing import Set
+from typing import Union
 
 from testing.config import Debuginfo
 from testing.config import KernelCategory
 from testing.config import KernelKind
+from testing.config import KernelVer
 from testing.config import PythonVer
 from testing.config import REPO_ROOT
+from testing.config import Rootfs
 from testing.config import TARGETS
 from testing.config import TestDirectories
 from testing.rootfs import ensure_rootfs
@@ -82,10 +96,17 @@ def _parse_args() -> argparse.Namespace:
         help="Skip DWARF mode",
     )
     parser.add_argument(
+        "--parallel",
+        "-j",
+        type=int,
+        default=1,
+        help="Parallelism to run tests",
+    )
+    parser.add_argument(
         "--interactive",
         "-i",
         action="store_true",
-        help="Connect stdout/stdin of the VM to the terminal",
+        help="Connect stdout/stdin of the VM to the terminal (conflicts with -j)",
     )
     parser.add_argument(
         "--verbose",
@@ -97,7 +118,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--delete-after-test",
         action="store_true",
-        help="Delete downloaded & extracted RPMs after tests for target",
+        help=(
+            "Delete downloaded & extracted RPMs after all tests for the "
+            "target are complete. This reduces the disk space used by the "
+            "tests, but it is only useful with -j 1 which guarantees that "
+            "we run the tests sequentially."
+        ),
     )
     parser.add_argument(
         "--python",
@@ -120,20 +146,245 @@ def _parse_args() -> argparse.Namespace:
         args.skip_rootfs_build = True
         args.skip_rpm_fetch = True
         args.skip_kmod_build = True
+    if args.interactive and args.parallel > 1:
+        raise SystemExit(
+            f"--interactive cannot be used with -j {args.parallel}"
+        )
     return args
+
+
+class TestParam(NamedTuple):
+    mode: Debuginfo
+    python: PythonVer
+    test_args: List[str]
+
+
+class TestResult(NamedTuple):
+    kernel: KernelCategory
+    param: TestParam
+    status: str
+    exception: Optional[Exception]
+
+
+class SetupError(NamedTuple):
+    input: Union[Rootfs, KernelCategory]
+    exception: Exception
+
+
+TaskRes = Union[Rootfs, KernelVer, TestResult, SetupError]
+
+
+class VmTest:
+    rootfs_to_targets: Dict[Rootfs, List[KernelCategory]]
+    target_to_params: Dict[KernelCategory, List[TestParam]]
+    layout: TestDirectories
+    log: VmLogger
+    threads: int
+    skip_rootfs_build: bool
+    skip_rpm_fetch: bool
+    skip_kmod_build: bool
+    delete_after_test: bool
+    thread_pool: Optional[ThreadPoolExecutor]
+    futures: Set["Future[TaskRes]"]
+    complete: Set["Future[TaskRes]"]
+    pending: List[Any]
+
+    def __init__(
+        self,
+        rootfs_to_targets: Dict[Rootfs, List[KernelCategory]],
+        target_to_params: Dict[KernelCategory, List[TestParam]],
+        layout: TestDirectories,
+        log: VmLogger,
+        threads: int,
+        skip_rootfs_build: bool = False,
+        skip_rpm_fetch: bool = False,
+        skip_kmod_build: bool = False,
+        delete_after_test: bool = False,
+    ):
+        self.rootfs_to_targets = rootfs_to_targets
+        self.target_to_params = target_to_params
+        self.layout = layout
+        self.log = log
+        self.threads = threads
+        self.skip_rootfs_build = skip_rootfs_build
+        self.skip_rpm_fetch = skip_rpm_fetch
+        self.skip_kmod_build = skip_kmod_build
+        self.delete_after_test = delete_after_test
+        if threads == 1:
+            self.pending = []
+            self.thread_pool = None
+        else:
+            self.futures = set()
+            self.complete = set()
+            self.thread_pool = ThreadPoolExecutor(max_workers=threads)
+
+    def ensure_rootfs(self, rootfs: Rootfs) -> TaskRes:
+        try:
+            with ci_section(
+                f"{rootfs.name}_setup", f"Set up rootfs {rootfs.name}"
+            ):
+                ensure_rootfs(
+                    rootfs,
+                    self.layout,
+                    self.log,
+                    skip_build=self.skip_rootfs_build,
+                )
+            return rootfs
+        except Exception as e:
+            return SetupError(rootfs, e)
+
+    def ensure_target(self, target: KernelCategory) -> TaskRes:
+        try:
+            with ci_section(
+                f"{target.name}_setup", f"Set up kernel {target.name}"
+            ):
+                kernel = ensure_kernel(
+                    target,
+                    self.layout,
+                    self.log,
+                    skip_fetch=self.skip_rpm_fetch,
+                )
+                ensure_kmod(
+                    kernel,
+                    REPO_ROOT,
+                    self.layout,
+                    self.log,
+                    skip_build=self.skip_kmod_build,
+                )
+            return kernel
+        except Exception as e:
+            return SetupError(target, e)
+
+    def run_test(self, kernel: KernelVer, param: TestParam) -> TaskRes:
+        target = kernel.category
+        mode = param.mode
+        with ci_section(
+            f"{target.name}_{mode.value}",
+            f"Run {mode.value.upper()} tests for {target.name}",
+        ):
+            ctf = mode == Debuginfo.CTF
+            if kernel.category.kind == KernelKind.RHCK and ctf:
+                self.log.skip_test(target.name, mode.value, "CTF unsupported")
+                return TestResult(target, param, "skip", None)
+            self.log.begin_test(target.name, mode.value, target.shared_fs)
+            log_path = self.layout.vm_log_path(kernel.category, mode.value)
+            log_path.parent.mkdir(exist_ok=True, parents=True)
+            command = [
+                param.python.value,
+                "-m",
+                "testing.unittest_runner",
+                *param.test_args,
+            ]
+            if ctf:
+                command.append("--ctf")
+            try:
+                run_in_vm(
+                    kernel,
+                    self.layout,
+                    REPO_ROOT,
+                    command,
+                    None if self.log.interactive else log_path,
+                    self.log,
+                )
+            except RuntimeError as e:
+                self.log.fail_test(target.name, mode.value)
+                return TestResult(target, param, "fail", e)
+            else:
+                self.log.pass_test(target.name, mode.value)
+                return TestResult(target, param, "pass", None)
+
+    def submit(self, task, *args) -> None:
+        if self.thread_pool:
+            self.futures.add(self.thread_pool.submit(task, *args))
+        else:
+            self.pending.append((task, args))
+
+    def should_continue(self) -> bool:
+        if self.thread_pool:
+            return bool(self.complete) or bool(self.futures)
+        else:
+            return bool(self.pending)
+
+    def next_result(self) -> TaskRes:
+        if self.thread_pool:
+            if self.complete:
+                return self.complete.pop().result()
+            else:
+                self.complete, self.futures = wait(
+                    self.futures, return_when=FIRST_COMPLETED
+                )
+                return self.complete.pop().result()
+        else:
+            task, args = self.pending.pop()
+            return task(*args)
+
+    def __enter__(self) -> None:
+        if self.thread_pool:
+            self.thread_pool.__enter__()
+
+    def __exit__(self, *args) -> None:
+        if self.thread_pool:
+            # If there are any futures, we're exiting in error
+            for future in self.futures:
+                future.cancel()
+            self.thread_pool.__exit__(*args)
+
+    def maybe_delete(self, res: TestResult) -> None:
+        if not self.delete_after_test:
+            return
+        if not hasattr(self, "by_kernel"):
+            self.by_kernel: Dict[KernelCategory, int] = defaultdict(int)
+        cat = res.kernel
+        self.by_kernel[cat] += 1
+        if self.by_kernel[cat] < len(self.target_to_params[cat]):
+            return
+        self.log.message("Deleting RPM cache and extraction directory")
+        shutil.rmtree(self.layout.target_path(cat))
+
+    def account_error(
+        self, res: SetupError, results: List[TestResult]
+    ) -> None:
+        if isinstance(res.input, Rootfs):
+            targets = self.rootfs_to_targets[res.input]
+        elif isinstance(res.input, KernelCategory):
+            targets = [res.input]
+        else:
+            assert False  # unreachable
+        # propagate setup errors to the eventual targets
+        for target in targets:
+            for params in self.target_to_params[target]:
+                results.append(
+                    TestResult(target, params, "error", res.exception)
+                )
+
+    def run(self) -> List[TestResult]:
+        results = []
+        for rootfs in self.rootfs_to_targets.keys():
+            self.submit(self.ensure_rootfs, rootfs)
+
+        while self.should_continue():
+            res = self.next_result()
+            if isinstance(res, Rootfs):
+                for target in self.rootfs_to_targets[res]:
+                    self.submit(self.ensure_target, target)
+            elif isinstance(res, KernelVer):
+                for param in self.target_to_params[res.category]:
+                    self.submit(self.run_test, res, param)
+            elif isinstance(res, TestResult):
+                results.append(res)
+                self.maybe_delete(res)
+            elif isinstance(res, SetupError):
+                self.account_error(res, results)
+            else:
+                assert False  # unreachable
+
+        return results
 
 
 def main() -> None:
     args = _parse_args()
     layout = TestDirectories.create(args.base_dir)
     log = VmLogger(args.verbose, args.interactive)
-
-    base_command = [
-        args.python.value,
-        "-m",
-        "testing.unittest_runner",
-        *args.test_args,
-    ]
     targets = _select_targets(args.kernel)
     if not targets:
         raise SystemExit(f"No targets matched --kernel {args.kernel!r}")
@@ -144,81 +395,57 @@ def main() -> None:
     if args.ctf:
         modes.append(Debuginfo.CTF)
 
-    failures: List[str] = []
-
+    rootfs_to_targets: Dict[Rootfs, List[KernelCategory]] = {}
+    target_to_params = {}
     for target in targets:
-        try:
-            with ci_section(
-                f"{target.name}_setup",
-                f"Set up rootfs, kernel RPMs, and kmod for {target.name}",
-            ):
-                log.begin_target(target.name)
-                ensure_rootfs(
-                    target.rootfs,
-                    layout,
-                    log,
-                    skip_build=args.skip_rootfs_build,
-                )
-                kernel = ensure_kernel(
-                    target,
-                    layout,
-                    log,
-                    skip_fetch=args.skip_rpm_fetch,
-                )
-                ensure_kmod(
-                    kernel,
-                    REPO_ROOT,
-                    layout,
-                    log,
-                    skip_build=args.skip_kmod_build,
-                )
+        rootfs_to_targets.setdefault(target.rootfs, []).append(target)
+        target_to_params[target] = [
+            TestParam(mode, args.python, args.test_args) for mode in modes
+        ]
 
-            for mode in modes:
-                with ci_section(
-                    f"{target.name}_{mode.value}",
-                    f"Run {mode.value.upper()} tests for {target.name}",
-                ):
-                    ctf = mode == Debuginfo.CTF
-                    if kernel.category.kind == KernelKind.RHCK and ctf:
-                        log.skip_test(
-                            target.name, mode.value, "CTF unsupported"
-                        )
-                        continue
-                    log.begin_test(target.name, mode.value, target.shared_fs)
-                    log_path = layout.vm_log_path(kernel.category, mode.value)
-                    log_path.parent.mkdir(exist_ok=True, parents=True)
-                    if ctf:
-                        command = base_command + ["--ctf"]
-                    else:
-                        command = base_command[:]
-                    try:
-                        run_in_vm(
-                            kernel,
-                            layout,
-                            REPO_ROOT,
-                            command,
-                            None if args.interactive else log_path,
-                            log,
-                        )
-                    except RuntimeError as e:
-                        failures.append(f"{target.name} {mode.value}: {e}")
-                        log.fail_test(target.name, mode.value)
-                    else:
-                        log.pass_test(target.name, mode.value)
-
-            if args.delete_after_test:
-                log.message("Deleting RPM cache and extraction directory")
-                shutil.rmtree(layout.target_path(target))
-        except BaseException as e:
-            failures.append(f"{target.name}: {e}")
-            if isinstance(e, (SystemExit, KeyboardInterrupt)):
-                print("\ninterrupted")
-                break
-
-    if failures:
+    runner = VmTest(
+        rootfs_to_targets,
+        target_to_params,
+        layout,
+        log,
+        args.parallel,
+        skip_rootfs_build=args.skip_rootfs_build,
+        skip_rpm_fetch=args.skip_rpm_fetch,
+        skip_kmod_build=args.skip_kmod_build,
+        delete_after_test=args.delete_after_test,
+    )
+    results = runner.run()
+    skipped = [r for r in results if r.status == "skip"]
+    if skipped:
+        print("Skipped:")
+        for result in skipped:
+            print(
+                "- {} ({}, {}): {}".format(
+                    result.kernel.name,
+                    result.param.mode.value,
+                    result.param.python.value,
+                    result.status,
+                )
+            )
+    failed = [r for r in results if r.status in ("fail", "error")]
+    if failed:
         print("VM test failures:")
-        for failure in failures:
-            print(f"- {failure}")
+        for result in failed:
+            print(
+                "- {} ({}, {}): {}".format(
+                    result.kernel.name,
+                    result.param.mode.value,
+                    result.param.python.value,
+                    result.status,
+                )
+            )
+            if result.exception:
+                fmt = "".join(
+                    traceback.format_exception_only(
+                        type(result.exception), result.exception
+                    )
+                ).strip()
+                print(f"  {fmt}")
         sys.exit(1)
 
 

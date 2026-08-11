@@ -55,7 +55,7 @@ Running VM Tests
 To run all VM tests:
 
 ```sh
-python -m testing.vm.runner
+python -m testing.vm.runner [-j PROCESSES]
 ```
 
 For each kernel target (see `testing/config.py`) this will build the OL rootfs
@@ -63,6 +63,8 @@ if necessary, download and extract the latest kernel & debuginfo, build a test
 kernel module, boot the virtual machine, and run tests with DWARF and CTF
 debuginfo. After the first run, subsequent runs will be much faster, because
 they can make use of the already-built rootfs, and already-downloaded kernels.
+The `-j` option will parallelize whichever operations can be shared in order to
+accelerate the tests.
 
 You can also pass through arguments to the underlying unittest runner (see "Test
 Runner" below), for example to select a particular subset of tests. This can
