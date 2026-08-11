@@ -40,7 +40,7 @@ class TestKernfsMemcg(DrgnToolsTestCase):
         # Finally, there's plenty of other kernfs nodes on the system, e.g. the
         # one associated with the sysfs root. Use that as an example which is
         # neither cgroup, nor memcg.
-        other_kn = self.prog["sysfs_root"].kn
+        other_kn = self.prog["sysfs_root_kn"]
         self.assertFalse(kernfs_memcg.kernfs_node_of_cgroup(other_kn))
         self.assertFalse(kernfs_memcg.kernfs_node_of_memcgroup(other_kn))
 
