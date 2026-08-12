@@ -213,6 +213,28 @@ def show_lock_waiter(
 IterFn = Callable[[Type, Object, str], Iterable[Object]]
 
 
+def careful_list_for_each_entry(
+    tp: Type, ob: Object, memb: str
+) -> Iterable[Object]:
+    """
+    A more careful version of list_for_each_entry() that detects cycles
+
+    In reality this should just be validate_list_for_each_entry(). Starting in
+    v0.2.0 of drgn with commit f73686e1 ("drgn.helpers.linux.list: detect cycles
+    in validate_list*"), drgn uses Brent's algorithm to detect cycles without a
+    full-blown set. Since we need to be doing this with compatibility back to
+    0.0.32, let's use the simple set-based approach. If used with 0.2.0, we get
+    a bit extra overhead but such is life.
+    """
+    seen = set()
+    for item in validate_list_for_each_entry(tp, ob, memb):
+        val = item.value_()
+        if val in seen:
+            raise ValidationError("Cycle detected")
+        seen.add(val)
+        yield item
+
+
 def for_each_lock_waiter(
     lock: Object, iterfn: IterFn = list_for_each_entry
 ) -> Iterable[Object]:
@@ -227,7 +249,7 @@ def for_each_lock_waiter(
 
     :param lock: ``struct rw_semaphore *`` or ``struct mutex *``
     :param iterfn: function used to iterate over the list. Use
-        validate_list_each_entry() to create a more careful version that doesn't
+        careful_list_each_entry() to create a more careful version that doesn't
         fall into cycles, useful for testing the hypothesis of whether a pointer
         even is a mutex to begin with.
     :returns: iterator of objects of the appropriate waiter type:
@@ -573,7 +595,7 @@ def is_task_blocked_on_lock(
             return pid in [
                 waiter.task.pid.value_()
                 for waiter in for_each_lock_waiter(
-                    lock, validate_list_for_each_entry
+                    lock, careful_list_for_each_entry
                 )
             ]
         elif lock_type == "completion":
@@ -688,19 +710,14 @@ def completion_for_each_task_careful(completion: Object) -> Iterable[Object]:
     :param completion: ``struct completion *``
     :return: Iterator of ``struct task_struct *`` objects.
     """
-    seen = set()
     prog = completion.prog_
     wait = completion.wait.address_of_()
     # completion->wait changed from wait_queue_head to swait_queue_head since
     # Linux kernel commit a5c6234e1028 ("completion: Use simple wait queues") (in v5.7).
     if wait.type_.type_name() == "struct swait_queue_head *":
-        for entry in validate_list_for_each_entry(
+        for entry in careful_list_for_each_entry(
             "struct swait_queue", wait.task_list.address_of_(), "task_list"
         ):
-            addr = entry.value_()
-            if addr in seen:
-                raise ValidationError("circular list")
-            seen.add(addr)
             yield entry.task
     else:
         try:
@@ -716,9 +733,5 @@ def completion_for_each_task_careful(completion: Object) -> Iterable[Object]:
             # v4.13, probably from the same series so let's handle it together.
             field = "task_list"
             list = wait.task_list.address_of_()
-        for entry in validate_list_for_each_entry(entry_t, list, field):
-            addr = entry.value_()
-            if addr in seen:
-                raise ValidationError("circular list")
-            seen.add(addr)
+        for entry in careful_list_for_each_entry(entry_t, list, field):
             yield cast("struct task_struct *", entry.private)
