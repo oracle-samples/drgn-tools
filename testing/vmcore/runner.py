@@ -245,7 +245,7 @@ def print_params(params_list: List[TestParam], comment: str):
             param.python.value,
         )
     t.write()
-    print(f"{comment} {len(params_list)} tests")
+    print(f"{comment} {len(params_list)} suites")
 
 
 def test(
@@ -257,6 +257,7 @@ def test(
     passed = []
     xml = None
 
+    start = time.time()
     with ExitStack() as es:
         pool = es.enter_context(ThreadPoolExecutor(max_workers=parallel))
         futures = []
@@ -274,15 +275,18 @@ def test(
             else:
                 failed.append(param)
 
+    runtime = time.time() - start
+
     if xml is not None:
         xml.write("vmcore.xml")
     print("Complete test logs: vmcore.xml")
     print("Vmcore Test Summary -- Passed:")
-    print_params(passed, "Passed")
+    print_params(passed, "Passed:")
     if failed:
         print("Vmcore Test Summary -- FAILED:")
         print_params(failed, "Failed:")
-        sys.exit(1)
+    print(f"Ran {len(params)} suites (-j{parallel}) in {runtime:.1f}s")
+    sys.exit(int(bool(failed)))
 
 
 def main():
