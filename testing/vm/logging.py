@@ -4,6 +4,9 @@
 import os
 from pathlib import Path
 
+from testing.config import Debuginfo
+from testing.config import PythonVer
+
 
 def default_verbose() -> bool:
     return any(
@@ -20,17 +23,29 @@ class VmLogger:
         if self.verbose:
             print(f"Beginning build & test for {target}...")
 
-    def begin_test(self, target: str, mode: str, fs_mode: str) -> None:
-        print(f"Running {mode} tests for {target} using {fs_mode}...")
+    def begin_test(
+        self, target: str, mode: Debuginfo, pyver: PythonVer, fs_mode: str
+    ) -> None:
+        print(
+            f"Running {mode.value} tests for {target} on {pyver.value} using {fs_mode}..."
+        )
 
-    def skip_test(self, target: str, mode: str, reason: str) -> None:
-        print(f"Skipping {mode} tests for {target}: {reason}")
+    def skip_test(
+        self, target: str, mode: Debuginfo, pyver: PythonVer, reason: str
+    ) -> None:
+        print(
+            f"Skipping {mode.value} tests for {target} on {pyver.value}: {reason}"
+        )
 
-    def fail_test(self, target: str, mode: str) -> None:
-        print(f"FAILED: {target} {mode}")
+    def fail_test(
+        self, target: str, mode: Debuginfo, pyver: PythonVer
+    ) -> None:
+        print(f"FAILED: {target} {mode.value} on {pyver.value}")
 
-    def pass_test(self, target: str, mode: str) -> None:
-        print(f"PASS: {target} {mode}")
+    def pass_test(
+        self, target: str, mode: Debuginfo, pyver: PythonVer
+    ) -> None:
+        print(f"PASS: {target} {mode.value} on {pyver.value}")
 
     def already_done(self, kind: str, path: Path) -> None:
         if self.verbose:

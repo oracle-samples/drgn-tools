@@ -225,8 +225,13 @@ class TestDirectories(NamedTuple):
     def logs_dir(self) -> Path:
         return self.base_dir / "logs"
 
-    def vm_log_path(self, cat: KernelCategory, mode: str) -> Path:
-        return self.logs_dir / f"vm-test-{cat.name}-{mode}.log"
+    def vm_log_path(
+        self, cat: KernelCategory, mode: Debuginfo, pyver: PythonVer
+    ) -> Path:
+        return (
+            self.logs_dir
+            / f"vm-test-{cat.name}-{mode.value}-{pyver.value}.log"
+        )
 
     def vmcore_log_path(
         self, vmcore: str, mode: str, rootfs: str, pyver: str

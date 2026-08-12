@@ -20,6 +20,7 @@ from typing import Optional
 from typing import Set
 from typing import Union
 
+from testing.config import APPSTREAM_PYTHONS
 from testing.config import Debuginfo
 from testing.config import KernelCategory
 from testing.config import KernelKind
@@ -130,6 +131,11 @@ def _parse_args() -> argparse.Namespace:
         type=PythonVer,
         default=PythonVer.SYSTEM,
         help="Python version for running tests (default: system python)",
+    )
+    parser.add_argument(
+        "--all-python-versions",
+        action="store_true",
+        help="Run tests against all python versions (overrides --python)",
     )
     parser.add_argument(
         "test_args",
@@ -258,19 +264,24 @@ class VmTest:
     def run_test(self, kernel: KernelVer, param: TestParam) -> TaskRes:
         target = kernel.category
         mode = param.mode
+        python = param.python
         with ci_section(
             f"{target.name}_{mode.value}",
             f"Run {mode.value.upper()} tests for {target.name}",
         ):
             ctf = mode == Debuginfo.CTF
             if kernel.category.kind == KernelKind.RHCK and ctf:
-                self.log.skip_test(target.name, mode.value, "CTF unsupported")
+                self.log.skip_test(
+                    target.name, mode, python, "CTF unsupported"
+                )
                 return TestResult(target, param, "skip", None)
-            self.log.begin_test(target.name, mode.value, target.shared_fs)
-            log_path = self.layout.vm_log_path(kernel.category, mode.value)
+            self.log.begin_test(target.name, mode, python, target.shared_fs)
+            log_path = self.layout.vm_log_path(
+                kernel.category, mode, param.python
+            )
             log_path.parent.mkdir(exist_ok=True, parents=True)
             command = [
-                param.python.value,
+                python.value,
                 "-m",
                 "testing.unittest_runner",
                 *param.test_args,
@@ -287,10 +298,10 @@ class VmTest:
                     self.log,
                 )
             except RuntimeError as e:
-                self.log.fail_test(target.name, mode.value)
+                self.log.fail_test(target.name, mode, python)
                 return TestResult(target, param, "fail", e)
             else:
-                self.log.pass_test(target.name, mode.value)
+                self.log.pass_test(target.name, mode, python)
                 return TestResult(target, param, "pass", None)
 
     def submit(self, task, *args) -> None:
@@ -399,9 +410,19 @@ def main() -> None:
     target_to_params = {}
     for target in targets:
         rootfs_to_targets.setdefault(target.rootfs, []).append(target)
-        target_to_params[target] = [
-            TestParam(mode, args.python, args.test_args) for mode in modes
-        ]
+        if args.all_python_versions:
+            pythons = [PythonVer.SYSTEM] + list(
+                APPSTREAM_PYTHONS[target.ol_ver]
+            )
+            target_to_params[target] = [
+                TestParam(mode, pyver, args.test_args)
+                for pyver in pythons
+                for mode in modes
+            ]
+        else:
+            target_to_params[target] = [
+                TestParam(mode, args.python, args.test_args) for mode in modes
+            ]
 
     runner = VmTest(
         rootfs_to_targets,
