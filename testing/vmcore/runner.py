@@ -28,6 +28,7 @@ from testing.config import OLVersion
 from testing.config import PythonVer
 from testing.config import Rootfs
 from testing.config import TestDirectories
+from testing.rootfs import have_ol7_rootfs
 from testing.util import combine_junit_xml
 
 
@@ -310,7 +311,7 @@ def main():
     )
     parser.add_argument(
         "--ol",
-        choices=[OLVersion.OL8, OLVersion.OL9, OLVersion.OL10],
+        choices=list(OLVersion),
         type=lambda s: OLVersion(int(s)),
         default=None,
         help="Run the tests within the Oracle Linux (already built) rootfs",
@@ -354,6 +355,10 @@ def main():
     ol_vers = []
     if args.all_ol_versions:
         ol_vers = [v for v in OLVersion if v.value > 7]
+        # For most people, --all-ol-versions means 8-10. But if you have an OL7
+        # rootfs then good for you, I guess.
+        if have_ol7_rootfs(layout):
+            ol_vers.append(OLVersion.OL7)
     elif args.ol:
         ol_vers = [args.ol]
 

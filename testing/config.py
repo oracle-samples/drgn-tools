@@ -272,6 +272,7 @@ TARGETS = [
     KernelCategory(OLVersion.OL8, KernelKind.UEK7, Architecture.host_arch()),
     KernelCategory(OLVersion.OL8, KernelKind.UEK6, Architecture.host_arch()),
     KernelCategory(OLVersion.OL8, KernelKind.RHCK, Architecture.host_arch()),
+    KernelCategory(OLVersion.OL7, KernelKind.UEK6, Architecture.host_arch()),
 ]
 # fmt: on
 

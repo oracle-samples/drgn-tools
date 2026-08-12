@@ -25,12 +25,14 @@ from testing.config import Debuginfo
 from testing.config import KernelCategory
 from testing.config import KernelKind
 from testing.config import KernelVer
+from testing.config import OLVersion
 from testing.config import PythonVer
 from testing.config import REPO_ROOT
 from testing.config import Rootfs
 from testing.config import TARGETS
 from testing.config import TestDirectories
 from testing.rootfs import ensure_rootfs
+from testing.rootfs import have_ol7_rootfs
 from testing.util import ci_section
 from testing.vm.artifacts import ensure_kernel
 from testing.vm.boot import run_in_vm
@@ -409,6 +411,11 @@ def main() -> None:
     rootfs_to_targets: Dict[Rootfs, List[KernelCategory]] = {}
     target_to_params = {}
     for target in targets:
+        # The OL7 rootfs must be explicitly built before we can activate it. We
+        # will not automatically build it, since there is manual intervention
+        # required to get a useful one.
+        if target.ol_ver == OLVersion.OL7 and not have_ol7_rootfs(layout):
+            continue
         rootfs_to_targets.setdefault(target.rootfs, []).append(target)
         if args.all_python_versions:
             pythons = [PythonVer.SYSTEM] + list(

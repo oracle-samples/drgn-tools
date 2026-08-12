@@ -3,11 +3,11 @@
 """Rootfs build and validation for testing.vm."""
 import argparse
 import contextlib
-import inspect
 import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import List
 
 from testing.config import APPSTREAM_PYTHONS
 from testing.config import Architecture
@@ -19,6 +19,13 @@ from testing.util import builddir
 from testing.vm.logging import VmLogger
 
 
+def have_ol7_rootfs(layout: TestDirectories) -> bool:
+    rootfs = layout.rootfs_path(
+        Rootfs(OLVersion.OL7, Architecture.host_arch())
+    )
+    return rootfs.is_dir()
+
+
 def _validate_rootfs(path: Path) -> None:
     expected = [
         "bin/bash",
@@ -26,6 +33,7 @@ def _validate_rootfs(path: Path) -> None:
         "usr/bin/python3",
         "usr/bin/make",
         "usr/bin/gcc",
+        "usr/bin/drgn",
     ]
     for relpath in expected:
         fullpath = path / relpath
@@ -33,16 +41,61 @@ def _validate_rootfs(path: Path) -> None:
             raise RuntimeError(f"Rootfs is missing required file: {fullpath}")
 
 
+def _format_urls(rootfs: Rootfs, urls: List[str]) -> List[str]:
+    fmtdict = {
+        "ol_ver": rootfs.ol_ver.value,
+        "arch": rootfs.arch.value,
+    }
+    res = []
+    for url in urls:
+        res.append(url.format_map(fmtdict))
+    return res
+
+
+OL7_COMMAND = """
+set -euo pipefail
+mkdir -p /rootfs/etc/yum/vars
+echo -n '' >/rootfs/etc/yum/vars/ociregion
+echo -n 'oracle.com' >/rootfs/etc/yum/vars/ocidomain
+yum -y --releasever={ol_ver} --installroot=/rootfs \\
+       --setopt=install_weak_deps=False \\
+       --setopt=tsflags=nodocs \\
+       --enablerepo=ol{ol_ver}_addons \\
+       --enablerepo=ol{ol_ver}_UEKR6 \\
+       install {rpms}
+yum -y --installroot=/rootfs clean all;
+rm -rf /rootfs/var/cache/yum
+"""
+
+MODERN_COMMAND = """
+set -euo pipefail
+dnf -y --releasever={ol_ver} --installroot=/rootfs \\
+       --setopt=install_weak_deps=False \\
+       --setopt=tsflags=nodocs \\
+       --enablerepo=ol{ol_ver}_addons \\
+       --enablerepo=ol{ol_ver}_codeready_builder \\
+       --refresh \\
+       install {rpms}
+dnf -y --installroot=/rootfs clean all;
+rm -rf /rootfs/var/cache/dnf
+"""
+
+
 def _build_rootfs(
     rootfs: Rootfs,
     build_dir: Path,
     output_log: Path,
     log: VmLogger,
+    urls: List[str],
 ) -> None:
     if not shutil.which("podman"):
         raise RuntimeError("podman is required to build rootfs")
 
     build_dir.mkdir(parents=True, exist_ok=True)
+
+    dnf = "dnf"
+    if rootfs.ol_ver == OLVersion.OL7:
+        dnf = "yum"
 
     # The necessary RPMs for running drgn-tools tests within a VM, and
     # also building a kernel module.
@@ -56,13 +109,13 @@ def _build_rootfs(
         "gcc",
         "make",
         "binutils-devel",
-        "dwarves",
         "hostname",
         "util-linux",  # needed for "setsid" command
         # Following commands are not strictly necessary, but make it far easier
         # to install custom packages into the rootfs ad-hoc.
-        "dnf",
+        dnf,
         f"oraclelinux-release-el{rootfs.ol_ver}",
+        *_format_urls(rootfs, urls),
     ]
 
     # Include the extra pythonx.xx-drgn RPMs
@@ -81,29 +134,29 @@ def _build_rootfs(
         if rootfs.ol_ver == OLVersion.OL8:
             rpm_list.append(f"{toolset}-elfutils-libelf-devel")
 
+    # OL7 requires libdtrace-ctf for kernel module build
+    if rootfs.ol_ver.value == 7:
+        rpm_list.extend(["libdtrace-ctf", "elfutils-libelf"])
+
     # The OL8 RHCK requires elfutils-libelf-devel for ORC generation
     if rootfs.ol_ver.value == 8:
         rpm_list.append("elfutils-libelf-devel")
+
+    # OL8 and later require dwarves for kernel module build
+    if rootfs.ol_ver.value >= 8:
+        rpm_list.append("dwarves")
 
     # Since OL9, fio needs an engine to run
     if rootfs.ol_ver.value >= 9:
         rpm_list.append("fio-engine-libaio")
 
     rpms = " ".join(rpm_list)
-    install_cmd = inspect.cleandoc(
-        f"""
-        set -euo pipefail
-        dnf -y --releasever={rootfs.ol_ver} --installroot=/rootfs \\
-               --setopt=install_weak_deps=False \\
-               --setopt=tsflags=nodocs \\
-               --enablerepo=ol{rootfs.ol_ver}_addons \\
-               --enablerepo=ol{rootfs.ol_ver}_codeready_builder \\
-               --refresh \\
-               install {rpms}
-        dnf -y --installroot=/rootfs clean all;
-        rm -rf /rootfs/var/cache/dnf
-    """
-    )
+    if rootfs.ol_ver == OLVersion.OL7:
+        install_cmd = OL7_COMMAND.format(ol_ver=7, rpms=rpms)
+    else:
+        install_cmd = MODERN_COMMAND.format(
+            ol_ver=rootfs.ol_ver.value, rpms=rpms
+        )
 
     command = [
         "podman",
@@ -149,6 +202,7 @@ def ensure_rootfs(
     layout: TestDirectories,
     log: VmLogger,
     skip_build: bool = False,
+    urls: List[str] = [],
 ) -> Path:
     final_dir = layout.rootfs_path(rootfs)
     if final_dir.is_dir():
@@ -170,6 +224,7 @@ def ensure_rootfs(
             building_dir,
             layout.logs_dir / f"rootfs-build-{rootfs.name}.log",
             log,
+            urls,
         )
         _validate_rootfs(building_dir)
         os.rename(building_dir, final_dir)
@@ -182,7 +237,12 @@ def ensure_rootfs(
 
 
 def build_rootfses():
-    supported_ol_vers = [v.value for v in OLVersion if v.value > 7]
+    # It is possible to build an OL7 rootfs. However, it requires drgn RPMs
+    # which have never been publicly released for OL7, which need to be provided
+    # with --rpm-url. Include it as an option for advanced users, but don't
+    # include it in the default rootfs set.
+    supported_ol_vers = [v.value for v in OLVersion]
+    default_ol_vers = [v.value for v in OLVersion if v.value > 7]
     parser = argparse.ArgumentParser(description="rootfs builder")
     parser.add_argument(
         "--base-dir",
@@ -196,6 +256,13 @@ def build_rootfses():
         help="Print detailed progress",
     )
     parser.add_argument(
+        "--rpm-url",
+        "-u",
+        action="append",
+        default=[],
+        help="Add formatted URLs to the RPM installation list",
+    )
+    parser.add_argument(
         "--rebuild",
         help="Delete old rootfs and rebuild",
         action="store_true",
@@ -205,18 +272,18 @@ def build_rootfses():
         nargs="*",
         type=int,
         choices=supported_ol_vers,
-        help=f"OL rootfs version to build (default: {' '.join(map(str, supported_ol_vers))})",
+        help=f"OL rootfs version to build (default: {' '.join(map(str, default_ol_vers))})",
     )
     args = parser.parse_args()
     layout = TestDirectories.create(base_dir=args.base_dir)
     log = VmLogger(args.verbose, False)
-    versions = args.versions or supported_ol_vers
+    versions = args.versions or default_ol_vers
     for version in versions:
         rootfs = Rootfs(OLVersion(version), Architecture.host_arch())
         dir_ = layout.rootfs_path(rootfs)
         if args.rebuild and dir_.exists():
             _rmtree_rootfs(dir_)
-        ensure_rootfs(rootfs, layout, log)
+        ensure_rootfs(rootfs, layout, log, urls=args.rpm_url)
 
 
 if __name__ == "__main__":
