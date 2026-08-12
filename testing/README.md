@@ -188,17 +188,38 @@ be used (e.g. a drgn command).
 Vmcore Management
 -----------------
 
-The vmcores are found in the `vmcores` test directory (see below).
-The official set of vmcores is stored in a private object storage bucket. If you
-have the pre-authenticated URL in your environment (`OCI_PAR_URL`) you can use
-the following to download (or update) them:
+**NOTE:** All commands here require a valid `OCI_PAR_URL` in your environment.
+Some pre-authenticated URLs are read-only (good for download only), and others
+are read-write (good for upload). You can get these URLs from a maintainer.
+
+The vmcores are found in the `vmcores` test directory (see below).  The official
+set of vmcores is stored in a private object storage bucket. You can use the
+following to download (or update) them:
 
 ```sh
 python -m testing.vmcore.manage download
 ```
 
-If you have a new vmcore, and you have a `OCI_PAR_URL` with write permissions,
-you can upload a specific core:
+To add a new vmcore to the store, you first should place it into the vmcore
+directory with a suitable name. **It is required** that all vmcore names end in
+"uekX" for their UEK version. The vmcore name should also contain some
+indication of the subsystem data for which it is useful. For example:
+
+```sh
+mkdir -p testdata/vmcores/nfs-uek8
+cp /var/oled/crash/*/vmcore testdata/vmcores/nfs-uek8/vmcore
+```
+
+Next, we must populate the debuginfo alongside it. We can do this using the
+`testing.vmcore.manage` tool. You may want to run it twice to ensure that all
+debuginfo gets downloaded.
+
+```sh
+python -m testing.vmcore.manage dbinfo-all
+```
+
+Finally, assuming your `OCI_PAR_URL` has write privileges, you can upload a
+single vmcore, or everything in your directory:
 
 ```sh
 python -m testing.vmcore.manage upload [--upload-all | --upload-core NAME]
@@ -251,3 +272,15 @@ testdata/
         vm-test-ol10-uek8-x86_64-dwarf-python3.log
         vmcore-NAME-dwarf-hostfs-python3.log
 ```
+
+
+Advanced
+--------
+
+- It is possible to build an OL7 rootfs for live UEK6 tests, or vmcore testing.
+  However, the drgn RPM must be manually provided. See the `testing/rootfs.py`
+  script for details.
+
+- Parallel tests can be run across all OL versions and Python versions. In the
+  case of vmcore tests this can result in massive parallelism, so be careful.
+  See the `--all-python-vers` and `--all-ol-vers` options for both runners.
