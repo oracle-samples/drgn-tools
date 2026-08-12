@@ -19,6 +19,8 @@ from typing import Optional
 from drgn_tools.debuginfo import CtfCompatibility
 from drgn_tools.debuginfo import KernelVersion
 from drgn_tools.table import Table
+from drgn_tools.vmcore import Dump
+from drgn_tools.vmcore import DUMP_DH_COMPRESSED
 from testing.chroot import BindMount
 from testing.chroot import run_in_rootfs
 from testing.config import APPSTREAM_PYTHONS
@@ -125,6 +127,15 @@ def _test_in_rootfs(layout: TestDirectories, param: TestParam) -> TestResult:
     return TestResult(param, res.returncode == 0, run_data)
 
 
+def _skip_ol7_zstd(ol_ver: int, path: Path) -> bool:
+    # OL7 libkdumpfile / drgn do not support ZSTD. Detect these cores and skip
+    # them on OL7 or prior.
+    if ol_ver > 7:
+        return False
+    vmcore = Dump(path)
+    return bool(vmcore.get_compression() & DUMP_DH_COMPRESSED.ZSTD)
+
+
 def _skip_ctf(
     mode: Debuginfo, uname: str, host_ol: int, rootfs: Optional[Rootfs]
 ) -> bool:
@@ -197,16 +208,19 @@ def get_all_tests(
                     sys.exit(
                         "error: when running in hostfs, only system python may be used"
                     )
-                if not _skip_ctf(dbinfo, uname, host_ol, None):
-                    params.append(
-                        TestParam(
-                            core_name, None, dbinfo, PythonVer.SYSTEM, args
-                        )
-                    )
+                if _skip_ctf(dbinfo, uname, host_ol, None):
+                    continue
+                if _skip_ol7_zstd(host_ol, path / "vmcore"):
+                    continue
+                params.append(
+                    TestParam(core_name, None, dbinfo, PythonVer.SYSTEM, args)
+                )
                 continue
             for ol_ver in ol_vers:
                 rootfs = Rootfs(ol_ver, Architecture.host_arch())
                 if _skip_ctf(dbinfo, uname, host_ol, rootfs):
+                    continue
+                if _skip_ol7_zstd(ol_ver.value, path / "vmcore"):
                     continue
                 supported_pythons = (PythonVer.SYSTEM,) + APPSTREAM_PYTHONS[
                     ol_ver
