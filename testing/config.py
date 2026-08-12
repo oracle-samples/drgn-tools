@@ -4,6 +4,7 @@
 import enum
 import platform
 from pathlib import Path
+from typing import Dict
 from typing import List
 from typing import NamedTuple
 from typing import Optional
@@ -21,9 +22,9 @@ YUM_STALE_HOURS = 12
 VMCORE_PREFIX = "drgn-tools-vmcores/"
 
 # fmt: off
-UEK_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/UEKR{uek_ver}/{arch}/"
-UEKNEXT_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/developer/UEKnext/{arch}/"
-RHCK_YUM = "https://yum.oracle.com/repo/OracleLinux/OL{ol_ver}/baseos/latest/{arch}/"
+UEK_YUM = "https://yum{ociregion}.{ocidomain}/repo/OracleLinux/OL{ol_ver}/UEKR{uek_ver}/{arch}/"
+UEKNEXT_YUM = "https://yum{ociregion}.{ocidomain}/repo/OracleLinux/OL{ol_ver}/developer/UEKnext/{arch}/"
+RHCK_YUM = "https://yum{ociregion}.{ocidomain}/repo/OracleLinux/OL{ol_ver}/baseos/latest/{arch}/"
 
 DEBUGINFO_URL = "https://oss.oracle.com/ol{ol_ver}/debuginfo/{pkgbase}-debuginfo-{release}.rpm"
 # fmt: on
@@ -34,6 +35,26 @@ BASE_DIR = REPO_ROOT / "testdata"
 Default directory where all testing data object should go. Should
 be overridden on the CLI where necessary.
 """
+
+
+def yumvars_from_host() -> Dict[str, str]:
+    """
+    The "ocidomain" and "ociregion" can be used to point at OCI regional caches
+    of yum, which are less expensive to access. These are configured on OCI
+    Oracle Linux host images, and it is in our best interest to copy those
+    configurations when we can.
+    """
+    vars = ("ocidomain", "ociregion")
+    defaults = ("oracle.com", "")
+    path = Path("/etc/yum/vars/")
+    values = {}
+    for var, default in zip(vars, defaults):
+        file = path / var
+        if file.is_file():
+            values[var] = file.read_text().strip()
+        else:
+            values[var] = default
+    return values
 
 
 class KernelKind(enum.Enum):
@@ -156,6 +177,7 @@ class KernelCategory(NamedTuple):
 
     def yum_repo(self) -> str:
         fmtdict = self._asdict()
+        fmtdict.update(yumvars_from_host())
         if self.kind == KernelKind.UEKNEXT:
             fmt = UEKNEXT_YUM
         elif self.kind == KernelKind.RHCK:

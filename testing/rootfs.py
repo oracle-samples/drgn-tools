@@ -4,10 +4,12 @@
 import argparse
 import contextlib
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
 from typing import List
+from typing import Optional
 
 from testing.config import APPSTREAM_PYTHONS
 from testing.config import Architecture
@@ -15,6 +17,7 @@ from testing.config import KERNEL_TOOLSETS
 from testing.config import OLVersion
 from testing.config import Rootfs
 from testing.config import TestDirectories
+from testing.config import yumvars_from_host
 from testing.util import builddir
 from testing.vm.logging import VmLogger
 
@@ -55,8 +58,10 @@ def _format_urls(rootfs: Rootfs, urls: List[str]) -> List[str]:
 OL7_COMMAND = """
 set -euo pipefail
 mkdir -p /rootfs/etc/yum/vars
-echo -n '' >/rootfs/etc/yum/vars/ociregion
-echo -n 'oracle.com' >/rootfs/etc/yum/vars/ocidomain
+echo -n {ociregion} >/rootfs/etc/yum/vars/ociregion
+echo -n {ociregion} >/etc/yum/vars/ociregion
+echo -n {ocidomain} >/rootfs/etc/yum/vars/ocidomain
+echo -n {ocidomain} >/etc/yum/vars/ocidomain
 yum -y --releasever={ol_ver} --installroot=/rootfs \\
        --setopt=install_weak_deps=False \\
        --setopt=tsflags=nodocs \\
@@ -69,6 +74,11 @@ rm -rf /rootfs/var/cache/yum
 
 MODERN_COMMAND = """
 set -euo pipefail
+mkdir -p /rootfs/etc/yum/vars
+echo -n {ociregion} >/rootfs/etc/yum/vars/ociregion
+echo -n {ociregion} >/etc/yum/vars/ociregion
+echo -n {ocidomain} >/rootfs/etc/yum/vars/ocidomain
+echo -n {ocidomain} >/etc/yum/vars/ocidomain
 dnf -y --releasever={ol_ver} --installroot=/rootfs \\
        --setopt=install_weak_deps=False \\
        --setopt=tsflags=nodocs \\
@@ -87,6 +97,7 @@ def _build_rootfs(
     output_log: Path,
     log: VmLogger,
     urls: List[str],
+    image: Optional[str],
 ) -> None:
     if not shutil.which("podman"):
         raise RuntimeError("podman is required to build rootfs")
@@ -152,10 +163,16 @@ def _build_rootfs(
 
     rpms = " ".join(rpm_list)
     if rootfs.ol_ver == OLVersion.OL7:
-        install_cmd = OL7_COMMAND.format(ol_ver=7, rpms=rpms)
+        install_cmd = OL7_COMMAND.format(
+            ol_ver=7,
+            rpms=rpms,
+            **{k: shlex.quote(v) for k, v in yumvars_from_host().items()},
+        )
     else:
         install_cmd = MODERN_COMMAND.format(
-            ol_ver=rootfs.ol_ver.value, rpms=rpms
+            ol_ver=rootfs.ol_ver.value,
+            rpms=rpms,
+            **{k: shlex.quote(v) for k, v in yumvars_from_host().items()},
         )
 
     command = [
@@ -164,7 +181,7 @@ def _build_rootfs(
         "--rm",
         "--mount",
         f"type=bind,src={build_dir},dst=/rootfs,relabel=private",
-        f"oraclelinux:{rootfs.ol_ver}",
+        f"{image or 'oraclelinux'}:{rootfs.ol_ver}",
         "bash",
         "-lc",
         install_cmd,
@@ -203,6 +220,7 @@ def ensure_rootfs(
     log: VmLogger,
     skip_build: bool = False,
     urls: List[str] = [],
+    image: Optional[str] = None,
 ) -> Path:
     final_dir = layout.rootfs_path(rootfs)
     if final_dir.is_dir():
@@ -225,6 +243,7 @@ def ensure_rootfs(
             layout.logs_dir / f"rootfs-build-{rootfs.name}.log",
             log,
             urls,
+            image,
         )
         _validate_rootfs(building_dir)
         os.rename(building_dir, final_dir)
@@ -268,6 +287,12 @@ def build_rootfses():
         action="store_true",
     )
     parser.add_argument(
+        "--image",
+        help="Choose the container image used to bootstrap. The default "
+        "is 'oraclelinux', but a fully qualified URL may be provided here "
+        "to use a local cache.",
+    )
+    parser.add_argument(
         "versions",
         nargs="*",
         type=int,
@@ -283,7 +308,7 @@ def build_rootfses():
         dir_ = layout.rootfs_path(rootfs)
         if args.rebuild and dir_.exists():
             _rmtree_rootfs(dir_)
-        ensure_rootfs(rootfs, layout, log, urls=args.rpm_url)
+        ensure_rootfs(rootfs, layout, log, urls=args.rpm_url, image=args.image)
 
 
 if __name__ == "__main__":
