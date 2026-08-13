@@ -89,7 +89,13 @@ def irq_has_action(prog: Program, irq: int) -> bool:
     """
 
     desc = irq_to_desc(prog, irq)
-    return bool(desc and desc.action)
+    try:
+        bad_action = prog.symbol("chained_action").address
+        return bool(
+            desc and desc.action and desc.action.value_() != bad_action
+        )
+    except LookupError:
+        return bool(desc and desc.action)
 
 
 def for_each_in_use_irq_num(prog: Program) -> Iterator[int]:
