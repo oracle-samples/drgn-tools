@@ -1,5 +1,6 @@
 # Copyright (c) 2024, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import re
 from contextlib import redirect_stdout
 from io import StringIO
 
@@ -69,19 +70,19 @@ class TestLock(DrgnToolsTestCase):
             if b"mutex" in comm:
                 kind = "mutex"
                 var = "lock"
-                func_substr = "mutex_lock"
+                func_re = "(__)?mutex_lock.*"
             elif b"rwsem" in comm:
                 kind = "rw_semaphore"
                 var = "sem"
-                func_substr = "rwsem"
+                func_re = ".*rwsem.*"
             elif comm == b"lockmod-complet":
                 kind = "completion"
                 var = "x"
-                func_substr = "completion"
+                func_re = ".*wait_for_completion.*|__wait_for_common"
             else:
                 kind = "semaphore"
                 var = "sem"
-                func_substr = "down"
+                func_re = "down.*"
             seen_kinds.add(kind)
 
             # There can be multiple frames which may contain the lock, we will need
@@ -90,7 +91,7 @@ class TestLock(DrgnToolsTestCase):
             frames = []
             for frame in trace:
                 fn = _remove_sym_suffixes(frame.name)
-                if fn and func_substr in fn:
+                if fn and re.fullmatch(func_re, fn):
                     frames.append(frame)
             if not frames:
                 self.fail(f"could not find relevant stack frame for {comm}")

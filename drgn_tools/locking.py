@@ -16,6 +16,7 @@ from drgn import FaultError
 from drgn import IntegerLike
 from drgn import NULL
 from drgn import Object
+from drgn import offsetof
 from drgn import Program
 from drgn import StackFrame
 from drgn import Type
@@ -642,7 +643,9 @@ def get_lock_from_frame(
         candidates = range(task.thread.sp, frame.sp, 8)
     elif prog.platform.arch == Architecture.AARCH64:
         candidates = range(
-            task.thread.cpu_context.sp,
+            # The register may not have to the stack, so we should be sure to
+            # include the complete pt_regs.
+            task.thread.cpu_context.sp - prog.type("struct pt_regs").size,
             # We can't rely on SP being available. We need the top of this
             # function's frame, which is the *previous* frame's frame pointer,
             # which we get by simply dereferencing the fp register.
@@ -667,6 +670,14 @@ def get_lock_from_frame(
         lock = Object(prog, tp, value=value)
         if is_task_blocked_on_lock(pid, kind, lock):
             return lock
+        # On aarch64, we observe that the address of the completion may never
+        # even get pushed to the stack. Instead, the address of the wait queue
+        # is. So we have a special case here. As far as we can tell it doesn't
+        # result in false positives.
+        if kind == "completion" and prog.platform.arch == Architecture.AARCH64:
+            lock = Object(prog, tp, value=value - offsetof(tp.type, "wait"))
+            if is_task_blocked_on_lock(pid, kind, lock):
+                return lock
     return None
 
 

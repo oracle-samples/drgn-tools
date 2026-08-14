@@ -506,6 +506,7 @@ def scan_completion(
     functions = [
         "__wait_for_common",
         "wait_for_completion",
+        "wait_for_completion_io",
     ]
     frame_list = bt_has_any(prog, functions, wtask, one_per_task=True)
     if frame_list:
