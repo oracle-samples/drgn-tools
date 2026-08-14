@@ -4,7 +4,6 @@
 Helpers for examining the memory management subsystem.
 """
 import enum
-import math
 from typing import List
 from typing import Tuple
 
@@ -12,7 +11,6 @@ import drgn
 from drgn import FaultError
 from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.boot import pgtable_l5_enabled
-from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu_ptr
 from drgn.helpers.linux.slab import for_each_slab_cache
 
@@ -240,15 +238,10 @@ class AddrKind(enum.Enum):
     def _ranges_aarch64(
         cls, prog: drgn.Program
     ) -> List[Tuple["AddrKind", int, int]]:
-        # For canonical information on this, see documentation:
-        # https://www.kernel.org/doc/html/latest/arch/arm64/memory.html
-        # And more importantly, code:
-        # arch/arm64/include/asm/memory.h
-        # The docs neglect to describe how KASLR impacts things.
-
+        # ARM64 address space is rather variable. These ranges are only written
+        # with consideration to UEK6 and later.
         MB = 1024 * 1024
         GB = 1024 * MB
-
         vmcoreinfo = dict(
             line.split("=", 1)
             for line in prog["VMCOREINFO"]
@@ -257,80 +250,41 @@ class AddrKind(enum.Enum):
             .strip()
             .split("\n")
         )
+
+        # We can rely the following being in vmcoreinfo:
+        # NUMBER(VA_BITS), NUMBER(kimage_voffset), NUMBER(PHYS_OFFSET):
+        #   v4.12 commit 20a166243328c ("arm64: kdump: add VMCOREINFO's for
+        #   user-space tools")
+        # KERNELOFFSET: v4.19 commit: e401b7c2c6900 ("arm64, kaslr: export
+        #   offset in VMCOREINFO ELF notes")
         va_bits = int(vmcoreinfo["NUMBER(VA_BITS)"])
         if va_bits != 48:
             raise NotImplementedError(
                 "Drgn-tools does not (yet) support arm64 with {va_bit} bit VAs"
             )
 
+        # These values are the direct map, for determining vmemmap ranges as
+        # well.
         page_offset = (1 << 64) - (1 << va_bits)
-        modules_vaddr = (1 << 64) - (1 << (va_bits - 1))
-        try:
-            # 3e35d303ab7d ("arm64: module: rework module VA range selection")
-            # changes the module virtual region to 2GiB. It also introduces the
-            # variable "module_direct_base", which we can use to detect it
-            prog.symbol("module_direct_base")
-            modules_vsize = 2 * GB
-        except LookupError:
-            modules_vsize = 128 * MB
-        modules_end = modules_vaddr + modules_vsize
+        page_end = (1 << 64) - (1 << va_bits - 1)
 
-        # vmemmap is at the end of the address space, except for a guard hole
-        # (whose size depends on the kernel version). Thankfully, Drgn already
-        # knows how to find it, so all we need to do is calculate the length.
-        # The length doesn't seem to vary based on kernel version.
-        # The computation is seen in arch/arm64/include/asm/memory.h,
-        # essentially we take the max length of the direct map, convert to
-        # pages, and multiply by the aligned #bytes per struct page. Direct map
-        # spans page_offset to modules_vaddr
-        vmemmap_start = prog["vmemmap"].value_()
-        page_order = int(math.log2(prog.type("struct page").size - 1)) + 1
-        vmemmap_size = (modules_vaddr - page_offset) >> (
-            prog["PAGE_SHIFT"].value_() - page_order
-        )
+        # At some point betwen 5.15 and 6.12, __bss_stop stopped being relocated.
+        # Detect this and fix it up.
+        bss_start = prog.symbol("__bss_start").address
+        bss_stop = prog.symbol("__bss_stop").address
+        if bss_stop < bss_start:
+            bss_stop += int(vmcoreinfo["KERNELOFFSET"], 16)
 
-        # For arm64, the kernel image mapping is actually within VMALLOC_START
-        # .. VMALLOC_END. In fact, VMALLOC_START = MODULES_END. So we need to be
-        # careful to split up the vmalloc region into a section before, and a
-        # section after the kernel image.
-        #
-        # What's worse, in 9ad7c6d5e75b ("arm64: mm: tidy up top of kernel VA
-        # space"), the top of the vmalloc space became VMEMMAP_START - 256MiB.
-        # Prior to that, it was defined as: (- PUD_SIZE - VMEMMAP_SIZE - 64
-        # KiB)... Unfortunately, the commit that does this, makes no change in
-        # terms of symbols or variables!
-        #
-        # We can use two tricks to help resolve this problem.
-        # 1. The /proc/kcore implementation contains a handy list of memory
-        #    ranges and their types. We can find the range which begins with
-        #    VMALLOC_START, and read the size out of it to get the end.
-        #    This is a nice, easy way to handle it, but it depends on having
-        #    CONFIG_PROC_KCORE enabled, and the kernel must have finished
-        #    initialization. Debugging partially initialized kernels should be
-        #    possible, so we'd like a backup, even a less-than-perfect one.
-        # 2. If that doesn't work, we can fall back on using the vmemmap_start
-        #    as the top of vmalloc. This is not strictly correct: there's a
-        #    "fixmap" region in between as well as an IO range. However... it's
-        #    the best we can do for this case.
-        vmalloc_end = vmemmap_start
-        try:
-            KCORE_VMALLOC = prog.constant("KCORE_VMALLOC")
-            for kcl in list_for_each_entry(
-                "struct kcore_list", prog["kclist_head"].address_of_(), "list"
-            ):
-                # In the code, VMALLOC_START is defined to MODULES_END
-                if kcl.type == KCORE_VMALLOC and kcl.addr == modules_end:
-                    vmalloc_end = (kcl.addr + kcl.size).value_()
-        except LookupError:
-            pass
-
-        return [
+        # User memory, direct map, and most of the kernel image address kinds
+        # are quite easy to determine via symbols or constants, or based on the
+        # VA Size.
+        basic_ranges = [
+            # 0x0000000000000000 - 0x0000ffffffffffff
             (cls.USER, 0, (1 << va_bits) - 1),
-            (cls.DIRECT_MAP, page_offset, modules_vaddr),
-            (cls.MODULE, modules_vaddr, modules_end),
-            # In between the modules_end and _text, there's the KASLR
-            # offset. This is more vmalloc!
-            (cls.VMALLOC, modules_end, prog.symbol("_text").address),
+            # 0xffff000000000000 - 0xffff800000000000
+            (cls.DIRECT_MAP, page_offset, page_end),
+            # These are just relocated based on kaslr offset so we don't need to
+            # do anything.
             (
                 cls.TEXT,
                 prog.symbol("_text").address,
@@ -346,23 +300,16 @@ class AddrKind(enum.Enum):
                 prog.symbol("__inittext_begin").address,
                 prog.symbol("__inittext_end").address,
             ),
-            (
-                # TODO: should we have INITDATA too?
-                # NOTE: initdata begin .. end includes percpu, as well as some
-                # hypervisor percpu things, and relocation information. We're
-                # splitting initdata here to ensure we get it right.
-                cls.DATA,
-                prog.symbol("__initdata_begin").address,
-                prog.symbol("__per_cpu_start").address,
-            ),
+            # We're relying on ordering here. per_cpu lies within initdata,
+            # so put it earlier in the list so that it is identified first.
             (
                 cls.PERCPU,
                 prog.symbol("__per_cpu_start").address,
                 prog.symbol("__per_cpu_end").address,
             ),
             (
-                cls.DATA,
-                prog.symbol("__per_cpu_end").address,
+                cls.DATA,  # TODO: should we have initdata?
+                prog.symbol("__initdata_begin").address,
                 prog.symbol("__initdata_end").address,
             ),
             (
@@ -372,19 +319,81 @@ class AddrKind(enum.Enum):
             ),
             (
                 cls.BSS,
-                prog.symbol("__bss_start").address,
-                prog.symbol("__bss_stop").address,
+                bss_start,
+                bss_stop,
             ),
-            (
-                cls.VMALLOC,
-                prog.symbol("_end").address,
-                vmalloc_end,
-            ),
-            # There's some arch-specific junk between _text and _end which isn't
-            # fully covered by the ranges above for the kernel image. For the
-            # most part this shouldn't matter.
-            (cls.VMEMMAP, vmemmap_start, vmemmap_start + vmemmap_size),
         ]
+
+        # Now for the tricky part: determining modules and vmalloc regions.
+        # We're really relying on UEK configuration and versions here. This is
+        # only valid for UEK6 and later, with CONFIG_RANDOMIZE_BASE enabled.
+        # It works with or without KASLR being enabled at runtime, but
+        # CONFIG_RANDOMIZE_BASE is required to be enabled.
+
+        # These constants are in vmcoreinfo since v5.18 commit 2369f171d5c55
+        # ("arm64: crash_core: Export MODULES, VMALLOC, and VMEMMAP ranges").
+        # They should be taken with a grain of salt because they are
+        # preprocessor constants. MODULES_VADDR is subject to KASLR, so the
+        # preprocessor constant is summarily ignored in that case.
+        if "NUMBER(MODULES_VADDR)" in vmcoreinfo:
+            modules_end = int(vmcoreinfo["NUMBER(MODULES_END)"], 16)
+            vmalloc_start = modules_end
+            vmalloc_end = int(vmcoreinfo["NUMBER(VMALLOC_END)"], 16)
+            vmemmap_start = int(vmcoreinfo["NUMBER(VMEMMAP_START)"], 16)
+            vmemmap_end = int(vmcoreinfo["NUMBER(VMEMMAP_END)"], 16)
+        else:
+            # Otherwise, we need to fudge things a bit. Vmalloc starts at the
+            # end of the statically configured module region, and continues
+            # until basically the vmemmap. (There is technically some PCI I/O
+            # and fixmap stuff in there... but we're fudging things at this
+            # point)
+            vmalloc_start = page_end + 128 * MB
+            vmemmap_start = prog["vmemmap"].value_()
+            vmalloc_end = vmemmap_start
+            # Size of the vmemmap is defined in terms of the direct map size and
+            # struct page.
+            vmemmap_size = (
+                (page_end - page_offset) // prog["PAGE_SIZE"].value_()
+            ) * prog.type("struct page").size
+            vmemmap_end = vmemmap_start + vmemmap_size
+
+        vmemmap_vmalloc_regions = [
+            (cls.VMEMMAP, vmemmap_start, vmemmap_end),
+            (cls.VMALLOC, vmalloc_start, vmalloc_end),
+        ]
+
+        # Ok, now handle the module base address(es)
+        module_regions = []
+        try:
+            # v6.5 commit 3e35d303ab7d ("arm64: module: rework module VA
+            # range selection") changes the module virtual region to 2GiB.
+            # It also introduces the variables module_direct_base and
+            # module_plt_base. These are each
+            module_direct = prog["module_direct_base"].value_()
+            if module_direct:
+                module_regions.append(
+                    (cls.MODULE, module_direct, module_direct + 128 * MB)
+                )
+            module_plt = prog["module_plt_base"].value_()
+            if module_plt:
+                module_regions.append(
+                    (cls.MODULE, module_plt, module_plt + 2 * GB)
+                )
+        except LookupError:
+            # Prior to that commit, we just had module_alloc_base.
+            # Interestingly, module allocations were actually allowed to spill
+            # out over 2 GiB if allocation within the first 128 MiB was
+            # impossible, and KASAN was disabled and CONFIG_ARM64_MODULE_PLTS
+            # was enabled. It seems totally feasible to believe that this
+            # happens on real systems. We're ignoring that here, because it's
+            # uncertain how to distinguish between real vmalloc allocations and
+            # module allocations that spilled out.
+            module_alloc = prog["module_alloc_base"].value_()
+            module_regions.append(
+                (cls.MODULE, module_alloc, module_alloc + 128 * MB)
+            )
+
+        return basic_ranges + module_regions + vmemmap_vmalloc_regions
 
     @classmethod
     def _ranges(cls, prog: drgn.Program) -> List[Tuple["AddrKind", int, int]]:
