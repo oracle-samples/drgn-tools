@@ -45,6 +45,16 @@ class TestLock(DrgnToolsTestCase):
         self.assertIn("lockmod-rwsem", output)
         self.assertIn("lockmod-complet", output)
 
+        expected_lines = [
+            f"Mutex: 0x{self.prog.symbol('lockmod_mutex').address:x}",
+            f"Semaphore: 0x{self.prog.symbol('lockmod_sem').address:x}",
+            f"Rwsem: 0x{self.prog.symbol('lockmod_rwsem').address:x}",
+            f"Completion: 0x{self.prog.symbol('lockmod_completion').address:x}",
+            f"Completion: 0x{self.prog.symbol('lockmod_doexit').address:x}",
+        ]
+        for line in expected_lines:
+            self.assertIn(line, output)
+
     # the rwsem code does not support UEK4, no reason to add support
     @skip_live
     @skip_unless_vmcore("*lockmod*")
