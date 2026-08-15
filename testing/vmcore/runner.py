@@ -53,7 +53,7 @@ def _test_in_host(layout: TestDirectories, param: TestParam) -> TestResult:
         param.core_name, param.mode.value, "hostfs", param.python.value
     )
     xml = testlog.parent / testlog.name.replace(".log", ".xml")
-    with testlog.open("wt") as f:
+    with testlog.open("w+t") as f:
         print(f"Begin testing {param.core_name}")
         test_cmd = [
             sys.executable,
