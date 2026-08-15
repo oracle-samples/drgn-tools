@@ -13,7 +13,6 @@ import drgn
 from drgn import Architecture
 from drgn import cast
 from drgn import FaultError
-from drgn import IntegerLike
 from drgn import NULL
 from drgn import Object
 from drgn import offsetof
@@ -25,9 +24,12 @@ from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.list import validate_list_for_each_entry
 from drgn.helpers.linux.percpu import per_cpu
+from drgn.helpers.linux.pid import find_task
 from drgn.helpers.linux.sched import cpu_curr
+from drgn.helpers.linux.sched import idle_task
 from drgn.helpers.linux.sched import task_cpu
 from drgn.helpers.linux.sched import task_state_to_char
+from drgn.helpers.linux.slab import slab_object_info
 from drgn.helpers.linux.wait import waitqueue_for_each_task
 
 from drgn_tools.bt import bt
@@ -234,6 +236,45 @@ def careful_list_for_each_entry(
             raise ValidationError("Cycle detected")
         seen.add(val)
         yield item
+
+
+def is_taskp(obj: Object) -> bool:
+    """
+    Return whether a ``struct task_struct *`` is actually a valid task struct
+    pointer. The implementation is guided by _is_task_struct() in
+    drgn/helpers/linux/common.py.
+    """
+    # The init task is a special-case.
+    prog = obj.prog_
+    if obj == prog["init_task"].address_of_():
+        return True
+
+    # Every task except init_task is a slab object.
+    info = slab_object_info(obj)
+    if not info:
+        return False
+
+    # The slab cache must match the task_struct_cachep.
+    cache = prog["task_struct_cachep"]
+    if info.slab_cache != cache:
+        return False
+
+    # It's not enough to be a pointer into the correct slab cache, it must be a
+    # pointer to the beginning of the object.
+    if info.address != obj.value_():
+        return False
+
+    # If the slab cache is not merged, then yes, this is a task.
+    if cache.refcount.value_() == 1:
+        return True
+
+    # If the slab cache IS merged, then we must further verify that the slab
+    # object is actually a task by looking it up.
+    pid = obj.pid.value_()
+    if pid:
+        return find_task(prog, pid) == obj
+    else:
+        return idle_task(prog, task_cpu(obj)) == obj
 
 
 def for_each_lock_waiter(
@@ -579,12 +620,44 @@ def get_rwsem_info(rwsem: Object, callstack: int = 0) -> None:
         get_rwsem_waiters_info(rwsem, callstack)
 
 
+def _is_on_task_stack(task: Object, lock: Object) -> bool:
+    """
+    Since kernel v7.1 (see for_each_lock_waiter), locks only contain a single
+    pointer to their first waiter. This is better for the size of the data
+    structure but much worse for validation: we were using that second pointer
+    to help validate that a candidate lock object was indeed a lock. Without the
+    second pointer, it's much easier for a rogue stack pointer to accidentally
+    look like a mutex because it is at the right offset from the corresponding
+    waiter structure.
+
+    We avoid this common false-positive with the simple criteria: we will not
+    detect a lock declared on a task's own stack. If a task is waiting on a lock
+    which is allocated on its own stack, we're going to have to hope that
+    another task is waiting on that same lock (because we'll happily detect a
+    lock declared on some OTHER task's stack).
+
+    In reality, mutex/sem/rwsem are so rarely declared on the stack that it's
+    not much of a concern anyway.
+    """
+    # Pre-7.1? Can't be mistaken.
+    if not has_member(lock, "first_waiter"):
+        return False
+
+    lock_addr = lock.value_()
+    vma = task.stack_vm_area
+    if not vma:
+        return False
+    start = vma.addr.value_()
+    end = start + vma.size.value_()
+    return start <= lock_addr < end
+
+
 def is_task_blocked_on_lock(
-    pid: IntegerLike, lock_type: str, lock: Object
+    task: Object, lock_type: str, lock: Object
 ) -> bool:
     """
     Check if a task is blocked on a given lock or not
-    :param pid: PID of task
+    :param task: ``struct task_struct *``
     :param var_name: variable name (sem, mutex or completion)
     :param lock: ``struct mutex *`` or ``struct semaphore *`` or ``struct rw_semaphore *``
                  ``struct completion *``
@@ -592,20 +665,29 @@ def is_task_blocked_on_lock(
     """
 
     try:
+        # Get an iterator of tasks waiting on the lock.
         if lock_type in ("mutex", "semaphore", "rw_semaphore"):
-            return pid in [
-                waiter.task.pid.value_()
+            if _is_on_task_stack(task, lock):
+                return False
+            waiters: Iterable[Object] = (
+                waiter.task
                 for waiter in for_each_lock_waiter(
                     lock, careful_list_for_each_entry
                 )
-            ]
+            )
         elif lock_type == "completion":
-            return pid in [
-                waiter.pid.value_()
-                for waiter in completion_for_each_task_careful(lock)
-            ]
+            waiters = completion_for_each_task_careful(lock)
         else:
             return False
+
+        # Verify that every waiter is a valid taskp, and that this task is
+        # indeed one of them.
+        found_task = False
+        for wait_task in waiters:
+            if not is_taskp(wait_task):
+                return False
+            found_task = found_task or task == wait_task
+        return found_task
     except (FaultError, ValidationError):
         return False
 
@@ -654,7 +736,6 @@ def get_lock_from_frame(
         )
 
     tp = prog.type(f"struct {kind} *")
-    pid = task.pid.value_()
     for addr in candidates:
         value = prog.read_u64(addr)
         akind = AddrKind.categorize(prog, value)
@@ -668,7 +749,7 @@ def get_lock_from_frame(
         ):
             continue
         lock = Object(prog, tp, value=value)
-        if is_task_blocked_on_lock(pid, kind, lock):
+        if is_task_blocked_on_lock(task, kind, lock):
             return lock
         # On aarch64, we observe that the address of the completion may never
         # even get pushed to the stack. Instead, the address of the wait queue
@@ -676,7 +757,7 @@ def get_lock_from_frame(
         # result in false positives.
         if kind == "completion" and prog.platform.arch == Architecture.AARCH64:
             lock = Object(prog, tp, value=value - offsetof(tp.type, "wait"))
-            if is_task_blocked_on_lock(pid, kind, lock):
+            if is_task_blocked_on_lock(task, kind, lock):
                 return lock
     return None
 
