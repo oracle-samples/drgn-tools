@@ -24,7 +24,7 @@ VMCORE_PREFIX = "drgn-tools-vmcores/"
 # fmt: off
 UEK_YUM = "https://yum{ociregion}.{ocidomain}/repo/OracleLinux/OL{ol_ver}/UEKR{uek_ver}/{arch}/"
 UEKNEXT_YUM = "https://yum{ociregion}.{ocidomain}/repo/OracleLinux/OL{ol_ver}/developer/UEKnext/{arch}/"
-RHCK_YUM = "https://yum{ociregion}.{ocidomain}/repo/OracleLinux/OL{ol_ver}/baseos/latest/{arch}/"
+BASEOS_YUM = "https://yum{ociregion}.{ocidomain}/repo/OracleLinux/OL{ol_ver}/baseos/latest/{arch}/"
 
 DEBUGINFO_URL = "https://oss.oracle.com/ol{ol_ver}/debuginfo/{pkgbase}-debuginfo-{release}.rpm"
 # fmt: on
@@ -181,7 +181,15 @@ class KernelCategory(NamedTuple):
         if self.kind == KernelKind.UEKNEXT:
             fmt = UEKNEXT_YUM
         elif self.kind == KernelKind.RHCK:
-            fmt = RHCK_YUM
+            fmt = BASEOS_YUM
+        elif (
+            self.arch == Architecture.AARCH64
+            and self.ol_ver in AARCH64_DEFAULT_UEK
+            and self.kind == AARCH64_DEFAULT_UEK[self.ol_ver]
+        ):
+            # For aarch64, handle the case of the default UEK being placed in
+            # baseos/latest repo.
+            fmt = BASEOS_YUM
         else:
             fmt = UEK_YUM
             fmtdict["uek_ver"] = self.uek_ver
@@ -283,19 +291,30 @@ class TestDirectories(NamedTuple):
 
 # These are the VM testing targets.
 # fmt: off
-TARGETS = [
-    KernelCategory(OLVersion.OL10, KernelKind.UEKNEXT, Architecture.host_arch()),
-    KernelCategory(OLVersion.OL10, KernelKind.UEK8, Architecture.host_arch()),
-    KernelCategory(OLVersion.OL10, KernelKind.RHCK, Architecture.host_arch()),
-    KernelCategory(OLVersion.OL9, KernelKind.UEKNEXT, Architecture.host_arch()),
-    KernelCategory(OLVersion.OL9, KernelKind.UEK8, Architecture.host_arch()),
-    KernelCategory(OLVersion.OL9, KernelKind.UEK7, Architecture.host_arch()),
-    KernelCategory(OLVersion.OL9, KernelKind.RHCK, Architecture.host_arch()),
-    KernelCategory(OLVersion.OL8, KernelKind.UEK7, Architecture.host_arch()),
-    KernelCategory(OLVersion.OL8, KernelKind.UEK6, Architecture.host_arch()),
-    KernelCategory(OLVersion.OL8, KernelKind.RHCK, Architecture.host_arch()),
-    KernelCategory(OLVersion.OL7, KernelKind.UEK6, Architecture.host_arch()),
-]
+TARGETS = {
+    Architecture.X86_64: [
+        KernelCategory(OLVersion.OL10, KernelKind.UEKNEXT, Architecture.X86_64),
+        KernelCategory(OLVersion.OL10, KernelKind.UEK8, Architecture.X86_64),
+        KernelCategory(OLVersion.OL10, KernelKind.RHCK, Architecture.X86_64),
+        KernelCategory(OLVersion.OL9, KernelKind.UEKNEXT, Architecture.X86_64),
+        KernelCategory(OLVersion.OL9, KernelKind.UEK8, Architecture.X86_64),
+        KernelCategory(OLVersion.OL9, KernelKind.UEK7, Architecture.X86_64),
+        KernelCategory(OLVersion.OL9, KernelKind.RHCK, Architecture.X86_64),
+        KernelCategory(OLVersion.OL8, KernelKind.UEK7, Architecture.X86_64),
+        KernelCategory(OLVersion.OL8, KernelKind.UEK6, Architecture.X86_64),
+        KernelCategory(OLVersion.OL8, KernelKind.RHCK, Architecture.X86_64),
+        KernelCategory(OLVersion.OL7, KernelKind.UEK6, Architecture.X86_64),
+    ],
+    Architecture.AARCH64: [
+        KernelCategory(OLVersion.OL10, KernelKind.UEKNEXT, Architecture.AARCH64),
+        KernelCategory(OLVersion.OL10, KernelKind.UEK8, Architecture.AARCH64),
+        KernelCategory(OLVersion.OL9, KernelKind.UEKNEXT, Architecture.AARCH64),
+        KernelCategory(OLVersion.OL9, KernelKind.UEK8, Architecture.AARCH64),
+        KernelCategory(OLVersion.OL9, KernelKind.UEK7, Architecture.AARCH64),
+        KernelCategory(OLVersion.OL8, KernelKind.UEK7, Architecture.AARCH64),
+        KernelCategory(OLVersion.OL8, KernelKind.UEK6, Architecture.AARCH64),
+    ],
+}
 # fmt: on
 
 # These are the rootfs directories which need to be built for VM and vmcore
@@ -335,3 +354,16 @@ KERNEL_TOOLSETS = {
     KernelCategory(OLVersion.OL8, KernelKind.UEK7, Architecture.AARCH64): "gcc-toolset-11",
 }
 # fmt: on
+
+# We explicitly do not package or support RHCK on aarch64: only UEK is
+# available. So for each aarch64 OL version, one "default" UEK version is
+# present in the baseos/latest repo rather than the standard UEK repo. Newer
+# UEKs are added in standalone repos as normal.
+#
+# This seems to no longer be the case for OL10: UEK8 is the only kernel
+# provided, and it is provided via repo ol10_UEKR8.
+AARCH64_DEFAULT_UEK = {
+    OLVersion.OL9: KernelKind.UEK7,
+    OLVersion.OL8: KernelKind.UEK6,
+    OLVersion.OL7: KernelKind.UEK5,
+}

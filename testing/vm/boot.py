@@ -22,6 +22,7 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 
+from testing.config import Architecture
 from testing.config import KernelVer
 from testing.config import REPO_ROOT
 from testing.config import SHARED_FS_VIRTIOFS
@@ -491,20 +492,26 @@ def _start_virtiofsd(socket_path: Path, shared_dir: Path) -> Iterator[None]:
             proc.wait(timeout=2)
 
 
-def _qemu_memory_args(shared_fs: str) -> List[str]:
+def _qemu_memory_args(arch: Architecture, shared_fs: str) -> List[str]:
+    if arch == Architecture.X86_64:
+        machine = "q35"
+    elif arch == Architecture.AARCH64:
+        machine = "virt"
+    else:
+        assert False, "architecture not supported"
     if shared_fs == SHARED_FS_VIRTIOFS:
         return [
             # memfd backend is necessary for virtiofsd.
             "-object",
             "memory-backend-memfd,id=mem,size=2048M,share=on",
             "-machine",
-            "q35,memory-backend=mem",
+            f"{machine},memory-backend=mem",
             "-m",
             "2048",
         ]
     return [
         "-machine",
-        "q35",
+        machine,
         "-m",
         "2048",
     ]
@@ -607,7 +614,11 @@ def run_in_vm(
         else:
             serial_args = ["-serial", "mon:stdio"]
 
-        kernel_cmdline = "console=ttyS0,115200 panic=-1"
+        if kernel.category.arch == Architecture.X86_64:
+            console = "ttyS0"
+        elif kernel.category.arch == Architecture.AARCH64:
+            console = "ttyAMA0"
+        kernel_cmdline = f"console={console},115200 panic=-1"
         if not log.verbose:
             kernel_cmdline = "quiet loglevel=1 " + kernel_cmdline
 
@@ -621,7 +632,7 @@ def run_in_vm(
             "-append", kernel_cmdline,
 
             "-smp", "2,maxcpus=4",  # testdata for cpuinfo
-            *_qemu_memory_args(shared_fs),
+            *_qemu_memory_args(kernel.category.arch, shared_fs),
 
             *serial_args,
             "-device", "virtio-rng",
@@ -676,7 +687,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="interactively run a test VM")
     parser.add_argument(
         "kernel",
-        choices=[t.name for t in TARGETS],
+        choices=[t.name for t in TARGETS[Architecture.host_arch()]],
         help="kernel VM to run",
     )
     parser.add_argument(
@@ -727,7 +738,7 @@ def main() -> None:
     layout = TestDirectories.create(args.base_dir)
     log = VmLogger(args.verbose, True)
 
-    for target in TARGETS:
+    for target in TARGETS[Architecture.host_arch()]:
         if target.name == args.kernel:
             break
     else:

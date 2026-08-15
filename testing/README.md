@@ -23,6 +23,10 @@ and an additional 100 GiB would be necessary to store the various vmcores
 (assuming you have access to them). Finally, a speedy Internet connection is
 helpful in creating the rootfs, as well as downloading kernels & vmcores.
 
+**Please note:** for VM testing on aarch64, a bare-metal machine (not a VM) is
+required, as nested virtualization is still not properly supported on aarch64.
+Vmcore testing should be possible, including in OL rootfses, on aarch64.
+
 For Oracle Linux 9:
 
 ```sh
@@ -31,7 +35,7 @@ dnf config-manager --enable ol9_kvm_utils
 dnf config-manager --enable ol9_codeready_builder
 dnf config-manager --enable ol9_developer_EPEL
 dnf install -y git drgn qemu-kvm podman virtiofsd \
-               cpio gzip bzip2 zstd busybox
+               cpio gzip bzip2 zstd busybox ipxe-roms-qemu
 ```
 
 For Oracle Linux 10:
@@ -44,8 +48,8 @@ dnf config-manager --enable ol10_codeready_builder
 dnf config-manager --enable ol10_u1_developer_EPEL
 # The fixed busybox RPM should become available in ol10_u2_developer_EPEL
 dnf install -y git drgn qemu-kvm podman virtiofsd \
-               cpio gzip bzip2 zstd \
-               https://kojipkgs.fedoraproject.org//packages/busybox/1.37.0/4.el10_2/x86_64/busybox-1.37.0-4.el10_2.x86_64.rpm
+               cpio gzip bzip2 zstd ipxe-roms-qemu \
+               https://kojipkgs.fedoraproject.org//packages/busybox/1.37.0/4.el10_2/$(uname -m)/busybox-1.37.0-4.el10_2.$(uname -m).rpm
 ```
 
 

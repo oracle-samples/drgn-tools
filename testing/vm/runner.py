@@ -21,6 +21,7 @@ from typing import Set
 from typing import Union
 
 from testing.config import APPSTREAM_PYTHONS
+from testing.config import Architecture
 from testing.config import Debuginfo
 from testing.config import KernelCategory
 from testing.config import KernelKind
@@ -42,7 +43,8 @@ from testing.vm.logging import VmLogger
 
 
 def _select_targets(pattern: str = "*") -> List[KernelCategory]:
-    return [t for t in TARGETS if fnmatch.fnmatch(t.name, pattern)]
+    targets = TARGETS[Architecture.host_arch()]
+    return [t for t in targets if fnmatch.fnmatch(t.name, pattern)]
 
 
 def _parse_args() -> argparse.Namespace:
