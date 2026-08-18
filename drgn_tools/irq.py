@@ -89,12 +89,20 @@ def irq_has_action(prog: Program, irq: int) -> bool:
     """
 
     desc = irq_to_desc(prog, irq)
-    try:
-        bad_action = prog.symbol("chained_action").address
+    if "drgn_tools.irq.chained_action" in prog.cache:
+        chained_action = prog.cache["drgn_tools.irq.chained_action"]
+    else:
+        try:
+            chained_action = prog.symbol("chained_action").address
+        except LookupError:
+            chained_action = None
+        prog.cache["drgn_tools.irq.chained_action"] = chained_action
+
+    if chained_action:
         return bool(
-            desc and desc.action and desc.action.value_() != bad_action
+            desc and desc.action and desc.action.value_() != chained_action
         )
-    except LookupError:
+    else:
         return bool(desc and desc.action)
 
 
