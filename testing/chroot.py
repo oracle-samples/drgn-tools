@@ -38,15 +38,13 @@ def run_in_rootfs(
         mount_targets.append(target)
         source = bind.source.absolute()
         lines.append(f"mkdir -p {shlex.quote(str(target))}")
+        lines.append(
+            "mount --bind "
+            f"{shlex.quote(str(source))} {shlex.quote(str(target))}"
+        )
         if bind.readonly:
             lines.append(
-                "mount -o ro --bind "
-                f"{shlex.quote(str(source))} {shlex.quote(str(target))}"
-            )
-        else:
-            lines.append(
-                "mount --bind "
-                f"{shlex.quote(str(source))} {shlex.quote(str(target))}"
+                "mount -o remount,ro,bind " f"{shlex.quote(str(target))}"
             )
 
     for host_path, dst in (
@@ -60,9 +58,10 @@ def run_in_rootfs(
         lines.append(f"mkdir -p {shlex.quote(str(target.parent))}")
         lines.append(f"touch {shlex.quote(str(target))}")
         lines.append(
-            "mount -o ro --bind "
+            "mount --bind "
             f"{shlex.quote(str(host_path))} {shlex.quote(str(target))}"
         )
+        lines.append("mount -o remount,ro,bind " f"{shlex.quote(str(target))}")
 
     proc_target = _rootfs_mount_target(rootfs, "/proc")
     lines.append(f"mkdir -p {shlex.quote(str(proc_target))}")
