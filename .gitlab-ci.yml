@@ -1,6 +1,6 @@
 vmcore:
   script:
-    - python -m testing.vmcore.runner -j 8
+    - python -m testing.vmcore.runner -j 8 --core-directory /var/drgn-tools/vmcores
   artifacts:
     when: always
     paths:
