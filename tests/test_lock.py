@@ -111,7 +111,7 @@ class TestLock(DrgnToolsTestCase):
             # to using the stack offsets.
             for frame in frames:
                 value = locking.get_lock_from_frame(
-                    self.prog, task, frame, kind, var
+                    self.prog, task, frame, kind, var, set()
                 )
                 if value is not None:
                     break
@@ -128,7 +128,12 @@ class TestLock(DrgnToolsTestCase):
             # possibility of a DWARF unwind where we get an absent object.
             for frame in frames:
                 value = locking.get_lock_from_frame(
-                    self.prog, task, frame, kind, "invalid variable name"
+                    self.prog,
+                    task,
+                    frame,
+                    kind,
+                    "invalid variable name",
+                    set(),
                 )
                 if value is not None:
                     break

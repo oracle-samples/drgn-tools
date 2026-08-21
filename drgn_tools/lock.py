@@ -148,7 +148,9 @@ def get_mutex_lock_info(
     seen_mutexes: Set[int] = set()
 
     for task, frame in frame_list:
-        mutex = get_lock_from_frame(prog, task, frame, "mutex", "lock")
+        mutex = get_lock_from_frame(
+            prog, task, frame, "mutex", "lock", seen_mutexes
+        )
         if not mutex:
             continue
         mutex_addr = mutex.value_()
@@ -213,7 +215,9 @@ def scan_mutex_lock(
     seen_mutexes: Set[int] = set()
 
     for task, frame in frame_list:
-        mutex = get_lock_from_frame(prog, task, frame, "mutex", "lock")
+        mutex = get_lock_from_frame(
+            prog, task, frame, "mutex", "lock", seen_mutexes
+        )
         if not mutex:
             continue
         mutex_addr = mutex.value_()
@@ -277,7 +281,9 @@ def show_sem_lock(
     seen_sems: Set[int] = set()
 
     for task, frame in frame_list:
-        sem = get_lock_from_frame(prog, task, frame, "semaphore", "sem")
+        sem = get_lock_from_frame(
+            prog, task, frame, "semaphore", "sem", seen_sems
+        )
         if not sem:
             continue
         semaddr = sem.value_()
@@ -326,7 +332,9 @@ def show_rwsem_lock(
     seen_rwsems: Set[int] = set()
 
     for task, frame in frame_list:
-        rwsem = get_lock_from_frame(prog, task, frame, "rw_semaphore", "sem")
+        rwsem = get_lock_from_frame(
+            prog, task, frame, "rw_semaphore", "sem", seen_rwsems
+        )
         if not rwsem:
             continue
         rwsemaddr = rwsem.value_()
@@ -405,7 +413,9 @@ def show_completion(
     completions_done = 0
 
     for task, frame in frame_list:
-        completion = get_lock_from_frame(prog, task, frame, "completion", "x")
+        completion = get_lock_from_frame(
+            prog, task, frame, "completion", "x", seen_completions
+        )
         if not completion:
             continue
         completion_addr = completion.value_()

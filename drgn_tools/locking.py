@@ -7,6 +7,7 @@ import enum
 from typing import Callable
 from typing import Iterable
 from typing import Optional
+from typing import Set
 from typing import Tuple
 
 import drgn
@@ -245,9 +246,18 @@ def is_taskp(obj: Object) -> bool:
     drgn/helpers/linux/common.py.
     """
     # The init task is a special-case.
+    obj_addr = obj.value_()
     prog = obj.prog_
-    if obj == prog["init_task"].address_of_():
+    init_task_addr = prog.cache.get("drgn_tools.locking.init_task_addr")
+    if not init_task_addr:
+        init_task_addr = prog["init_task"].address_
+        prog.cache["drgn_tools.locking.init_task_addr"] = init_task_addr
+    if obj_addr == init_task_addr:
         return True
+
+    # Otherwise, it must be a direct map address
+    if AddrKind.categorize(prog, obj_addr) != AddrKind.DIRECT_MAP:
+        return False
 
     # Every task except init_task is a slab object.
     info = slab_object_info(obj)
@@ -693,7 +703,12 @@ def is_task_blocked_on_lock(
 
 
 def get_lock_from_frame(
-    prog: Program, task: Object, frame: StackFrame, kind: str, var: str
+    prog: Program,
+    task: Object,
+    frame: StackFrame,
+    kind: str,
+    var: str,
+    seen_addrs: Set[int],
 ) -> Optional[Object]:
     """
     Given a stack frame, try to get the relevant lock out of it.
@@ -749,6 +764,11 @@ def get_lock_from_frame(
         ):
             continue
         lock = Object(prog, tp, value=value)
+        # Checking a candidate can be expensive, especially if the candidate is
+        # a valid lock and has many waiters. Check if we already did it and if
+        # so, bail.
+        if value in seen_addrs:
+            return lock
         if is_task_blocked_on_lock(task, kind, lock):
             return lock
         # On aarch64, we observe that the address of the completion may never
@@ -756,7 +776,10 @@ def get_lock_from_frame(
         # is. So we have a special case here. As far as we can tell it doesn't
         # result in false positives.
         if kind == "completion" and prog.platform.arch == Architecture.AARCH64:
-            lock = Object(prog, tp, value=value - offsetof(tp.type, "wait"))
+            value = value - offsetof(tp.type, "wait")
+            lock = Object(prog, tp, value=value)
+            if value in seen_addrs:
+                return lock
             if is_task_blocked_on_lock(task, kind, lock):
                 return lock
     return None
