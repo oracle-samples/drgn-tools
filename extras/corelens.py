@@ -1,5 +1,6 @@
 # Copyright (c) 2025, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import shlex
 import subprocess
 from datetime import datetime
 from datetime import timedelta
@@ -47,11 +48,24 @@ class LibCorelens(Plugin, RedHatPlugin):
                 if storage and (
                     storage.startswith("LABEL=") or storage.startswith("UUID=")
                 ):
-                    resolved_storage = subprocess.getoutput(
-                        f"findmnt -rn -o TARGET -S {storage}"
-                    )
+                    try:
+                        resolved_storage = subprocess.check_output(
+                            [
+                                "findmnt",
+                                "--raw",
+                                "--noheadings",
+                                "--output",
+                                "TARGET",
+                                "--source",
+                                storage,
+                            ],
+                            shell=False,
+                            universal_newlines=True,  # text=True for py3.7+
+                        )
+                    except subprocess.CalledProcessError:
+                        resolved_storage = None
                     if resolved_storage:
-                        storage = resolved_storage
+                        storage = resolved_storage.strip()
                         return (
                             f"{storage}/{vmcore_path}"
                             if not vmcore_path.startswith("/")
@@ -127,14 +141,16 @@ class LibCorelens(Plugin, RedHatPlugin):
 
             for vmcore_subdir in recent_vmcore_dirs:
                 try:
-                    vmcore_file = next(vmcore_subdir.glob("*vmcore"))
+                    vmcore_file = shlex.quote(
+                        str(next(vmcore_subdir.glob("*vmcore")))
+                    )
                 except StopIteration:
                     error_logs.append(
                         f"Error: missing vmcore in {vmcore_subdir}"
                     )
                     continue
-                corelens_output_file = (
-                    corelens_output_path / vmcore_subdir.name
+                corelens_output_file = shlex.quote(
+                    str(corelens_output_path / vmcore_subdir.name)
                 )
                 corelens_cmd = (
                     f"corelens {vmcore_file} -A -o {corelens_output_file}"
