@@ -1,5 +1,6 @@
-# Copyright (c) 2025, Oracle and/or its affiliates.
+# Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
+import os.path
 import shlex
 import subprocess
 from datetime import datetime
@@ -23,67 +24,73 @@ class LibCorelens(Plugin, RedHatPlugin):
         PluginOpt("task-days", default=3, desc="days of task history")
     ]
 
-    def get_vmcore_dir_path(self):
-        try:
-            storage = None
-            vmcore_path = None
-            with open("/etc/kdump.conf", "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith("#") or not line:
-                        continue
+    def get_vmcore_dir_path(self, kdump_conf: str = "/etc/kdump.conf"):
+        # Storage options: default unspecified (use rootfs)
+        storage_type = None
+        storage = None
+        # Vmcore path: default is /var/crash according to kdump.conf(5)
+        vmcore_path = "/var/crash"
 
-                    parts = line.split(None, 1)
-                    if len(parts) < 2:
-                        continue
+        with open(kdump_conf, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("#") or not line:
+                    continue
 
-                    key, value = parts
+                parts = line.split(None, 1)
+                if len(parts) < 2:
+                    continue
 
-                    if key.lower() in {"raw", "ext4", "xfs", "nfs", "ssh"}:
-                        storage = value
-                    elif key.lower() == "path":
-                        vmcore_path = value
+                key, value = parts
 
-            if vmcore_path:
-                if storage and (
-                    storage.startswith("LABEL=") or storage.startswith("UUID=")
-                ):
-                    try:
-                        resolved_storage = subprocess.check_output(
-                            [
-                                "findmnt",
-                                "--raw",
-                                "--noheadings",
-                                "--output",
-                                "TARGET",
-                                "--source",
-                                storage,
-                            ],
-                            shell=False,
-                            universal_newlines=True,  # text=True for py3.7+
-                        )
-                    except subprocess.CalledProcessError:
-                        resolved_storage = None
-                    if resolved_storage:
-                        storage = resolved_storage.strip()
-                        return (
-                            f"{storage}/{vmcore_path}"
-                            if not vmcore_path.startswith("/")
-                            else f"{storage}{vmcore_path}"
-                        )
-                return vmcore_path
-            else:
-                return None
-        except Exception:
-            return None
+                if key.lower() in {"raw", "ext4", "xfs", "nfs", "ssh"}:
+                    storage_type = key.lower()
+                    storage = value
+                elif key.lower() == "path":
+                    vmcore_path = value
+
+        if storage_type in ("raw", "nfs", "ssh"):
+            return (
+                None,
+                f"error: vmcore storage not supported: {storage_type} {storage}",
+            )
+
+        if storage:
+            try:
+                resolved_storage = subprocess.check_output(
+                    [
+                        "findmnt",
+                        "--raw",
+                        "--noheadings",
+                        "--output",
+                        "TARGET",
+                        "--source",
+                        storage,
+                    ],
+                    shell=False,
+                    universal_newlines=True,  # text=True for py3.7+
+                )
+            except subprocess.CalledProcessError:
+                return (
+                    None,
+                    f"error: could not find storage target: {storage_type} {storage}",
+                )
+
+            storage = resolved_storage.strip()
+            return os.path.join(storage, vmcore_path.lstrip("/")), None
+        if vmcore_path[0] != "/":
+            return None, f"error: absolute path required: {vmcore_path}"
+        return vmcore_path, None
 
     def process_recent_vmcores(self, days):
         # This section is is to check the directory list under the path specified in kdump.conf
         # looks only for latest 5 directories
         error_logs = []
         try:
-            vmcore_dir_path = self.get_vmcore_dir_path()
+            vmcore_dir_path, err = self.get_vmcore_dir_path()
             if not vmcore_dir_path:
+                if err:
+                    error_logs.append(err)
                 error_logs.append(
                     "Error: Could not determine vmcore path from /etc/kdump.conf"
                 )
