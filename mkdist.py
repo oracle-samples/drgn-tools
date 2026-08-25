@@ -4,6 +4,7 @@
 Create a zipapp distribution of drgn-tools which can provided to customers.
 """
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -90,7 +91,17 @@ Please hit enter to acknowledge and continue, or Ctrl-C to abort.\
     # are part of the project should be excluded.
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        shutil.copytree(base_dir / "drgn_tools", tmp / "drgn_tools")
+        src = base_dir / "drgn_tools"
+        for d, dirs, files in os.walk(src, topdown=True, followlinks=False):
+            d = Path(d)
+            if any((d / f).is_symlink() for f in files + dirs):
+                raise ValueError("Source directory contains symlinks")
+            dst = tmp / "drgn_tools" / d.relative_to(src)
+            dst.mkdir()
+            if "__pycache__" in dirs:
+                dirs.remove("__pycache__")
+            for file in files:
+                shutil.copy2(os.path.join(d, file), dst / file)
         zipapp.create_archive(
             td, output_file, interpreter=args.interpreter, main=entry_point
         )
