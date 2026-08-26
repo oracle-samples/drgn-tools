@@ -14,6 +14,7 @@ find (maybe extract, depending on config) and print the locations of the
 debuginfo for a vmcore.
 """
 import atexit
+import contextlib
 import enum
 import logging
 import os
@@ -936,9 +937,9 @@ def extract_rpm(
             "the 0777 permissions when it creates the directory."
         )
 
-    with tempfile.NamedTemporaryFile(
-        "wt"
-    ) as tf, tempfile.TemporaryDirectory() as tdname:
+    with contextlib.ExitStack() as es:
+        tf = es.enter_context(tempfile.NamedTemporaryFile("wt"))
+        tdname = es.enter_context(tempfile.TemporaryDirectory())
         td = Path(tdname)
         for module in modules:
             if module in ("vmlinux", "kernel"):
@@ -951,15 +952,35 @@ def extract_rpm(
                 if "_" in module:
                     tf.write(f"*/{module.replace('_', '-')}.ko.debug\n")
         tf.flush()
+        rpm2cpio_proc = es.enter_context(
+            subprocess.Popen(
+                ["rpm2cpio", str(source_rpm)],
+                shell=False,
+                stdout=subprocess.PIPE,
+            )
+        )
         proc = subprocess.run(
-            f"rpm2cpio {source_rpm} | cpio -ivd --quiet -E {tf.name}",
-            shell=True,
+            [
+                "cpio",
+                "--extract",
+                "--verbose",  # print each file processed
+                "--make-directories",
+                "--quiet",  # (do not print number of blocks at the end)
+                "--pattern-file",
+                tf.name,
+            ],
+            shell=False,
             check=True,
             cwd=tdname,
+            stdin=rpm2cpio_proc.stdout,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             encoding="ascii",
         )
+        if rpm2cpio_proc.wait() != 0:
+            raise subprocess.CalledProcessError(
+                rpm2cpio_proc.returncode, rpm2cpio_proc.args
+            )
         extracted = []
         for line in proc.stderr.split("\n"):  # filenames on stderr
             line = line.strip()
@@ -967,7 +988,7 @@ def extract_rpm(
                 continue
             file_path = td / line[2:]
             if not file_path.is_file():
-                log.warning("wat")
+                log.warning(f"file not extracted: {file_path}")
                 continue
             # standardize the names to use underscore
             name = file_path.name.replace("-", "_")

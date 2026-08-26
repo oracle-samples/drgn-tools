@@ -123,12 +123,15 @@ class Vmcore(NamedTuple):
     dbinfo: OracleDebuginfo
 
     def rpm_name(self) -> str:
+        # specifically, this is the name of the RPM containing vmlinux.ctfa
         uek_ver = self.kver.uek_version
 
         if self.kver.is_uek and uek_ver in (4, 5, 6):
             return f"kernel-uek-{self.release}.rpm"
-        elif self.kver.is_uek:
+        elif self.kver.is_uek and uek_ver == 7:
             return f"kernel-uek-core-{self.release}.rpm"
+        elif self.kver.is_uek and uek_ver == 8:
+            return f"kernel-uek-modules-core-{self.release}.rpm"
         elif self.kver.ol_version >= 8:
             return f"kernel-core-{self.release}.rpm"
         else:
@@ -279,12 +282,26 @@ class VmcoreManager:
             rpm_path = tdp / rpm
             with open(rpm_path, "wb") as f:
                 download_file(url, f, quiet=False)
-            subprocess.run(
-                f"rpm2cpio {rpm_path} | cpio -id --quiet '*/vmlinux.ctfa'",
-                shell=True,
-                check=True,
-                cwd=tdp,
-            )
+            with subprocess.Popen(
+                ["rpm2cpio", rpm_path], shell=False, stdout=subprocess.PIPE
+            ) as proc:
+                subprocess.run(
+                    [
+                        "cpio",
+                        "--extract",
+                        "--make-directories",
+                        "--quiet",
+                        "*/vmlinux.ctfa",
+                    ],
+                    shell=False,
+                    stdin=proc.stdout,
+                    check=True,
+                    cwd=tdp,
+                )
+                if proc.wait() != 0:
+                    raise subprocess.CalledProcessError(
+                        proc.returncode, proc.args
+                    )
             src = tdp / f"lib/modules/{vmcore.release}/kernel/vmlinux.ctfa"
             shutil.move(src, dst)
 
