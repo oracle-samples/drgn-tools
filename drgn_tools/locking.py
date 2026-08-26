@@ -21,6 +21,7 @@ from drgn import Program
 from drgn import StackFrame
 from drgn import Type
 from drgn.helpers import ValidationError
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.list import list_empty
 from drgn.helpers.linux.list import list_for_each_entry
 from drgn.helpers.linux.list import validate_list_for_each_entry
@@ -202,7 +203,7 @@ def show_lock_waiter(
             prefix,
             "cpu:",
             ncpu,
-            task.comm.string_().decode(),
+            escape_ascii_string(task.comm.string_()),
             task.pid.value_(),
             task_state_to_char(task),
             timestamp_str(task_lastrun2now(task)),

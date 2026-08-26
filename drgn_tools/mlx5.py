@@ -1093,7 +1093,7 @@ class Mlx5Collector:
         pid = None
         if is_user:
             if subject:
-                name = subject.comm.string_().decode("utf-8", "replace")
+                name = escape_ascii_string(subject.comm.string_())
                 pid = int(subject.pid)
             display = f"user:{name}[{pid}]" if subject else "user"
         else:

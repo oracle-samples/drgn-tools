@@ -225,7 +225,7 @@ def _print_waiter(task: Object, kind: str, pfx: Optional[str]):
     wait_time = task_lastrun2now(task)
     wait_time_fmt = str(timedelta(seconds=wait_time / 1000000000))
     print(
-        f"{pfx}[PID: {task.pid.value_()} COMM: {task.comm.string_().decode()}] WAIT: {kind} DURATION: {wait_time_fmt}"
+        f"{pfx}[PID: {task.pid.value_()} COMM: {escape_ascii_string(task.comm.string_())}] WAIT: {kind} DURATION: {wait_time_fmt}"
     )
 
 
@@ -396,7 +396,7 @@ def fsnotify_show(prog: Program, verbose: int = 1) -> None:
             else:
                 continue
             print(
-                f"[PID {task.pid.value_()} COMM: {task.comm.string_().decode()} {kind} FD {fd}]"
+                f"[PID {task.pid.value_()} COMM: {escape_ascii_string(task.comm.string_())} {kind} FD {fd}]"
             )
             group = cast(group_type, file.private_data)
 

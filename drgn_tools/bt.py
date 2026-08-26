@@ -576,7 +576,7 @@ def print_online_bt(
     """
     for cpu in for_each_online_cpu(prog):
         task = cpu_curr(prog, cpu)
-        if skip_idle and task.comm.string_().decode() == f"swapper/{cpu}":
+        if skip_idle and task.comm.string_() == f"swapper/{cpu}".encode():
             # Just because it's the swapper task, does not mean it is idling.
             # Check the symbol at the top of the stack to ensure it's the
             # architecture idle function, or if the swapper task got halted.

@@ -4,6 +4,7 @@ import re
 from contextlib import redirect_stdout
 from io import StringIO
 
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux import for_each_task
 
 from drgn_tools import lock
@@ -70,7 +71,7 @@ class TestLock(DrgnToolsTestCase):
 
         for task in self._lockmod_threads():
             print(
-                f"PID {task.pid.value_()} COMM {task.comm.string_().decode()}"
+                f"PID {task.pid.value_()} COMM {escape_ascii_string(task.comm.string_())}"
             )
             comm = task.comm.string_()
             if b"owner" in comm:

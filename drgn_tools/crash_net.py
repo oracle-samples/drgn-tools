@@ -10,6 +10,7 @@ from typing import Tuple
 from drgn import Object
 from drgn import PlatformFlags
 from drgn import Program
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux import net as network
 from drgn.helpers.linux.fs import for_each_file
 from drgn.helpers.linux.list import hlist_for_each_entry
@@ -269,7 +270,7 @@ def print_task_sockets(prog: Program, pid: int, print_full_data: bool) -> None:
         + "    CPU: "
         + str(task_cpu(task))
         + "    COMMAND: "
-        + task.comm.string_().decode("utf-8")
+        + escape_ascii_string(task.comm.string_())
     )
 
     if print_full_data:

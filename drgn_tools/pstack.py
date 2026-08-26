@@ -50,6 +50,7 @@ from drgn import Program
 from drgn import ProgramFlags
 from drgn import sizeof
 from drgn import StackTrace
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux import access_remote_vm
 from drgn.helpers.linux import cpu_curr
 from drgn.helpers.linux import d_path
@@ -319,7 +320,7 @@ def task_metadata(prog: Program, task: Object) -> Dict[str, Any]:
             load_addrs[path] = [start, end, inode]
     return {
         "pid": task.pid.value_(),
-        "comm": task.comm.string_().decode("utf-8", errors="replace"),
+        "comm": escape_ascii_string(task.comm.string_()),
         "mm": load_addrs,
         "kernel": not bool(task.mm),
         "threads": [],
@@ -336,7 +337,7 @@ def dump_task(
     threads = 0
     for thread in for_each_task_in_group(task, include_self=True):
         tid = thread.pid.value_()
-        tcomm = thread.comm.string_().decode("utf-8", errors="replace")
+        tcomm = escape_ascii_string(thread.comm.string_())
         try:
             kstack = prog.stack_trace(thread)
         except ValueError:
@@ -752,7 +753,7 @@ def build_prog_from_mm(mm: Object) -> Program:
 
 
 def pstack_print_process(task: Object) -> None:
-    comm = task.comm.string_().decode("utf-8", errors="replace")
+    comm = escape_ascii_string(task.comm.string_())
     print(f"[PID: {task.pid.value_()} COMM: {comm}]")
     prog = task.prog_
     if not task.mm:
@@ -764,7 +765,7 @@ def pstack_print_process(task: Object) -> None:
         for_each_task_in_group(task, include_self=True)
     ):
         tid = thread.pid.value_()
-        tcomm = thread.comm.string_().decode("utf-8", errors="replace")
+        tcomm = escape_ascii_string(thread.comm.string_())
         st = task_state_to_char(thread)
         cpu = task_cpu(thread)
         on_cpu = cpu_curr(prog, cpu) == thread

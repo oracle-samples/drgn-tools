@@ -36,6 +36,7 @@ from drgn import Object
 from drgn import Program
 from drgn import StackFrame
 from drgn.helpers.common import identify_address
+from drgn.helpers.common.format import escape_ascii_string
 from drgn.helpers.linux.cpumask import for_each_present_cpu
 from drgn.helpers.linux.percpu import per_cpu
 from drgn.helpers.linux.pid import find_task
@@ -233,7 +234,7 @@ def scan_mutex_lock(
         if struct_owner:
             print(
                 "Mutex OWNER:",
-                struct_owner.comm.string_().decode("utf-8"),
+                escape_ascii_string(struct_owner.comm.string_()),
                 "PID :",
                 struct_owner.pid.value_(),
             )

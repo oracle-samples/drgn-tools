@@ -164,7 +164,7 @@ def ext4_dirlock_scan(prog: drgn.Program, stacktrace: bool = False) -> None:
             "%-12s: %-16s %-8d %-6s %-16s"
             % (
                 "Lock owner",
-                task.comm.string_().decode(),
+                escape_ascii_string(task.comm.string_()),
                 task.pid.value_(),
                 task_state_to_char(task),
                 timestamp_str(task_lastrun2now(task)),
