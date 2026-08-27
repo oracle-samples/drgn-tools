@@ -9,6 +9,7 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.error import URLError
 
 from drgn_tools.util import download_file
 from drgn_tools.util import head_file
@@ -203,16 +204,22 @@ def _kernel_version_present(ver: KernelVer, layout: TestDirectories) -> bool:
 def _all_rpms_available(
     ver: KernelVer, layout: TestDirectories, log: VmLogger, skip_fetch: bool
 ) -> bool:
-    rpm_path = layout.rpm_path(ver)
-    for url in ver.urls:
-        dest = dest_path(rpm_path, url)
-        if dest.exists():
-            continue
-        if not skip_fetch and head_file(url):
-            continue
-        log.message(f"Missing RPM: {dest.name} {url}")
-        return False
-    return True
+    try:
+        rpm_path = layout.rpm_path(ver)
+        for url in ver.urls:
+            dest = dest_path(rpm_path, url)
+            if dest.exists():
+                continue
+            if not skip_fetch and head_file(url):
+                continue
+            log.message(f"Missing RPM: {dest.name} {url}")
+            return False
+        return True
+    except URLError:
+        raise RuntimeError(
+            f"Error while verifying URLs for release: "
+            f"{ver.category.name} {ver.release}"
+        )
 
 
 def _version_sort_key(row: tuple) -> tuple:
@@ -274,6 +281,10 @@ def _download_extract_rpms(
             "HTTP error {} {} encountered while fetching URL:\n{}".format(
                 e.code, e.reason, e.url
             )
+        )
+    except URLError as e:
+        raise RuntimeError(
+            "Error ({}) while fetching URL:\n{}".format(e.reason, url)
         )
 
     final_out_dir = layout.extract_path(kernel)

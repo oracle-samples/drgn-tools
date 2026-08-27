@@ -157,7 +157,7 @@ class ParClient:
             headers=(headers or {}),
             data=data,
         )
-        resp = urlopen(req)
+        resp = urlopen(req, timeout=10)
         logging.debug("%d: %s %s", resp.status, method, path)
         return resp
 

@@ -37,6 +37,12 @@ except ImportError:
     from drgn.helpers import escape_ascii_string
 
 
+DEFAULT_TIMEOUT = 10
+"""
+Default timeout used for HTTP requests when fetching debuginfo.
+"""
+
+
 def get_uts(prog: Program) -> t.Dict[str, str]:
     """
     Get system and version info
@@ -329,12 +335,14 @@ class SimpleProgress:
                 print()
 
 
-def head_file(url: str) -> bool:
+def head_file(url: str, timeout: int = DEFAULT_TIMEOUT) -> bool:
     request = Request(url, method="HEAD")
     try:
-        urlopen(request)
-        return True
+        with urlopen(request, timeout=timeout):
+            return True
     except HTTPError:
+        # Timeouts are not caught here because they indicate that the underlying
+        # server is inaccessible; this should bubble up.
         return False
 
 
@@ -345,30 +353,30 @@ def download_file(
     desc: str = "Downloading",
     logger: t.Optional[logging.Logger] = None,
     caller: t.Optional[str] = None,
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> None:
-    response = urlopen(url)
+    with urlopen(url, timeout=timeout) as response:
+        if response.status >= 400:
+            raise Exception(f"HTTP {response.status} while fetching {url}")
 
-    if response.status >= 400:
-        raise Exception(f"HTTP {response.status} while fetching {url}")
+        if logger:
+            logger.info("%sDownloading %s", caller, url)
 
-    if logger:
-        logger.info("%sDownloading %s", caller, url)
+        buf = bytearray(4096 * 4)
+        total_bytes = int(response.headers.get("Content-Length", "0"))
+        progress = SimpleProgress(desc, total_bytes, quiet=quiet)
 
-    buf = bytearray(4096 * 4)
-    total_bytes = int(response.headers.get("Content-Length", "0"))
-    progress = SimpleProgress(desc, total_bytes, quiet=quiet)
-
-    while True:
-        num = response.readinto(buf)
-        if num == 0:
-            break
-        # Yes, this is Python, but it doesn't mean that we need to copy
-        # data around wildly and inefficiently. The memoryview allows us
-        # to create a read-only view onto the buffer which we can slice
-        # without copying it. That can then be given to write().
-        f.write(memoryview(buf)[:num])
-        progress.step(num)
-    progress.complete()
+        while True:
+            num = response.readinto(buf)
+            if num == 0:
+                break
+            # Yes, this is Python, but it doesn't mean that we need to copy data
+            # around wildly and inefficiently. The memoryview allows us to
+            # create a read-only view onto the buffer which we can slice without
+            # copying it. That can then be given to write().
+            f.write(memoryview(buf)[:num])
+            progress.step(num)
+        progress.complete()
 
 
 def cpumask_to_cpulist(cpumask: Object) -> str:
