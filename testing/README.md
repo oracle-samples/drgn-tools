@@ -45,11 +45,9 @@ dnf config-manager --enable ol10_addons
 dnf config-manager --enable ol10_kvm_utils
 dnf config-manager --enable ol10_codeready_builder
 # Adjust as necessary for the currently available EPEL point release:
-dnf config-manager --enable ol10_u1_developer_EPEL
-# The fixed busybox RPM should become available in ol10_u2_developer_EPEL
+dnf config-manager --enable ol10_u2_developer_EPEL
 dnf install -y git drgn qemu-kvm podman virtiofsd \
-               cpio gzip bzip2 zstd ipxe-roms-qemu \
-               https://kojipkgs.fedoraproject.org//packages/busybox/1.37.0/4.el10_2/$(uname -m)/busybox-1.37.0-4.el10_2.$(uname -m).rpm
+               cpio gzip bzip2 zstd busybox ipxe-roms-qemu
 ```
 
 
