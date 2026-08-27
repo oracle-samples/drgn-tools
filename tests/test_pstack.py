@@ -1,18 +1,14 @@
-# Copyright (c) 2025, Oracle and/or its affiliates.
+# Copyright (c) 2025, 2026, Oracle and/or its affiliates.
 # Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl/
 import argparse
-import gzip
 from contextlib import redirect_stdout
 from io import StringIO
-from pathlib import Path
-from tempfile import TemporaryDirectory
 
 from drgn import Architecture
 from drgn.helpers.linux import task_state_to_char
 from drgn.helpers.linux.pid import find_task
 
 from drgn_tools import pstack
-from drgn_tools.task import task_cpu
 from tests import DrgnToolsTestCase
 from tests import skip_kernel_versions_below
 from tests import skip_live
@@ -111,93 +107,24 @@ class TestPstack(DrgnToolsTestCase):
         do_test_task_running_pt_regs(self, self.prog, task)
 
     @skip_unless_live
-    def test_dump(self):
-        with sleeping_proc() as proc, TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
+    def test_end_to_end(self):
+        # Since live tests are now expected to run in an Oracle Linux rootfs, we
+        # can be pretty confident that we have all the necessary userspace
+        # debuginfo and .gnu_debugdata symbols to do the full unwind.
+        with sleeping_proc() as proc:
             pid = proc.pid
-            pstack.dump(self.prog, build_args(tmp_dir / "dump", pid=[pid]))
-            with gzip.open(tmp_dir / "dump", "rb") as f:
-                magic = f.read(8)
-                self.assertEqual(magic, b"pstack\x00\x01")
-
-                metadata = pstack.read_json_object(f)
-                self.assertEqual(
-                    metadata, {"page_size": int(self.prog["PAGE_SIZE"])}
-                )
-
-                task_meta = pstack.read_json_object(f)
-                self.assertEqual(task_meta["pid"], proc.pid)
-                self.assertEqual(
-                    task_meta["comm"],
-                    open(f"/proc/{pid}/comm").read().strip(),
-                )
-                self.assertFalse(task_meta["kernel"])
-                self.assertEqual(len(task_meta["threads"]), 1)
-
-                # Get executables from /proc/{pid}/maps and compare with the
-                # metadata.
-                executables = []
-                start_addr = 0
-                for line in open(f"/proc/{pid}/maps"):
-                    fields = line.split(maxsplit=5)
-                    if len(fields) != 6:
-                        continue
-                    filename = fields[-1].rstrip()
-                    if filename[0] == "[":
-                        continue
-                    if int(fields[2], 16) == 0:
-                        start_addr = int(fields[0].split("-")[0], 16)
-                    if "x" in fields[1] and start_addr != 0:
-                        executables.append((filename, start_addr))
-                        start_addr = 0
-                self.assertEqual(len(executables), len(task_meta["mm"]))
-                for filename, start_addr in executables:
-                    self.assertEqual(task_meta["mm"][filename][0], start_addr)
-
-                # Now ensure the thread metadata is correct:
-                thread = task_meta["threads"][0]
-                self.assertEqual(thread["tid"], pid)
-                self.assertEqual(thread["comm"], task_meta["comm"])
-                self.assertEqual(
-                    thread["kstack"], str(self.prog.stack_trace(pid))
-                )
-                self.assertEqual(
-                    thread["cpu"], task_cpu(find_task(self.prog, pid))
-                )
-                self.assertFalse(thread["on_cpu"])
-                self.assertEqual(thread["state"], "S")
-
-                # Now ensure we have some stack data. Not too much verification
-                # of correctness here, just want to ensure it is done correctly.
-                end = b"\xff" * 8
-                pgsize = int(self.prog["PAGE_SIZE"])
-                while True:
-                    header = f.read(8)
-                    self.assertEqual(len(header), 8)
-                    if header == end:
-                        break
-                    self.assertEqual(len(f.read(pgsize)), pgsize)
-
-                # EOF
-                self.assertEqual(f.read(), b"")
-
-    @skip_unless_live
-    def test_read_dump(self):
-        with sleeping_proc() as proc, TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            pid = proc.pid
-            with redirect_stdout(StringIO()):
-                pstack.dump(self.prog, build_args(tmp_dir / "dump", pid=[pid]))
-
-            with redirect_stdout(StringIO()) as stdout:
-                pstack.dump_print(tmp_dir / "dump")
-            stdout_from_dump = stdout.getvalue()
-
             with redirect_stdout(StringIO()) as stdout:
                 pstack.pstack_print_process(find_task(self.prog, pid))
-                print()
-            stdout_from_pstack = stdout.getvalue()
-            self.assertEqual(stdout_from_dump, stdout_from_pstack)
+
+            kernel, user = stdout.getvalue().split(
+                "------ userspace ---------"
+            )
+            self.assertRegex(kernel, r".*#\d+ +schedule\b.*")
+            self.assertRegex(kernel, r".*#\d+ +ksys_read\b.*")
+
+            self.assertRegex(user, r".*#\d+ +_Py_read\b.*")
+            self.assertRegex(user, r".*#\d+ +Py_(Run)?Main\b.*")
+            self.assertRegex(user, r".*#\d+ +_start\b.*")
 
     def test_get_tasks_pid(self):
         args = build_args("IGNORE", pid=[1])
