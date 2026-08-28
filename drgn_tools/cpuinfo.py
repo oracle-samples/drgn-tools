@@ -192,7 +192,7 @@ def get_meltdown_mitigation(prog: Program, cpu_caps_bugs: Object) -> str:
     """
     Extracts Mitigation for Meltdown
     """
-    mitigation = ""
+    mitigation = "Vulnerable"
     if test_bit(X86_FEATURE_PTI, cpu_caps_bugs):
         mitigation = "Mitigation: PTI"
     else:
@@ -599,7 +599,7 @@ def x86_get_cpu_mitigations(prog: Program) -> Dict[str, str]:
         "MDS": get_mds_mitigation,
         "tsx_async_abort": get_taa_mitigation,
         "itlb_multihit": get_itlb_multihit_mitigation,
-        "SRDBS": get_srbds_mitigation,
+        "SRBDS": get_srbds_mitigation,
         "mmio_stale_data": get_mmio_stale_data_mitigation,
         "mmio_unknown": get_mmio_stale_data_mitigation,
         "Retbleed": get_retbleed_mitigation,
