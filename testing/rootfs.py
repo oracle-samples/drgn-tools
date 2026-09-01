@@ -175,13 +175,16 @@ def _build_rootfs(
             **{k: shlex.quote(v) for k, v in yumvars_from_host().items()},
         )
 
+    if image is None:
+        image = os.environ.get("IMAGE", "oraclelinux")
+
     command = [
         "podman",
         "run",
         "--rm",
         "--mount",
         f"type=bind,src={build_dir},dst=/rootfs,relabel=private",
-        f"{image or 'oraclelinux'}:{rootfs.ol_ver}",
+        f"{image}:{rootfs.ol_ver}",
         "bash",
         "-lc",
         install_cmd,
@@ -289,8 +292,8 @@ def build_rootfses():
     parser.add_argument(
         "--image",
         help="Choose the container image used to bootstrap. The default "
-        "is 'oraclelinux', but a fully qualified URL may be provided here "
-        "to use a local cache.",
+        "is 'oraclelinux' or the $IMAGE environment variable, but a "
+        "fully qualified URL may be provided here to use a local cache.",
     )
     parser.add_argument(
         "versions",
