@@ -25,7 +25,6 @@ from drgn import Type
 from drgn import TypeKind
 from drgn.helpers.common.format import decode_enum_type_flags
 from drgn.helpers.common.memory import identify_address
-from drgn.helpers.linux.cpumask import for_each_cpu
 from drgn.helpers.linux.cpumask import for_each_possible_cpu
 from drgn.helpers.linux.percpu import per_cpu
 
@@ -377,57 +376,6 @@ def download_file(
             f.write(memoryview(buf)[:num])
             progress.step(num)
         progress.complete()
-
-
-def cpumask_to_cpulist(cpumask: Object) -> str:
-    """
-    Get list of CPUs, present in a cpumask.
-
-    :param cpumask: ``struct cpumask*``
-    :returns: list of CPUs as string
-    """
-    start = 0
-    end = 0
-    count = 1
-    cpu_range = str()
-    all_cpu_ranges = str()
-    cpulist = [cpu for cpu in for_each_cpu(cpumask)]
-
-    if len(cpulist) == 1:  # Just one CPU in mask
-        return str(cpulist[0])
-
-    for index, value in enumerate(cpulist):
-        if index < len(cpulist) - 1:
-            if cpulist[index + 1] > value + 1:
-                end = index
-                if count > 1:
-                    cpu_range = str(cpulist[start]) + "-" + str(cpulist[end])
-                else:
-                    cpu_range = str(cpulist[start])
-                start = end + 1
-                count = 1
-                if not len(all_cpu_ranges):
-                    all_cpu_ranges += cpu_range
-                else:
-                    all_cpu_ranges += ", " + cpu_range
-            else:
-                count += 1
-        else:
-            if count == index + 1:  # only one range
-                all_cpu_ranges = (
-                    str(cpulist[start]) + "-" + str(cpulist[index])
-                )
-            else:
-                if (
-                    cpulist[start] == cpulist[index]
-                ):  # only one element in last range
-                    all_cpu_ranges += ", " + str(cpulist[index])
-                else:  # more than 1 element in last range
-                    all_cpu_ranges += (
-                        ", " + str(cpulist[start]) + "-" + str(cpulist[index])
-                    )
-
-    return all_cpu_ranges
 
 
 def uek4_radix_tree_lookup(root: Object, index: int) -> Object:

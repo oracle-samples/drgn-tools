@@ -15,12 +15,12 @@ from drgn import sizeof
 from drgn import TypeKind
 from drgn.helpers.linux.bitops import for_each_set_bit
 from drgn.helpers.linux.bitops import test_bit
+from drgn.helpers.linux.cpumask import cpumask_to_cpulist
 from drgn.helpers.linux.cpumask import for_each_online_cpu
 from drgn.helpers.linux.percpu import per_cpu
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_dictionary
-from drgn_tools.util import cpumask_to_cpulist
 
 
 # Constants

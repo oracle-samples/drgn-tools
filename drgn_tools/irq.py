@@ -13,6 +13,7 @@ from drgn import NULL
 from drgn import Object
 from drgn import Program
 from drgn.helpers.common.format import escape_ascii_string
+from drgn.helpers.linux.cpumask import cpumask_to_cpulist
 from drgn.helpers.linux.cpumask import for_each_present_cpu
 from drgn.helpers.linux.mapletree import mtree_load
 from drgn.helpers.linux.percpu import per_cpu_ptr
@@ -20,7 +21,6 @@ from drgn.helpers.linux.radixtree import radix_tree_lookup
 
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.table import print_table
-from drgn_tools.util import cpumask_to_cpulist
 from drgn_tools.util import has_member
 from drgn_tools.util import uek4_radix_tree_lookup
 
