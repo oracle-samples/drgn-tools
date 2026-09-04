@@ -573,6 +573,23 @@ def is_group_leader(t: Object) -> bool:
     return False
 
 
+def task_active_pid_ns(t: Object) -> Object:
+    """
+    Return the active ``struct pid_namespace *`` of a task.
+    See the kernel function of the same name.
+    """
+    # In the kernel this is defined as ns_of_pid(task_pid(t))
+    try:
+        # task_pid() is defined thusly:
+        pid = t.thread_pid
+    except AttributeError:
+        # Prior to v4.19 commit 2c4704756cab7 ("pids: Move the pgrp and session
+        # pid pointers from task_struct to signal_struct"), task_pid() was
+        pid = t.pids[t.prog_.constant("PIDTYPE_PID")].pid
+    # And thus is ns_of_pid():
+    return pid.numbers[pid.level].ns
+
+
 def check_arg_type(arg: Optional[str]) -> Tuple[str, Any]:
     """
     Check the filter type of the argument
