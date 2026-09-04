@@ -750,3 +750,39 @@ def is_pointer(obj: Object) -> bool:
     while tp.kind == TypeKind.TYPEDEF:
         tp = tp.type
     return tp.kind == TypeKind.POINTER
+
+
+_T = t.TypeVar("_T")
+
+
+def program_cached_item(
+    compute_value: t.Callable[[Program], _T],
+) -> t.Callable[[Program], _T]:
+    """
+    Decorator for functions that cache their value on prog.cache
+
+    Use this when creating a function that computes and returns a value that may
+    be expensive to compute. It implements the common cache pattern and allows
+    you to simply define the cache key, and then simply implement your
+    computation::
+
+        @program_cached_item
+        def _meaning_of_life(prog: Program) -> int:
+            time.sleep(42)
+            return 42
+    """
+
+    cache_key = f"{compute_value.__module__}.{compute_value.__name__}"
+
+    @wraps(compute_value)
+    def inner(prog: Program) -> _T:
+        if cache_key not in prog.cache:
+            prog.cache[cache_key] = compute_value(prog)
+        return t.cast(_T, prog.cache[cache_key])
+
+    return inner
+
+
+def align(val: int, alignment: int) -> int:
+    align_mask = alignment - 1
+    return (val + align_mask) & ~align_mask
