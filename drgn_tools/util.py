@@ -378,6 +378,30 @@ def download_file(
         progress.complete()
 
 
+def yield_ranges(values: t.Iterable[int]) -> t.Iterator[t.Tuple[int, int]]:
+    current = None
+    for value in values:
+        if current is None:
+            current = (value, value)
+        elif current[1] + 1 != value:
+            yield current
+            current = (value, value)
+        else:
+            current = (current[0], value)
+    if current:
+        yield current
+
+
+def int_list_to_range_list(values: t.Iterable[int]) -> str:
+    """
+    Format a sorted (ascending) sequence of integers as a range list
+    """
+    return ",".join(
+        f"{p[0]}" if p[0] == p[1] else f"{p[0]}-{p[1]}"
+        for p in yield_ranges(values)
+    )
+
+
 def uek4_radix_tree_lookup(root: Object, index: int) -> Object:
     _RADIX_TREE_MAP_SHIFT = 6
     _RADIX_TREE_INDEX_BITS = 8 * sizeof(root.prog_.type("unsigned long"))
