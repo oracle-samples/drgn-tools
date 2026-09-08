@@ -786,3 +786,14 @@ def program_cached_item(
 def align(val: int, alignment: int) -> int:
     align_mask = alignment - 1
     return (val + align_mask) & ~align_mask
+
+
+def summarize_list(items: t.List[str], maxview: int = 4) -> str:
+    """
+    Given a list of strings, display up to N items directly, otherwise N - 1
+    items and an ellipsis.
+    """
+    if len(items) <= maxview:
+        return ", ".join(items)
+    else:
+        return ", ".join(items[: maxview - 1] + ["..."])

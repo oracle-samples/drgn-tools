@@ -38,11 +38,13 @@ from drgn import ModuleFileStatus
 from drgn import Program
 from drgn import ProgramFlags
 from drgn import RelocatableModule
+from drgn import SymbolIndex
 
 from drgn_tools.config import get_config
 from drgn_tools.module import module_is_in_tree
 from drgn_tools.taint import Taint
 from drgn_tools.util import download_file
+from drgn_tools.util import summarize_list
 
 try:
     from drgn.helpers.linux.ctf import load_ctf
@@ -50,6 +52,13 @@ try:
     HAVE_CTF = True
 except (ImportError, ModuleNotFoundError):
     HAVE_CTF = False
+
+try:
+    from drgn.helpers.linux.kallsyms import module_kallsyms
+except ImportError:
+    # Prior to drgn 0.0.33 commit d4c1f17c ("drgn.helpers.linux.kallsyms: make
+    # module_kallsyms() public"), this was a private helper with the same API.
+    from drgn.helpers.linux.kallsyms import _module_kallsyms as module_kallsyms
 
 
 __all__ = (
@@ -313,6 +322,7 @@ class DebugInfoOptionsExt:
     enable_extract: bool
     enable_ctf: bool
     disable_dwarf: bool
+    disable_fallback_kallsyms: bool
 
     # These configure additional lookup locations, from the command line only.
     ctf_file: Optional[str]
@@ -331,6 +341,7 @@ class DebugInfoOptionsExt:
         enable_extract: bool = False,
         enable_ctf: bool = False,
         disable_dwarf: bool = False,
+        disable_fallback_kallsyms: bool = False,
         ctf_file: Optional[str] = None,
         dwarf_dir: Optional[str] = None,
         extractions: Optional[List[Tuple[str, str, str, "re.Pattern"]]] = None,
@@ -344,6 +355,7 @@ class DebugInfoOptionsExt:
         self.enable_extract = enable_extract or enable_download
         self.enable_ctf = enable_ctf
         self.disable_dwarf = disable_dwarf
+        self.disable_fallback_kallsyms = disable_fallback_kallsyms
 
         self.ctf_file = ctf_file
         self.dwarf_dir = dwarf_dir
@@ -745,6 +757,41 @@ class OracleDebuginfo:
                 if not module.object.taints & (1 << Taint.OOT_MODULE):
                     module.debug_file_status = ModuleFileStatus.DONT_NEED
 
+    def fallback_kallsyms(self, modules: List["Module"]):
+        # Only run this once. Use "fallback_kallsyms" as the name, to avoid
+        # conflicting with vmlinux_kallsyms or module_kallsyms, which are
+        # specific to the CTF finder.
+        if "fallback_kallsyms" in self.prog.registered_symbol_finders():
+            return
+
+        # This is intended to run after _all_ the other debuginfo finders have
+        # had a chance to run. We should load kallsyms for any kernel module
+        # which does not have debuginfo. This is likely to include ksplices and
+        # proprietary/OOT modules. We want this so that stack traces and other
+        # lookups related to the modules can include accurate symbol names.
+        symbols = []
+        modnames = []
+        for module in modules:
+            if module.wants_debug_file() and isinstance(
+                module, RelocatableModule
+            ):
+                modnames.append(module.name)
+                symbols.extend(module_kallsyms(module.object))
+
+        if symbols:
+            log.debug(
+                "fallback_kallsyms: loading %d symbols for %d module(s): %s",
+                len(symbols),
+                len(modnames),
+                summarize_list(modnames),
+            )
+            index = SymbolIndex(symbols)
+            self.prog.register_symbol_finder(
+                "fallback_kallsyms",
+                index,
+                enable_index=-1,
+            )
+
 
 def get_debuginfo_config() -> DebugInfoOptionsExt:
     """
@@ -808,6 +855,7 @@ def get_debuginfo_config() -> DebugInfoOptionsExt:
     enable_extract = getbool("enable_extract", "f")
     enable_ctf = getbool("enable_ctf", "f")
     disable_dwarf = getbool("disable_dwarf", "f")
+    disable_fallback_kallsyms = getbool("disable_fallback_kallsyms", "f")
 
     return DebugInfoOptionsExt(
         repo_paths=[repo_format],
@@ -819,6 +867,7 @@ def get_debuginfo_config() -> DebugInfoOptionsExt:
         enable_extract=enable_extract,
         enable_ctf=enable_ctf,
         disable_dwarf=disable_dwarf,
+        disable_fallback_kallsyms=disable_fallback_kallsyms,
         extractions=extractions,
     )
 
@@ -866,6 +915,9 @@ def drgn_prog_set(prog: Program) -> None:
     prog.register_debug_info_finder("ol-local-rpm", dbinfo.ol_local_rpm_finder)
     prog.register_debug_info_finder("ol-download", dbinfo.ol_download_finder)
     prog.register_debug_info_finder("ctf", dbinfo.ctf_finder)
+    prog.register_debug_info_finder(
+        "ol-fallback-kallsyms", dbinfo.fallback_kallsyms
+    )
 
     finders = prog.enabled_debug_info_finders()
     if opts.disable_dwarf:
@@ -883,6 +935,8 @@ def drgn_prog_set(prog: Program) -> None:
         finders.append("ol-download")
     if opts.enable_ctf:
         finders.append("ctf")
+    if not opts.disable_fallback_kallsyms:
+        finders.append("ol-fallback-kallsyms")
 
     prog.set_enabled_debug_info_finders(finders)
     if opts.dwarf_dir:
@@ -909,7 +963,7 @@ def extract_rpm(
         "{}extracting {} debuginfo modules ({}) from {}...".format(
             caller or "",
             len(modules),
-            ", ".join(modules[:3]) + ("..." if len(modules) > 3 else ""),
+            summarize_list(modules),
             source_rpm,
         ),
         file=sys.stderr,
