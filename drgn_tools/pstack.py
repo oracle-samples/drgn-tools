@@ -56,6 +56,7 @@ from drgn.helpers.linux import for_each_vma
 from drgn.helpers.linux import task_state_to_char
 
 from drgn_tools.corelens import CorelensModule
+from drgn_tools.debuginfo import vmcoreinfo_data
 from drgn_tools.task import for_each_task_in_group
 from drgn_tools.task import task_cpu
 from drgn_tools.util import align
@@ -436,13 +437,25 @@ def demangle(mangled: str) -> str:
         return mangled
 
 
-def print_user_stack_trace(regs: Object) -> None:
+def print_user_stack_trace(
+    regs: Object, pac_mask: Optional[int] = None
+) -> None:
     """
     Prints the userspace stack trace for regs, with the module name included
     for each frame. Including the module name is pretty important for userspace.
     """
     prog = regs.prog_
     trace = prog.stack_trace(regs)
+    if pac_mask is not None:
+        pcs = []
+        for frame in trace:
+            try:
+                pcs.append(frame.pc & ~pac_mask)
+            except LookupError:
+                # Sometimes stack frames have unknown PCs. These are usually at
+                # the end or beginning of the trace. Skip them.
+                continue
+        trace = prog.stack_trace_from_pcs(pcs)
     print("    ------ userspace ---------")
     for i, frame in enumerate(trace):
         name = demangle(frame.name)
@@ -546,7 +559,11 @@ def debug_dump_mappings(prog: Program) -> None:
     print()
 
 
-def pstack_print_process(task: Object, dump_mappings: bool = False) -> None:
+def pstack_print_process(
+    task: Object,
+    dump_mappings: bool = False,
+    pac_mask: Optional[int] = None,
+) -> None:
     comm = escape_ascii_string(task.comm.string_())
     print(f"[PID: {task.pid.value_()} COMM: {comm}]")
     prog = task.prog_
@@ -587,7 +604,31 @@ def pstack_print_process(task: Object, dump_mappings: bool = False) -> None:
             print("    <running in user mode>")
             regs = task_running_pt_regs(kstack)
         fake_regs = make_fake_pt_regs(user_prog, regs.to_bytes_())
-        print_user_stack_trace(fake_regs)
+        print_user_stack_trace(fake_regs, pac_mask)
+
+
+def aarch64_user_pac_mask(prog: Program) -> Optional[int]:
+    """
+    Return the pointer mask to remove pointer authentication bits from userspace
+    return addresses, so that that drgn can recognize the memory addresses. When
+    PAC is present, our approach is to have drgn unwind the stack, then mask the
+    bits for each PC, and then create a new stack trace from those masked PCs.
+
+    This is a bit of a hack: it only works if frame pointers are used, because
+    drgn needs to unwind the stack with PAC unmasked, which means that it cannot
+    refer to any .eh_frame data. In practice, this is not really a problem on
+    aarch64 in Oracle Linux but to be more general, it would be best to
+    generalize drgn's PAC support so custom programs can specify the mask.
+    """
+    if prog.platform.arch != Architecture.AARCH64:
+        return None
+    vmci = vmcoreinfo_data(prog)
+    kernel_pac_mask = int(vmci.get("NUMBER(KERNELPACMASK)", "0"), 16)
+    if kernel_pac_mask != 0:
+        vabits_actual = 64 - int(vmci["NUMBER(TCR_EL1_T1SZ)"], 16)
+        # GENMASK(54, vabits_actual)
+        return (1 << 55) - (1 << vabits_actual)
+    return None
 
 
 def pstack(prog: Program) -> None:
@@ -597,9 +638,14 @@ def pstack(prog: Program) -> None:
     if args.online and prog.flags & ProgramFlags.IS_LIVE:
         sys.exit("error: --online: cannot unwind running tasks on live system")
     errs = 0
+    pac_mask = aarch64_user_pac_mask(prog)
     for task in get_tasks(prog, args):
         try:
-            pstack_print_process(task, dump_mappings=args.dump_mappings)
+            pstack_print_process(
+                task,
+                dump_mappings=args.dump_mappings,
+                pac_mask=pac_mask,
+            )
         except Exception as e:
             errs += 1
             print(f"error: {str(e)}")
@@ -624,9 +670,14 @@ class Pstack(CorelensModule):
             )
             return
         errs = 0
+        pac_mask = aarch64_user_pac_mask(prog)
         for task in get_tasks(prog, args):
             try:
-                pstack_print_process(task, dump_mappings=args.dump_mappings)
+                pstack_print_process(
+                    task,
+                    dump_mappings=args.dump_mappings,
+                    pac_mask=pac_mask,
+                )
             except Exception as e:
                 errs += 1
                 print(f"error: {str(e)}")

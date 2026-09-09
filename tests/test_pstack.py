@@ -114,7 +114,10 @@ class TestPstack(DrgnToolsTestCase):
         with sleeping_proc() as proc:
             pid = proc.pid
             with redirect_stdout(StringIO()) as stdout:
-                pstack.pstack_print_process(find_task(self.prog, pid))
+                pstack.pstack_print_process(
+                    find_task(self.prog, pid),
+                    pac_mask=pstack.aarch64_user_pac_mask(self.prog),
+                )
 
             kernel, user = stdout.getvalue().split(
                 "------ userspace ---------"
@@ -124,7 +127,7 @@ class TestPstack(DrgnToolsTestCase):
 
             self.assertRegex(user, r".*#\d+ +_Py_read\b.*")
             self.assertRegex(user, r".*#\d+ +Py_(Run)?Main\b.*")
-            self.assertRegex(user, r".*#\d+ +_start\b.*")
+            self.assertRegex(user, r".*#\d+ +_(_libc_)?start(_main)?\b.*")
 
     def test_get_tasks_pid(self):
         args = build_args("IGNORE", pid=[1])
