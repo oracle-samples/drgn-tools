@@ -44,6 +44,7 @@ from drgn_tools.config import get_config
 from drgn_tools.module import module_is_in_tree
 from drgn_tools.taint import Taint
 from drgn_tools.util import download_file
+from drgn_tools.util import program_cached_item
 from drgn_tools.util import summarize_list
 
 try:
@@ -1134,3 +1135,15 @@ class CtfCompatibility(enum.Enum):
             return cls.LIMITED_PROC
 
         return cls.YES
+
+
+@program_cached_item
+def vmcoreinfo_data(prog: Program) -> Dict[str, str]:
+    return dict(
+        line.split("=", 1)
+        for line in prog["VMCOREINFO"]
+        .string_()
+        .decode("utf-8")
+        .strip()
+        .split("\n")
+    )

@@ -14,6 +14,8 @@ from drgn.helpers.linux.boot import pgtable_l5_enabled
 from drgn.helpers.linux.percpu import per_cpu_ptr
 from drgn.helpers.linux.slab import for_each_slab_cache
 
+from drgn_tools.debuginfo import vmcoreinfo_data
+
 
 class AddrKind(enum.Enum):
     """
@@ -242,14 +244,7 @@ class AddrKind(enum.Enum):
         # with consideration to UEK6 and later.
         MB = 1024 * 1024
         GB = 1024 * MB
-        vmcoreinfo = dict(
-            line.split("=", 1)
-            for line in prog["VMCOREINFO"]
-            .string_()
-            .decode("utf-8")
-            .strip()
-            .split("\n")
-        )
+        vmcoreinfo = vmcoreinfo_data(prog)
 
         # We can rely the following being in vmcoreinfo:
         # NUMBER(VA_BITS), NUMBER(kimage_voffset), NUMBER(PHYS_OFFSET):
