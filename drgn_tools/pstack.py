@@ -26,12 +26,14 @@ import ctypes.util
 import fnmatch
 import logging
 import os
+import struct
 import sys
 import warnings
 from functools import lru_cache
 from typing import Callable
 from typing import Dict
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 from drgn import Architecture
@@ -53,10 +55,63 @@ from drgn.helpers.linux import task_state_to_char
 from drgn_tools.corelens import CorelensModule
 from drgn_tools.task import for_each_task_in_group
 from drgn_tools.task import task_cpu
+from drgn_tools.util import align
 from drgn_tools.util import CommaList
 
 
 log = logging.getLogger("drgn.pstack")
+
+
+def build_id_from_first_bytes(data: bytes) -> Optional[bytes]:
+    """
+    Return the build ID from the first bytes of an ELF file.
+
+    HACK: we only support x86_64 and aarch64, so we're only implementing support
+    for ELF64 little-endian.
+    """
+
+    # Basic sanity check: enough data for ELF header and have a header.
+    if len(data) < 64 or data[:4] != b"\x7fELF":
+        return None
+
+    # Rather than encode the whole struct, let's just get the fields we care
+    # about.
+    e_phoff = struct.unpack_from("=Q", data, 32)[0]
+    e_phentsize = struct.unpack_from("=H", data, 54)[0]
+    e_phnum = struct.unpack_from("=H", data, 56)[0]
+
+    if e_phentsize != 56:
+        return None
+
+    PT_NOTE = 0x4
+    for phoff in range(e_phoff, e_phoff + e_phentsize * e_phnum, e_phentsize):
+        # Hit the end of the data, we couldn't find it.
+        if phoff + e_phentsize > len(data):
+            break
+
+        # Only process PT_NOTE
+        p_type = struct.unpack_from("=I", data, phoff)[0]
+        if p_type != PT_NOTE:
+            continue
+
+        # Process all notes contained within data
+        p_offset = struct.unpack_from("=Q", data, phoff + 8)[0]
+        p_filesz = struct.unpack_from("=Q", data, phoff + 32)[0]
+        noff = p_offset
+        nend = min(len(data), p_offset + p_filesz)
+        while noff + 16 < nend:
+            namesz, descsz, tp = struct.unpack_from("=3I", data, noff)
+            if (
+                namesz == 4
+                and tp == 3
+                and noff + 16 + descsz <= nend
+                and data[noff + 12 : noff + 16] == b"GNU\0"
+            ):
+                # A GNU_BUILD_ID with its full desc present! Return it.
+                return data[noff + 16 : noff + 16 + descsz]
+
+            noff += 12 + align(namesz, 4) + align(descsz, 4)
+    return None
 
 
 def task_saved_pt_regs(task: Object) -> Object:
