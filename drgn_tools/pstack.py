@@ -29,14 +29,17 @@ import os
 import struct
 import sys
 import warnings
+from collections import defaultdict
 from functools import lru_cache
 from typing import Callable
 from typing import Dict
 from typing import List
+from typing import NamedTuple
 from typing import Optional
 from typing import Tuple
 
 from drgn import Architecture
+from drgn import FaultError
 from drgn import Object
 from drgn import Program
 from drgn import ProgramFlags
@@ -313,46 +316,67 @@ def add_task_args(group: argparse.ArgumentParser) -> None:
         element_type=int,
         help="print stack for specific PIDs (may be specified multiple times)",
     )
+    group.add_argument(
+        "--dump-mappings",
+        action="store_true",
+        help="(advanced) dump the file mappings for each user process",
+    )
 
 
-def task_dsos(mm: Object) -> List[Tuple[str, int, int, int]]:
+class Dso(NamedTuple):
+    path: str
+    base_addr: int
+    ino: int
+    build_id: Optional[bytes]
+    ranges: List[Tuple[int, int]]
+
+
+def task_dsos(mm: Object) -> List[Dso]:
     """
     Return the mapped DSOs for a task's ``mm_struct``. The return value is a
-    tuple: (path, start, end, ino)
+    tuple: (path, start, ino, build_id, address_ranges)
     """
-    # For the first pass, find any mapping which starts at offset 0 within the
-    # file, and record the full range of the file (even if it's not actually
-    # mapped for its full size). Also, record which file mappings have an
-    # executable VMA, since we'll only care about those.
-    file_range: Dict[str, Tuple[int, int, int]] = {}
-    file_exec = set()
+    # For the first pass, we're getting:
+    # - All mapped ranges for all mapped files.
+    # - The vaddr of the *first* mapping with pgoff == 0 for each file.
+    #   This would be the "base" address of the ELF file.
+    # - The path of each mapped file.
+    file_to_ranges: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+    file_to_base: Dict[int, int] = {}
+    file_to_path: Dict[int, Tuple[str, int]] = {}
     VM_EXEC = 0x4
     for vma in for_each_vma(mm):
         if not vma.vm_file:
             continue
-        path = os.fsdecode(d_path(vma.vm_file.f_path))
-        # We choose the *first* mapping with pgoff == 0.
-        if vma.vm_pgoff == 0 and path not in file_range:
-            file_range[path] = (
-                vma.vm_start.value_(),
-                (vma.vm_start + vma.vm_file.f_inode.i_size).value_(),
-                vma.vm_file.f_inode.i_ino.value_(),
-            )
+        fileaddr = vma.vm_file.value_()
+        file_to_ranges[fileaddr].append((int(vma.vm_start), int(vma.vm_end)))
+        if vma.vm_pgoff == 0 and fileaddr not in file_to_base:
+            file_to_base[fileaddr] = int(vma.vm_start)
         if vma.vm_flags & VM_EXEC:
-            file_exec.add(path)
+            path = os.fsdecode(d_path(vma.vm_file.f_path))
+            ino = int(vma.vm_file.f_inode.i_ino)
+            file_to_path[fileaddr] = (path, ino)
 
-    # For the second pass, ensure there is no overlap between the ranges we
-    # created previously. Since the whole file is not necessarily mapped, we
-    # want to avoid creating overlapping ranges that drgn is not expecting (see
-    # https://github.com/osandov/drgn/issues/574). Once we've ensured there are
-    # no overlaps, and the file had an executable mapping, we can emit it.
-    ranges = sorted(file_range.items(), key=lambda t: t[1][0])
+    # Now synthesize all of that: any file which has an executable mapping, for
+    # which we can identify an ELF base address, should become a DSO.
+    page_size = int(mm.prog_["PAGE_SIZE"])
     result = []
-    for i, (path, (start, end, ino)) in enumerate(ranges):
-        if i + 1 < len(ranges):
-            end = min(end, ranges[i + 1][1][0])
-        if path in file_exec:
-            result.append((path, start, end, ino))
+    for fileaddr, (path, ino) in file_to_path.items():
+        # No mapping with pgoff == 0, continue
+        if fileaddr not in file_to_base:
+            continue
+        # Try to get a build ID. For live systems this is unlikely to fail, but
+        # for vmcores it is. However, vmcores produced with the elfheader
+        # makedumpfile extension will retain the first page of memory of each
+        # mapped ELF file, meaning we still have a shot at this.
+        base = file_to_base[fileaddr]
+        try:
+            build_id = build_id_from_first_bytes(
+                access_remote_vm(mm, base, page_size)
+            )
+        except FaultError:
+            build_id = None
+        result.append(Dso(path, base, ino, build_id, file_to_ranges[fileaddr]))
     return result
 
 
@@ -433,7 +457,7 @@ def print_user_stack_trace(regs: Object) -> None:
         mod_text = ""
         try:
             mod = prog.module(frame.pc)
-            off = frame.pc - mod.address_range[0]
+            off = frame.pc - mod.id
             mod_text = f" (from {mod.name} +0x{off:x})"
         except LookupError:
             pass
@@ -463,25 +487,66 @@ def build_prog_from_mm(mm: Object) -> Program:
 
     up.add_memory_segment(0, 0xFFFFFFFFFFFFFFFF, read_fn, False)
 
-    for path, start, end, ino in task_dsos(mm):
-        try:
-            statbuf = os.stat(path)
-            if statbuf.st_ino != ino:
-                log.warning(
-                    "file %s doesn't match the inode on-disk, it may"
-                    " have been updated",
-                    path,
-                )
-        except OSError:
-            pass
-        mod = up.extra_module(path, create=True)
-        mod.address_range = (start, end)
-        mod.try_file(path)
+    page_size = int(mm.prog_["PAGE_SIZE"])
+    for dso in task_dsos(mm):
+        # Create the file with id=start, so that later on we can use the ID for
+        # the base address of the module.
+        mod = up.extra_module(dso.path, id=dso.base_addr, create=True)
+
+        # If the first page of the ELF file is available, either due to use of
+        # elfheader makedumpfile extension or because it's paged-in on a live
+        # machine, we can usually get the build ID and use that to validate that
+        # we have the correct ELF file! Drgn will transparently reject files
+        # that don't match.
+        if dso.build_id:
+            mod.build_id = dso.build_id
+        else:
+            # If we don't have the build ID, a fallback approach is to use the
+            # inode number. The inode number frequently changes when a file is
+            # updated, but it's not a guarantee or a 100% accurate signal, so
+            # just warn based on it.
+            try:
+                statbuf = os.stat(dso.path)
+                if statbuf.st_ino != dso.ino:
+                    log.warning(
+                        "file %s doesn't match the inode on-disk, it may"
+                        " have been updated",
+                        dso.path,
+                    )
+            except OSError:
+                # Assume it's okay and soldier on
+                pass
+
+        # First, set a single address range. Use the true base address, and make
+        # it just one page so we can guarantee it won't overlap anything. The
+        # purpose here is to communicate to drgn the ELF file bias which it will
+        # determine in try_file().
+        mod.address_range = (dso.base_addr, dso.base_addr + page_size)
+        mod.try_file(dso.path)
+
+        # Now that we have set the file, provide the true ranges to drgn, so
+        # that it can map memory addresses to the correct DSO.
+        mod.address_ranges = dso.ranges
 
     return up
 
 
-def pstack_print_process(task: Object) -> None:
+def debug_dump_mappings(prog: Program) -> None:
+    for mod in prog.modules():
+        if mod.build_id:
+            build_id = mod.build_id.hex()
+        else:
+            build_id = "?" * 40
+        print(f"{build_id} {mod.name}")
+        id_ = getattr(mod, "id", 0)
+
+        for s, e in sorted(mod.address_ranges):
+            base_mark = "  (file base)" if s == id_ else ""
+            print(f"  {s:16x}--{e:16x}{base_mark}")
+    print()
+
+
+def pstack_print_process(task: Object, dump_mappings: bool = False) -> None:
     comm = escape_ascii_string(task.comm.string_())
     print(f"[PID: {task.pid.value_()} COMM: {comm}]")
     prog = task.prog_
@@ -490,6 +555,9 @@ def pstack_print_process(task: Object) -> None:
         return
 
     user_prog = build_prog_from_mm(task.mm)
+    if dump_mappings:
+        debug_dump_mappings(user_prog)
+
     for i, thread in enumerate(
         for_each_task_in_group(task, include_self=True)
     ):
@@ -531,7 +599,7 @@ def pstack(prog: Program) -> None:
     errs = 0
     for task in get_tasks(prog, args):
         try:
-            pstack_print_process(task)
+            pstack_print_process(task, dump_mappings=args.dump_mappings)
         except Exception as e:
             errs += 1
             print(f"error: {str(e)}")
@@ -558,7 +626,7 @@ class Pstack(CorelensModule):
         errs = 0
         for task in get_tasks(prog, args):
             try:
-                pstack_print_process(task)
+                pstack_print_process(task, dump_mappings=args.dump_mappings)
             except Exception as e:
                 errs += 1
                 print(f"error: {str(e)}")
