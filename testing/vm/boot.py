@@ -67,6 +67,30 @@ NINEP_INITRD_MODULES = [
     "9pnet_virtio",
 ]
 
+NETWORK_INITRD_MODULES = [
+    "virtio_net",
+]
+
+UDHCPC_SCRIPT = """#!/bin/sh
+case "$1" in
+    deconfig)
+        ip addr flush dev "$interface"
+        ;;
+    bound|renew)
+        ip addr flush dev "$interface"
+        ip addr add "$ip/$mask" dev "$interface"
+        if [ -n "${router:-}" ]; then
+            ip route replace default via "$router" dev "$interface"
+        fi
+        mkdir -p /tmp/upper/etc
+        : > /tmp/upper/etc/resolv.conf
+        for server in ${dns:-}; do
+            echo "nameserver $server" >> /tmp/upper/etc/resolv.conf
+        done
+        ;;
+esac
+"""
+
 
 INIT_SCRIPT = """#!/bin/sh
 set -eu
@@ -89,6 +113,7 @@ mkdir -p /host
 {mount_host}
 
 mkdir -p /tmp/upper /tmp/work /tmp/root
+{network_setup}
 mount -t overlay overlay \\
       -o lowerdir={rootfs_host_path},upperdir=/tmp/upper,workdir=/tmp/work \\
       /tmp/root
@@ -106,12 +131,14 @@ exec switch_root /tmp/root /usr/bin/setsid -c /bin/sh -lc {guest_command}
 """
 
 
-def _initrd_modules(shared_fs: str) -> List[str]:
+def _initrd_modules(shared_fs: str, network: bool) -> List[str]:
     modules = list(COMMON_INITRD_MODULES)
     if shared_fs == SHARED_FS_VIRTIOFS:
         modules.extend(VIRTIOFS_INITRD_MODULES)
     else:
         modules.extend(NINEP_INITRD_MODULES)
+    if network:
+        modules.extend(NETWORK_INITRD_MODULES)
     return modules
 
 
@@ -222,7 +249,11 @@ def _read_module_payload(src_file: Path, rel_path: str) -> Tuple[str, bytes]:
 
 
 def _copy_initrd_modules(
-    release: str, extract_dir: Path, initrd_dir: Path, shared_fs: str
+    release: str,
+    extract_dir: Path,
+    initrd_dir: Path,
+    shared_fs: str,
+    network: bool,
 ) -> List[str]:
     initrd_mod_dir = initrd_dir / "lib/modules" / release
     root_mod_dir = extract_dir / "lib/modules" / release
@@ -231,7 +262,7 @@ def _copy_initrd_modules(
     name_to_path = {_module_name(mod): mod for mod in all_modules.keys()}
     requested = [
         name_to_path[m]
-        for m in _initrd_modules(shared_fs)
+        for m in _initrd_modules(shared_fs, network)
         if m in name_to_path
     ]
     needed_paths = _topological_sort(all_modules, requested)
@@ -334,6 +365,7 @@ def _create_initrd(
     pre_chroot_setup: str,
     guest_command: str,
     shared_fs: str,
+    network: bool,
     out_path: Path,
 ) -> Path:
     _require_tool("cpio")
@@ -345,7 +377,7 @@ def _create_initrd(
             (td / path).mkdir(parents=True, exist_ok=True)
 
         initrd_modules = _copy_initrd_modules(
-            kernel.release, extract_dir, td, shared_fs
+            kernel.release, extract_dir, td, shared_fs, network
         )
 
         busybox_path = _require_tool("busybox")
@@ -355,6 +387,10 @@ def _create_initrd(
             [str(busybox), "--install", str(td / "bin")],
             check=True,
         )
+        if network:
+            udhcpc_script = td / "bin/udhcpc.script"
+            udhcpc_script.write_text(UDHCPC_SCRIPT)
+            udhcpc_script.chmod(0o755)
 
         module_load = "\n".join(
             "insmod {} || true".format(
@@ -369,6 +405,12 @@ def _create_initrd(
                 hostname=kernel.category.name,
                 module_load=module_load,
                 mount_host=_host_mount_command(shared_fs),
+                network_setup=(
+                    "ip link set dev eth0 up\n"
+                    "udhcpc -q -n -i eth0 -s /bin/udhcpc.script"
+                    if network
+                    else ":"
+                ),
                 rootfs_host_path=shlex.quote(
                     _guest_path(rootfs_dir, shared_dir)
                 ),
@@ -549,6 +591,7 @@ def run_in_vm(
     command: List[str],
     log_path: Optional[Path],
     log: VmLogger,
+    network: bool = False,
 ) -> None:
     qemu = _find_qemu(kernel.category.arch.value)
     shared_fs = kernel.category.shared_fs
@@ -588,6 +631,7 @@ def run_in_vm(
             pre_chroot_setup,
             guest_command,
             shared_fs,
+            network,
             tempdir / "initrd",
         )
         vmlinuz = _find_vmlinuz(kernel.release, extract_dir)
@@ -637,6 +681,7 @@ def run_in_vm(
             *serial_args,
             "-device", "virtio-rng",
             "-device", "vmcoreinfo",
+            "-net", "none",
             *_qemu_host_share_args(shared_fs, shared_dir, sock),
             "-drive", f"file={block_img},if=virtio,format=raw",
 
@@ -660,6 +705,13 @@ def run_in_vm(
             "-device", "nvme-ns,drive=nvm-drive,bus=nvme0,nsid=1,shared=on",
             # fmt: on
         ]
+        if network:
+            args += [
+                "-netdev",
+                "user,id=net0",
+                "-device",
+                "virtio-net-pci,netdev=net0",
+            ]
 
         result = _run_qemu(
             args,
@@ -730,6 +782,11 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--network",
+        action="store_true",
+        help="Enable outbound NAT networking in the guest",
+    )
+    parser.add_argument(
         "command",
         nargs="*",
         help=("Command to run in guest " "(default: bash -li)"),
@@ -770,6 +827,7 @@ def main() -> None:
         args.command or ["bash", "-li"],
         None,
         log,
+        network=args.network,
     )
 
 
