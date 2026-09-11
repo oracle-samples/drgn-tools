@@ -66,6 +66,7 @@ yum -y --releasever={ol_ver} --installroot=/rootfs \\
        --setopt=install_weak_deps=False \\
        --setopt=tsflags=nodocs \\
        --enablerepo=ol{ol_ver}_addons \\
+       --enablerepo=ol{ol_ver}_developer \\
        --enablerepo=ol{ol_ver}_UEKR6 \\
        install {rpms}
 yum -y --installroot=/rootfs clean all;
@@ -117,6 +118,7 @@ def _build_rootfs(
         "coreutils",
         "findutils",
         "fio",
+        "fuse3-libs",
         "gcc",
         "make",
         "binutils-devel",

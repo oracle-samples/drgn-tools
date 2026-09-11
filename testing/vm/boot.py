@@ -55,11 +55,11 @@ COMMON_INITRD_MODULES = [
     "sd_mod",
     "ext4",
     "nvme",
+    "fuse",
 ]
 
 VIRTIOFS_INITRD_MODULES = [
     "virtiofs",
-    "fuse",
 ]
 
 NINEP_INITRD_MODULES = [
