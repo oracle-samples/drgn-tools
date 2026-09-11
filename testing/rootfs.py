@@ -62,8 +62,8 @@ echo -n {ociregion} >/rootfs/etc/yum/vars/ociregion
 echo -n {ociregion} >/etc/yum/vars/ociregion
 echo -n {ocidomain} >/rootfs/etc/yum/vars/ocidomain
 echo -n {ocidomain} >/etc/yum/vars/ocidomain
+yum -y install oraclelinux-developer-release-el7
 yum -y --releasever={ol_ver} --installroot=/rootfs \\
-       --setopt=install_weak_deps=False \\
        --setopt=tsflags=nodocs \\
        --enablerepo=ol{ol_ver}_addons \\
        --enablerepo=ol{ol_ver}_developer \\
