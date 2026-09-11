@@ -666,10 +666,19 @@ def run_in_vm(
         if not log.verbose:
             kernel_cmdline = "quiet loglevel=1 " + kernel_cmdline
 
+        # QEMU uses Ctrl-A as an escape to switch between the multiplexed
+        # console & serial port, and also to terminate the VM. But Ctrl-A is
+        # used for line editing, which means users need to double the sequence
+        # while editing! So annoying. Let users override this with a different
+        # key, to make their interactive experiences better.  But by default,
+        # leave it be, because remapping it is confusing.
+        echr = os.environ.get("QEMU_ECHR", "1")
+
         args += [
             # fmt: off
             "-display", "none",
             "-no-reboot",
+            "-echr", echr,
 
             "-kernel", str(vmlinuz),
             "-initrd", str(initrd),
