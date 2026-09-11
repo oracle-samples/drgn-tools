@@ -5,6 +5,7 @@ import argparse
 import ctypes
 import errno
 import os
+import platform
 import select
 import subprocess
 import sys
@@ -20,6 +21,7 @@ _FILE_CONTENTS = b"test"
 _STARTUP_TIMEOUT = 5.0
 _SHUTDOWN_TIMEOUT = 5.0
 _MNT_DETACH = 2
+_LEGACY_STAT_VERSIONS = {"aarch64": 0, "x86_64": 1}
 
 
 class _FuseArgs(ctypes.Structure):
@@ -157,12 +159,33 @@ def _load_fuse():
 
 
 def _load_libc():
-    libc = ctypes.CDLL(None, use_errno=True)
-    libc.lstat.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
-    libc.lstat.restype = ctypes.c_int
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
     libc.umount2.argtypes = [ctypes.c_char_p, ctypes.c_int]
     libc.umount2.restype = ctypes.c_int
     return libc
+
+
+def _bind_lstat(libc):
+    try:
+        lstat = libc.lstat
+    except AttributeError:
+        # EL7/8's glibc only exports the old stat ABI entry point. Its ABI
+        # version is architecture-specific, but does not expose struct stat.
+        try:
+            stat_version = _LEGACY_STAT_VERSIONS[platform.machine()]
+        except KeyError:
+            raise RuntimeError("unsupported legacy glibc stat ABI")
+        lstat = libc.__lxstat
+        lstat.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p]
+        lstat.restype = ctypes.c_int
+
+        def call(path, statbuf):
+            return lstat(stat_version, path, statbuf)
+
+        return call
+    lstat.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+    lstat.restype = ctypes.c_int
+    return lstat
 
 
 def _detach_mount(mountpoint: Path) -> None:
@@ -178,6 +201,7 @@ def _run_server(
 ) -> int:
     fuse = _load_fuse()
     libc = _load_libc()
+    lstat = _bind_lstat(libc)
     stopped = threading.Event()
     active = threading.Event()
     mounted = False
@@ -197,7 +221,7 @@ def _run_server(
                 target = file_path
             else:
                 return -errno.ENOENT
-            if libc.lstat(os.fsencode(str(target)), statbuf) == 0:
+            if lstat(os.fsencode(str(target)), statbuf) == 0:
                 return 0
             return -ctypes.get_errno()
 
