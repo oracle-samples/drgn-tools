@@ -72,7 +72,7 @@
 
 
 Name:           python-drgn-tools
-Version:        2.3.0
+Version:        2.3.1
 Release:        1%{?dist}
 Summary:        Helper scripts for drgn, containing the corelens utility
 
@@ -304,6 +304,9 @@ fi
 %endif
 
 %changelog
+* Tue Oct 13 2026 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.3.1-1
+- Add support for drgn 0.3.0
+
 * Fri Jun 26 2026 Stephen Brennan <stephen.s.brennan@oracle.com> - 2.3.0-1
 - Add support for drgn 0.1.0 and drgn 0.2.0 (Stephen Brennan)
 - New corelens module: slabdump (Stephen Brennan)
