@@ -162,16 +162,16 @@ def get_mm_constants(prog: Program) -> Dict[str, int]:
             unit = mm_consts["HPAGE_PMD_NR"]
         mm_consts["TRANS_HPAGE_UNIT"] = unit
 
-        # Determine the max number of swap file types by the length of
-        # "swap_cgroup_ctrl" array, defined in mm/swap_cgroup.c since UEK5.
-        # While the "swap_info" array may seem more obvious, some UEK6 versions
-        # don't have a length for this array in the debuginfo, and
-        # swap_cgroup_ctrl doesn't exhibit this issue.
+        # Determine the max number of swap file types by the length of arrays:
+        # either swap_cgroup_ctrl or swap_info. While the latter seems more
+        # obvious, its debuginfo doesn't always define its length in UEK6.
+        # However, in v7.2 commit 4e8e1c498de9f ("mm/memcg: remove no longer
+        # used swap cgroup array"), the latter array was removed, so fallback to
+        # the former too.
         if "swap_cgroup_ctrl" in prog:
             mm_consts["MAX_SWAPFILES"] = len(prog["swap_cgroup_ctrl"])
         else:
-            # "nr_swapper_spaces" does not exist in UEK-4.
-            mm_consts["MAX_SWAPFILES"] = len(prog["swapper_spaces"])
+            mm_consts["MAX_SWAPFILES"] = len(prog["swap_info"])
 
         # Save ``mm_consts`` to cache.
         cache["mm_constants"] = mm_consts
