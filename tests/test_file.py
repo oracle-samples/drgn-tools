@@ -11,5 +11,6 @@ class TestFile(DrgnToolsTestCase):
 
     def test_for_each_file_system_page_in_pagecache(self):
         # smoke test
-        fst = self.prog["file_systems"].next
-        file.for_each_file_system_page_in_pagecache(fst)
+        for fst in file.for_each_file_system(self.prog):
+            for page in file.for_each_file_system_page_in_pagecache(fst):
+                break
