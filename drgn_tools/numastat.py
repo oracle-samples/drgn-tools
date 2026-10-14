@@ -185,6 +185,11 @@ def get_per_node_meminfo(prog: Program, node: Object) -> Dict[str, int]:
     if "NR_UNACCEPTED" in node_zone_stats:
         mm_stats["Unaccepted"] = node_zone_stats["NR_UNACCEPTED"]
 
+    # v6.15 commit 835de37603ef6 ("meminfo: add a per node counter for balloon
+    # drivers")
+    if "NR_BALLOON_PAGES" in node_zone_stats:
+        mm_stats["Balloon"] = node_zone_stats["NR_BALLOON_PAGES"]
+
     # Since v7.1 commit 2232ba9c7931d ("mm: add gpu active/reclaim per-node stat
     # counters (v2)")
     if "NR_GPU_ACTIVE" in node_zone_stats:
