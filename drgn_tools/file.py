@@ -64,6 +64,31 @@ def for_each_file_system_page_in_pagecache(fst: Object) -> Iterator[Object]:
         yield from for_each_superblock_page_in_pagecache(sb)
 
 
+def for_each_file_system(prog: Program) -> Iterator[Object]:
+    """
+    Yield each registered file system type.
+
+    :returns: a generator of ``struct file_system_type *``
+    """
+    fst = prog["file_systems"]
+
+    # v7.2 commit dc651e25a6d28 ("fs: RCU-ify filesystems list") changes
+    # file_systems from a pointer to the first element, to a hlist_head.
+    # Unfortunately it does not rename the variable so we have to check its type
+    # directly.
+    tp = fst.type_.type_name()
+    if tp == "struct hlist_head":
+        return hlist_for_each_entry(
+            "struct file_system_type", fst.address_of_(), "list"
+        )
+    elif tp == "struct file_system_type *":
+        while fst:
+            yield fst
+            fst = fst.next
+    else:
+        assert False, "Unrecognized file_systems list type"
+
+
 def filecache_dump(
     prog: Program,
     top_n: int,
@@ -83,11 +108,9 @@ def filecache_dump(
     """
     inode_entries: List[Tuple[int, Object]] = []
     output_table = [["PAGES", "SIZE", "FS_TYPE", "FILE"]]
-    fst = prog["file_systems"]
-    while fst:
+    for fst in for_each_file_system(prog):
         if __check_fs_types(fst, fs_types, skip_fs_types):
             __add_filesystem(inode_entries, fst, page_limit)
-        fst = fst.next
 
     # iterate through all but the system volume
     inode_entries.sort(reverse=True)
