@@ -92,6 +92,17 @@ def irq_has_action(prog: Program, irq: int) -> bool:
     return bool(desc and desc.action)
 
 
+def get_nr_irqs(prog: Program) -> int:
+    # TODO(drgn 0.3.0): replace with drgn's irq_get_nr_irqs once minimum drgn
+    # requirement is 0.3.0.
+    try:
+        # v7.2 commit b99dc723b12ea ("genirq: Expose nr_irqs in core code")
+        # renames nr_irqs to total_nr_irqs.
+        return prog["nr_irqs"].value_()
+    except LookupError:
+        return prog["total_nr_irqs"].value_()
+
+
 def for_each_in_use_irq_num(prog: Program) -> Iterator[int]:
     """
     Iterate through all inuse irq numbers.
@@ -100,7 +111,7 @@ def for_each_in_use_irq_num(prog: Program) -> Iterator[int]:
 
     :return: Iterator of possible irq numbers
     """
-    nr_irqs = prog["nr_irqs"].value_()
+    nr_irqs = get_nr_irqs(prog)
     for irq_num in range(nr_irqs):
         if irq_in_use(prog, irq_num):
             yield irq_num
